@@ -3,6 +3,7 @@
 import { WorkOrder } from "@/lib/types";
 import { getOrdersForDay, getHourSlot, typeColor } from "@/lib/calendar-utils";
 import { formatTime } from "@/lib/calendar-utils";
+import { lastFirst, crewName, sortByNameAlpha } from "@/lib/format-utils";
 import { format } from "date-fns";
 import { useMemo } from "react";
 
@@ -29,6 +30,9 @@ export default function DayView({
       );
       map.get(closest)?.push(o);
     }
+    for (const [h, list] of map) {
+      map.set(h, sortByNameAlpha(list));
+    }
     return map;
   }, [dayOrders]);
 
@@ -50,21 +54,26 @@ export default function DayView({
                 {format(new Date(2000, 0, 1, hour), "h a")}
               </div>
               <div className="flex-1 border-l border-border/50 py-1 px-2 space-y-1">
-                {hourOrders.map((order) => (
-                  <button
-                    key={order.id}
-                    onClick={() => onSelectOrder(order)}
-                    className={`w-full text-left rounded-md px-2.5 py-1.5 text-white text-sm transition-all active:scale-[0.98] ${typeColor(
-                      order.workOrderType
-                    )}`}
-                  >
-                    <div className="font-medium truncate">{order.customerName}</div>
-                    <div className="text-xs opacity-90 flex items-center gap-2">
-                      <span>{formatTime(order.scheduledStart)}</span>
-                      <span>#{order.workOrderNumber}</span>
-                    </div>
-                  </button>
-                ))}
+                {hourOrders.map((order) => {
+                  const crew = crewName(order);
+                  return (
+                    <button
+                      key={order.id}
+                      onClick={() => onSelectOrder(order)}
+                      className={`w-full text-left rounded-md px-2.5 py-1.5 text-white text-sm transition-all active:scale-[0.98] ${typeColor(
+                        order.workOrderType
+                      )}`}
+                    >
+                      <div className="font-medium truncate">
+                        {lastFirst(order.customerName)} - {order.orderNumber}
+                      </div>
+                      <div className="text-xs opacity-90 flex items-center gap-2">
+                        <span>{formatTime(order.scheduledStart)}</span>
+                        {crew && <span>{crew}</span>}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           );
