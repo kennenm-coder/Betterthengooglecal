@@ -5,18 +5,24 @@ import { getOrdersForWeek, typeColor, formatTime } from "@/lib/calendar-utils";
 import { lastFirst, crewName, sortByNameAlpha } from "@/lib/format-utils";
 import { format, startOfWeek, addDays, isToday } from "date-fns";
 import { useMemo } from "react";
+import { useSwipe } from "@/hooks/useSwipe";
 
 export default function WeekView({
   orders,
   date,
   onSelectOrder,
   onSelectDay,
+  onSwipeLeft,
+  onSwipeRight,
 }: {
   orders: WorkOrder[];
   date: Date;
   onSelectOrder: (order: WorkOrder) => void;
   onSelectDay: (date: Date) => void;
+  onSwipeLeft?: () => void;
+  onSwipeRight?: () => void;
 }) {
+  const swipeRef = useSwipe({ onSwipeLeft, onSwipeRight });
   const weekStart = startOfWeek(date, { weekStartsOn: 0 });
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
@@ -29,7 +35,7 @@ export default function WeekView({
   }, [orders, date]);
 
   return (
-    <div className="flex-1 overflow-y-auto overscroll-contain">
+    <div ref={swipeRef} className="flex-1 overflow-y-auto overscroll-contain">
       <div className="sticky top-0 bg-background z-10 border-b border-border">
         <div className="grid grid-cols-7">
           {days.map((day) => {

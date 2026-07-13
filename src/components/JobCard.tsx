@@ -318,27 +318,27 @@ function DetailLine({
 }
 
 function SalesforceButton({ workOrderNumber }: { workOrderNumber: string }) {
-  const sfUrl = `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${encodeURIComponent(workOrderNumber)}`;
+  const [copied, setCopied] = useState(false);
 
-  function handleClick(e: React.MouseEvent) {
-    navigator.clipboard.writeText(workOrderNumber).catch(() => {});
+  function handleClick() {
+    navigator.clipboard.writeText(workOrderNumber).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    if (!isMobile) {
-      e.preventDefault();
-      window.open(sfUrl, "_blank", "noopener,noreferrer");
+    if (isMobile) {
+      window.location.href = "salesforce1://";
     }
   }
 
   return (
-    <a
-      href={sfUrl}
+    <button
       onClick={handleClick}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="mt-1 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-[#0176D3] text-white text-sm font-medium active:scale-[0.98] transition-transform no-underline"
+      className="mt-1 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-[#0176D3] text-white text-sm font-medium active:scale-[0.98] transition-transform"
     >
       <ExternalLink className="w-4 h-4" />
-      Search in Salesforce
-    </a>
+      {copied ? "Copied! Paste in Salesforce search" : "Open Salesforce"}
+    </button>
   );
 }

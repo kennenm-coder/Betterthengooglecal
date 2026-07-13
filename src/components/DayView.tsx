@@ -6,6 +6,7 @@ import { formatTime } from "@/lib/calendar-utils";
 import { lastFirst, crewName, sortByNameAlpha } from "@/lib/format-utils";
 import { format } from "date-fns";
 import { useMemo } from "react";
+import { useSwipe } from "@/hooks/useSwipe";
 
 const HOURS = Array.from({ length: 13 }, (_, i) => i + 6); // 6AM - 6PM
 
@@ -13,11 +14,16 @@ export default function DayView({
   orders,
   date,
   onSelectOrder,
+  onSwipeLeft,
+  onSwipeRight,
 }: {
   orders: WorkOrder[];
   date: Date;
   onSelectOrder: (order: WorkOrder) => void;
+  onSwipeLeft?: () => void;
+  onSwipeRight?: () => void;
 }) {
+  const swipeRef = useSwipe({ onSwipeLeft, onSwipeRight });
   const dayOrders = useMemo(() => getOrdersForDay(orders, date), [orders, date]);
 
   const ordersByHour = useMemo(() => {
@@ -37,7 +43,7 @@ export default function DayView({
   }, [dayOrders]);
 
   return (
-    <div className="flex-1 overflow-y-auto overscroll-contain">
+    <div ref={swipeRef} className="flex-1 overflow-y-auto overscroll-contain">
       <div className="sticky top-0 bg-background z-10 px-4 py-2 border-b border-border">
         <h2 className="text-lg font-semibold">{format(date, "EEEE, MMMM d")}</h2>
         <p className="text-sm text-muted">
