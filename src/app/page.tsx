@@ -38,7 +38,7 @@ export default function CalendarPage() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full overflow-hidden">
       <header className="bg-background border-b border-border px-3 py-2 flex items-center gap-2 z-20">
         <button
           onClick={goToday}
