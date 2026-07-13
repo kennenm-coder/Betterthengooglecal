@@ -10,10 +10,24 @@ import BottomNav from "@/components/BottomNav";
 import FilterPanel, { Filters, EMPTY_FILTERS, applyFilters } from "@/components/FilterPanel";
 import { WorkOrder, ViewMode } from "@/lib/types";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday } from "date-fns";
-import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, RefreshCw } from "lucide-react";
 
 export default function CalendarPage() {
-  const { orders, loading } = useData();
+  const { orders, loading, refresh } = useData();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) await reg.update();
+      }
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
   const [view, setView] = useState<ViewMode>("day");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedOrder, setSelectedOrder] = useState<WorkOrder | null>(null);
@@ -63,6 +77,15 @@ export default function CalendarPage() {
             ? format(currentDate, "MMM d")
             : format(currentDate, "MMM yyyy")}
         </h1>
+
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="p-1.5 rounded-full hover:bg-surface disabled:opacity-50"
+          title="Refresh data"
+        >
+          <RefreshCw className={`w-4.5 h-4.5 ${refreshing ? "animate-spin" : ""}`} />
+        </button>
 
         <FilterPanel orders={orders} filters={filters} onChange={setFilters} />
 
