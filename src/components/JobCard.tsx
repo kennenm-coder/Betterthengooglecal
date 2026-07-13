@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ChevronUp,
   Briefcase,
+  ExternalLink,
 } from "lucide-react";
 import { useState } from "react";
 import { parseISO, isSameDay } from "date-fns";
@@ -232,6 +233,9 @@ export default function JobCard({
                 <CopyButton text={order.email} label="email" />
               </InfoRow>
             )}
+
+            {/* Salesforce */}
+            <SalesforceButton workOrderNumber={order.workOrderNumber} />
           </div>
 
           {/* Expanded: booking date + job status */}
@@ -310,5 +314,26 @@ function DetailLine({
         {label}: <span className="text-foreground">{value}</span>
       </span>
     </div>
+  );
+}
+
+function SalesforceButton({ workOrderNumber }: { workOrderNumber: string }) {
+  const sfUrl = `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${encodeURIComponent(workOrderNumber)}`;
+
+  function handleClick(e: React.MouseEvent) {
+    e.preventDefault();
+    navigator.clipboard.writeText(workOrderNumber).catch(() => {});
+    window.location.href = sfUrl;
+  }
+
+  return (
+    <a
+      href={sfUrl}
+      onClick={handleClick}
+      className="mt-1 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-[#0176D3] text-white text-sm font-medium active:scale-[0.98] transition-transform no-underline"
+    >
+      <ExternalLink className="w-4 h-4" />
+      Search in Salesforce
+    </a>
   );
 }

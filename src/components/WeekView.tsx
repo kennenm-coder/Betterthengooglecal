@@ -2,6 +2,7 @@
 
 import { WorkOrder } from "@/lib/types";
 import { getOrdersForWeek, typeColor, formatTime } from "@/lib/calendar-utils";
+import { lastFirst, crewName, sortByNameAlpha } from "@/lib/format-utils";
 import { format, startOfWeek, addDays, isToday } from "date-fns";
 import { useMemo } from "react";
 
@@ -19,7 +20,13 @@ export default function WeekView({
   const weekStart = startOfWeek(date, { weekStartsOn: 0 });
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
-  const ordersByDay = useMemo(() => getOrdersForWeek(orders, date), [orders, date]);
+  const ordersByDay = useMemo(() => {
+    const byDay = getOrdersForWeek(orders, date);
+    for (const [key, list] of byDay) {
+      byDay.set(key, sortByNameAlpha(list));
+    }
+    return byDay;
+  }, [orders, date]);
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -67,25 +74,31 @@ export default function WeekView({
                 {format(day, "EEEE, MMM d")}
               </h3>
               <div className="space-y-1.5">
-                {dayOrders.map((order) => (
-                  <button
-                    key={order.id}
-                    onClick={() => onSelectOrder(order)}
-                    className={`w-full text-left rounded-md px-3 py-2 text-white text-sm transition-all active:scale-[0.98] ${typeColor(
-                      order.workOrderType
-                    )}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium truncate">{order.customerName}</span>
-                      <span className="text-xs opacity-90 whitespace-nowrap ml-2">
-                        {formatTime(order.scheduledStart)}
-                      </span>
-                    </div>
-                    <div className="text-xs opacity-80 mt-0.5">
-                      {order.workOrderType} &middot; #{order.workOrderNumber}
-                    </div>
-                  </button>
-                ))}
+                {dayOrders.map((order) => {
+                  const crew = crewName(order);
+                  return (
+                    <button
+                      key={order.id}
+                      onClick={() => onSelectOrder(order)}
+                      className={`w-full text-left rounded-md px-3 py-2 text-white text-sm transition-all active:scale-[0.98] ${typeColor(
+                        order.workOrderType
+                      )}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium truncate">
+                          {lastFirst(order.customerName)} - {order.orderNumber}
+                        </span>
+                        <span className="text-xs opacity-90 whitespace-nowrap ml-2">
+                          {formatTime(order.scheduledStart)}
+                        </span>
+                      </div>
+                      <div className="text-xs opacity-80 mt-0.5">
+                        {order.workOrderType}
+                        {crew && <> &middot; {crew}</>}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           );
