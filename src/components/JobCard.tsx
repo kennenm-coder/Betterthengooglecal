@@ -328,7 +328,7 @@ function SalesforceButton({ workOrderNumber }: { workOrderNumber: string }) {
 
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     if (isMobile) {
-      window.location.href = "salesforce1://";
+      window.location.href = `salesforce1://search/${encodeURIComponent(workOrderNumber)}`;
     }
   }
 
