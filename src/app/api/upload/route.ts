@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { put } from "@vercel/blob";
 import { parseXlsHtml } from "@/lib/parse-xls";
+
+const REPO = "kennenm-coder/Betterthengooglecal";
+const FILE_PATH = "data/orders.json";
+const BRANCH = "Main";
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,22 +24,62 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const payload = JSON.stringify({
+    const payload = {
       orders,
       uploadedAt: new Date().toISOString(),
       count: orders.length,
-    });
+    };
 
-    const blob = await put("orders/current.json", payload, {
-      access: "public",
-      addRandomSuffix: false,
-      contentType: "application/json",
-    });
+    const token = process.env.GITHUB_TOKEN;
+    if (!token) {
+      return NextResponse.json(
+        { error: "GitHub token not configured" },
+        { status: 500 }
+      );
+    }
+
+    const content = Buffer.from(JSON.stringify(payload)).toString("base64");
+
+    let sha: string | undefined;
+    const getRes = await fetch(
+      `https://api.github.com/repos/${REPO}/contents/${FILE_PATH}?ref=${BRANCH}`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" } }
+    );
+    if (getRes.ok) {
+      const existing = await getRes.json();
+      sha = existing.sha;
+    }
+
+    const putRes = await fetch(
+      `https://api.github.com/repos/${REPO}/contents/${FILE_PATH}`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github.v3+json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: `Update orders data - ${orders.length} orders`,
+          content,
+          branch: BRANCH,
+          ...(sha ? { sha } : {}),
+        }),
+      }
+    );
+
+    if (!putRes.ok) {
+      const err = await putRes.text();
+      console.error("GitHub API error:", err);
+      return NextResponse.json(
+        { error: "Failed to save to GitHub" },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
       count: orders.length,
-      url: blob.url,
     });
   } catch (err) {
     console.error("Upload error:", err);
