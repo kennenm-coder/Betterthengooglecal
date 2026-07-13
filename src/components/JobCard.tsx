@@ -321,15 +321,20 @@ function SalesforceButton({ workOrderNumber }: { workOrderNumber: string }) {
   const sfUrl = `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${encodeURIComponent(workOrderNumber)}`;
 
   function handleClick(e: React.MouseEvent) {
-    e.preventDefault();
     navigator.clipboard.writeText(workOrderNumber).catch(() => {});
-    window.location.href = sfUrl;
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (!isMobile) {
+      e.preventDefault();
+      window.open(sfUrl, "_blank", "noopener,noreferrer");
+    }
   }
 
   return (
     <a
       href={sfUrl}
       onClick={handleClick}
+      target="_blank"
+      rel="noopener noreferrer"
       className="mt-1 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-[#0176D3] text-white text-sm font-medium active:scale-[0.98] transition-transform no-underline"
     >
       <ExternalLink className="w-4 h-4" />

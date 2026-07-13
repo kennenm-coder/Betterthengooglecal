@@ -7,6 +7,14 @@ const BRANCH = "Main";
 
 export async function POST(request: NextRequest) {
   try {
+    const apiKey = process.env.UPLOAD_API_KEY;
+    if (apiKey) {
+      const provided = request.headers.get("x-api-key");
+      if (provided !== apiKey) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
+
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
 

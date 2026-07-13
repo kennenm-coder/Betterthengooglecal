@@ -29,7 +29,7 @@ export default function WeekView({
   }, [orders, date]);
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="flex-1 overflow-y-auto overscroll-contain">
       <div className="sticky top-0 bg-background z-10 border-b border-border">
         <div className="grid grid-cols-7">
           {days.map((day) => {
