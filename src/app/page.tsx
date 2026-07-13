@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useData } from "@/components/DataProvider";
+import { useSwipe } from "@/hooks/useSwipe";
 import DayView from "@/components/DayView";
 import WeekView from "@/components/WeekView";
 import OrderSheet from "@/components/OrderSheet";
@@ -21,10 +22,12 @@ export default function CalendarPage() {
   const filteredOrders = useMemo(() => applyFilters(orders, filters), [orders, filters]);
 
   const goToday = () => setCurrentDate(new Date());
-  const goPrev = () =>
-    setCurrentDate((d) => (view === "day" ? subDays(d, 1) : subWeeks(d, 1)));
-  const goNext = () =>
-    setCurrentDate((d) => (view === "day" ? addDays(d, 1) : addWeeks(d, 1)));
+  const goPrev = useCallback(() =>
+    setCurrentDate((d) => (view === "day" ? subDays(d, 1) : subWeeks(d, 1))), [view]);
+  const goNext = useCallback(() =>
+    setCurrentDate((d) => (view === "day" ? addDays(d, 1) : addWeeks(d, 1))), [view]);
+
+  const swipeRef = useSwipe({ onSwipeLeft: goNext, onSwipeRight: goPrev });
 
   if (loading) {
     return (
@@ -78,23 +81,25 @@ export default function CalendarPage() {
         </div>
       </header>
 
-      {view === "day" ? (
-        <DayView
-          orders={filteredOrders}
-          date={currentDate}
-          onSelectOrder={setSelectedOrder}
-        />
-      ) : (
-        <WeekView
-          orders={filteredOrders}
-          date={currentDate}
-          onSelectOrder={setSelectedOrder}
-          onSelectDay={(d) => {
-            setCurrentDate(d);
-            setView("day");
-          }}
-        />
-      )}
+      <div ref={swipeRef} className="flex-1 flex flex-col min-h-0">
+        {view === "day" ? (
+          <DayView
+            orders={filteredOrders}
+            date={currentDate}
+            onSelectOrder={setSelectedOrder}
+          />
+        ) : (
+          <WeekView
+            orders={filteredOrders}
+            date={currentDate}
+            onSelectOrder={setSelectedOrder}
+            onSelectDay={(d) => {
+              setCurrentDate(d);
+              setView("day");
+            }}
+          />
+        )}
+      </div>
 
       {selectedOrder && (
         <OrderSheet order={selectedOrder} onClose={() => setSelectedOrder(null)} />
