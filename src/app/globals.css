@@ -73,3 +73,21 @@ body {
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+
+@keyframes slide-in-right {
+  from { transform: translateX(35%); opacity: 0.3; }
+  to   { transform: translateX(0);   opacity: 1; }
+}
+
+@keyframes slide-in-left {
+  from { transform: translateX(-35%); opacity: 0.3; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+.slide-next {
+  animation: slide-in-right 0.25s ease-out;
+}
+
+.slide-prev {
+  animation: slide-in-left 0.25s ease-out;
+}

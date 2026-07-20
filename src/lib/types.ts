@@ -18,11 +18,61 @@ export interface WorkOrder {
   email: string;
   phones: PhoneEntry[];
   workOrderType: "Install" | "Service" | "Job Site Visit";
+  materialJob?: MaterialJobData | null;
 }
 
 export interface PhoneEntry {
   label: string;
   number: string;
+}
+
+export interface MaterialJobData {
+  id: string;
+  job: {
+    customerName: string;
+    address: string;
+    poNumber: string;
+    techMeasurer: string;
+    date: string;
+    installNotes: string;
+    leadPaint?: boolean;
+    prefinishNotes: string;
+    extraMaterials: any[];
+    additionalMaterials: any[];
+    universalFinish: string;
+    vendorAssignments?: Record<string, any>;
+  };
+  units: MaterialUnit[];
+  globalTrim: {
+    species: string;
+    trimStyle: string;
+    casingProfile: string;
+    finishType: string;
+    stain: string;
+    paint: string;
+    jambDepthWhole: string;
+    jambDepthFrac: number;
+  };
+  submitted: boolean;
+  status: string;
+  savedAt: string;
+}
+
+export interface MaterialUnit {
+  label: string;
+  type: string;
+  qty: number;
+  widthWhole: string;
+  widthFrac: number;
+  heightWhole: string;
+  heightFrac: number;
+  extColor: string;
+  intColor: string;
+  intFinish: string;
+  grilles: boolean;
+  tempered: boolean;
+  isMisc?: boolean;
+  approved?: boolean;
 }
 
 export type ViewMode = "day" | "week" | "list";

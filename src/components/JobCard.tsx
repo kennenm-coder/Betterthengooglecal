@@ -1,6 +1,6 @@
 "use client";
 
-import { WorkOrder } from "@/lib/types";
+import { WorkOrder, MaterialJobData, MaterialUnit } from "@/lib/types";
 import { formatTime, formatDateShort, typeColor } from "@/lib/calendar-utils";
 import CopyButton from "./CopyButton";
 import {
@@ -15,6 +15,10 @@ import {
   ChevronUp,
   Briefcase,
   ExternalLink,
+  Package,
+  AlertTriangle,
+  Paintbrush,
+  ClipboardList,
 } from "lucide-react";
 import { useState } from "react";
 import { parseISO, isSameDay } from "date-fns";
@@ -253,6 +257,11 @@ export default function JobCard({
               )}
             </div>
           )}
+
+          {/* Materials section — shown when linked material data exists */}
+          {order.materialJob && (
+            <MaterialsSection data={order.materialJob} />
+          )}
         </div>
       </div>
     </div>
@@ -313,6 +322,204 @@ function DetailLine({
       <span>
         {label}: <span className="text-foreground">{value}</span>
       </span>
+    </div>
+  );
+}
+
+function unitSummary(units: MaterialUnit[]): string {
+  const counts: Record<string, number> = {};
+  for (const u of units) {
+    const abbr = u.type
+      .replace(/Double Hung/i, "DH")
+      .replace(/Casement/i, "CAS")
+      .replace(/Patio Door/i, "PD")
+      .replace(/Picture/i, "PIC")
+      .replace(/Sliding/i, "SLD")
+      .replace(/Bay/i, "BAY")
+      .replace(/Bow/i, "BOW")
+      .replace(/Awning/i, "AWN")
+      .replace(/Entry Door/i, "ED")
+      .replace(/Gliding/i, "GLD");
+    counts[abbr] = (counts[abbr] || 0) + (u.qty || 1);
+  }
+  return Object.entries(counts)
+    .map(([type, qty]) => `${qty} ${type}`)
+    .join(", ");
+}
+
+function formatSize(u: MaterialUnit): string {
+  const w = u.widthWhole + (u.widthFrac ? ` ${fracToString(u.widthFrac)}` : "");
+  const h = u.heightWhole + (u.heightFrac ? ` ${fracToString(u.heightFrac)}` : "");
+  return `${w}" x ${h}"`;
+}
+
+function fracToString(frac: number): string {
+  if (frac === 0.125) return "1/8";
+  if (frac === 0.25) return "1/4";
+  if (frac === 0.375) return "3/8";
+  if (frac === 0.5) return "1/2";
+  if (frac === 0.625) return "5/8";
+  if (frac === 0.75) return "3/4";
+  if (frac === 0.875) return "7/8";
+  if (frac === 0) return "";
+  return String(frac);
+}
+
+function MaterialsSection({ data }: { data: MaterialJobData }) {
+  const [open, setOpen] = useState(false);
+  const summary = unitSummary(data.units);
+  const hasNotes = data.job.installNotes?.trim();
+  const hasPrefinish = data.job.prefinishNotes?.trim();
+  const hasLeadPaint = data.job.leadPaint;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-border">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between gap-2 text-left"
+      >
+        <div className="flex items-center gap-2">
+          <Package className="w-4 h-4 text-primary" />
+          <span className="text-sm font-semibold">Materials</span>
+          {hasLeadPaint && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-danger/10 text-danger font-semibold uppercase">
+              Lead Paint
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted">{summary || `${data.units.length} units`}</span>
+          {open ? (
+            <ChevronUp className="w-4 h-4 text-muted" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-muted" />
+          )}
+        </div>
+      </button>
+
+      {open && (
+        <div className="mt-2 space-y-3 text-sm">
+          {/* Install Notes */}
+          {hasNotes && (
+            <div className="rounded-lg bg-surface p-3">
+              <div className="flex items-center gap-1.5 mb-1 text-muted">
+                <ClipboardList className="w-3.5 h-3.5" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Install Notes</span>
+              </div>
+              <p className="text-foreground whitespace-pre-wrap">{data.job.installNotes}</p>
+            </div>
+          )}
+
+          {/* Lead Paint Warning */}
+          {hasLeadPaint && (
+            <div className="rounded-lg bg-danger/5 border border-danger/20 p-3 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-danger mt-0.5 shrink-0" />
+              <p className="text-danger font-medium">Lead paint present — follow safe work practices</p>
+            </div>
+          )}
+
+          {/* Trim / Finish */}
+          {data.globalTrim && (data.globalTrim.species || data.globalTrim.trimStyle || data.globalTrim.finishType) && (
+            <div className="rounded-lg bg-surface p-3">
+              <div className="flex items-center gap-1.5 mb-1 text-muted">
+                <Paintbrush className="w-3.5 h-3.5" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Trim & Finish</span>
+              </div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                {data.globalTrim.species && (
+                  <TrimLine label="Species" value={data.globalTrim.species} />
+                )}
+                {data.globalTrim.trimStyle && (
+                  <TrimLine label="Style" value={data.globalTrim.trimStyle} />
+                )}
+                {data.globalTrim.casingProfile && (
+                  <TrimLine label="Casing" value={data.globalTrim.casingProfile} />
+                )}
+                {data.globalTrim.finishType && (
+                  <TrimLine label="Finish" value={data.globalTrim.finishType} />
+                )}
+                {data.globalTrim.stain && (
+                  <TrimLine label="Stain" value={data.globalTrim.stain} />
+                )}
+                {data.globalTrim.paint && (
+                  <TrimLine label="Paint" value={data.globalTrim.paint} />
+                )}
+                {(data.globalTrim.jambDepthWhole || data.globalTrim.jambDepthFrac) && (
+                  <TrimLine
+                    label="Jamb"
+                    value={`${data.globalTrim.jambDepthWhole || "0"}${data.globalTrim.jambDepthFrac ? ` ${fracToString(data.globalTrim.jambDepthFrac)}` : ""}"`}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Prefinish Notes */}
+          {hasPrefinish && (
+            <div className="rounded-lg bg-surface p-3">
+              <div className="flex items-center gap-1.5 mb-1 text-muted">
+                <Paintbrush className="w-3.5 h-3.5" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Prefinish Notes</span>
+              </div>
+              <p className="text-foreground whitespace-pre-wrap">{data.job.prefinishNotes}</p>
+            </div>
+          )}
+
+          {/* Unit List */}
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+              Units ({data.units.length})
+            </span>
+            <div className="mt-1 space-y-1.5">
+              {data.units.map((unit, i) => (
+                <div
+                  key={i}
+                  className="rounded-lg bg-surface p-2.5 flex items-start justify-between gap-2"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">{unit.type}</span>
+                      {unit.qty > 1 && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-primary-light text-primary font-medium">
+                          x{unit.qty}
+                        </span>
+                      )}
+                      {unit.grilles && (
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-primary-light text-primary font-medium">
+                          Grilles
+                        </span>
+                      )}
+                      {unit.tempered && (
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-warning/15 text-warning font-medium">
+                          Tempered
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted mt-0.5">
+                      {formatSize(unit)}
+                      {unit.extColor && ` · Ext: ${unit.extColor}`}
+                      {unit.intColor && ` · Int: ${unit.intColor}`}
+                    </div>
+                    {unit.intFinish && (
+                      <div className="text-xs text-muted">{unit.intFinish}</div>
+                    )}
+                  </div>
+                  <span className="text-xs text-muted shrink-0">{unit.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrimLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="text-xs">
+      <span className="text-muted">{label}: </span>
+      <span className="text-foreground font-medium">{value}</span>
     </div>
   );
 }
