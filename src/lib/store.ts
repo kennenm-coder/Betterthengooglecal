@@ -1,5 +1,5 @@
 import { WorkOrder } from "./types";
-import { supabase } from "./supabase";
+import { getSupabase } from "./supabase";
 
 const STORAGE_KEY = "rba-field-cal-data";
 const TIMESTAMP_KEY = "rba-field-cal-updated";
@@ -102,6 +102,9 @@ function workOrderToRow(wo: WorkOrder) {
 }
 
 export async function loadOrdersFromSupabase(): Promise<WorkOrder[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+
   const { data, error } = await supabase
     .from("work_orders")
     .select("*")
@@ -112,6 +115,9 @@ export async function loadOrdersFromSupabase(): Promise<WorkOrder[]> {
 }
 
 export async function upsertWorkOrders(orders: WorkOrder[]): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase) return false;
+
   const rows = orders.map(workOrderToRow);
   const { error } = await supabase
     .from("work_orders")
@@ -120,11 +126,14 @@ export async function upsertWorkOrders(orders: WorkOrder[]): Promise<boolean> {
 }
 
 export async function fetchMaterialJobs(): Promise<Map<string, any>> {
+  const jobByPO = new Map<string, any>();
+  const supabase = getSupabase();
+  if (!supabase) return jobByPO;
+
   const { data, error } = await supabase
     .from("jobs")
     .select("id, data");
 
-  const jobByPO = new Map<string, any>();
   if (error || !data) return jobByPO;
 
   for (const row of data) {
@@ -154,6 +163,5 @@ export function enrichWithMaterials(
   }));
 }
 
-// Keep old exports as aliases for backwards compat during migration
 export const saveOrders = saveOrdersLocal;
 export const loadOrders = loadOrdersLocal;

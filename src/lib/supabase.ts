@@ -1,6 +1,16 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 const SUPA_URL = "https://xusqjotoyntnfysquvlv.supabase.co";
 const SUPA_KEY = "sb_publishable_HQigRx1Q8I6OpPffXMxRZQ_iqegVCka";
 
-export const supabase = createClient(SUPA_URL, SUPA_KEY);
+let _client: SupabaseClient | null = null;
+
+export function getSupabase(): SupabaseClient | null {
+  if (_client) return _client;
+  try {
+    _client = createClient(SUPA_URL, SUPA_KEY);
+    return _client;
+  } catch {
+    return null;
+  }
+}
