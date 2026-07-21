@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { useData } from "@/components/DataProvider";
 import { parseXlsHtml } from "@/lib/parse-xls";
+import { upsertWorkOrders } from "@/lib/store";
 import BottomNav from "@/components/BottomNav";
 import { Upload, CheckCircle, AlertCircle, FileSpreadsheet, Loader2 } from "lucide-react";
 import { format, parseISO } from "date-fns";
@@ -19,32 +20,33 @@ export default function AdminPage() {
     setResult(null);
 
     try {
-      // Try server upload first (works on Vercel with Blob configured)
-      const formData = new FormData();
-      formData.append("file", file);
+      const text = await file.text();
+      const parsed = parseXlsHtml(text);
 
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      if (parsed.length === 0) {
+        setResult({ success: false, message: "No orders found in file." });
+        setUploading(false);
+        return;
+      }
 
-      if (res.ok) {
-        const data = await res.json();
+      // Save to localStorage immediately as fallback
+      setOrdersLocal(parsed);
+
+      // Upsert to Supabase work_orders table
+      const supaOk = await upsertWorkOrders(parsed);
+
+      if (supaOk) {
+        // Refresh to pull enriched data (with material links)
         await refresh();
         setResult({
           success: true,
-          message: `Uploaded ${data.count} orders successfully.`,
+          message: `Uploaded ${parsed.length} orders to cloud. Material data will link automatically.`,
         });
       } else {
-        // Fall back to local-only parsing
-        const text = await file.text();
-        const parsed = parseXlsHtml(text);
-        if (parsed.length === 0) {
-          setResult({ success: false, message: "No orders found in file." });
-        } else {
-          setOrdersLocal(parsed);
-          setResult({
-            success: true,
-            message: `Loaded ${parsed.length} orders locally. (Server storage unavailable — data is on this device only.)`,
-          });
-        }
+        setResult({
+          success: true,
+          message: `Loaded ${parsed.length} orders locally. (Cloud sync unavailable — data is on this device only.)`,
+        });
       }
     } catch {
       // Full fallback to client-side parsing

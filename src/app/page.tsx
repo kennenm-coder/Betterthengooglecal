@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { useData } from "@/components/DataProvider";
 import DayView from "@/components/DayView";
 import WeekView from "@/components/WeekView";
@@ -34,11 +34,20 @@ export default function CalendarPage() {
 
   const filteredOrders = useMemo(() => applyFilters(orders, filters), [orders, filters]);
 
-  const goToday = () => setCurrentDate(new Date());
-  const goPrev = useCallback(() =>
-    setCurrentDate((d) => (view === "day" ? subDays(d, 1) : subWeeks(d, 1))), [view]);
-  const goNext = useCallback(() =>
-    setCurrentDate((d) => (view === "day" ? addDays(d, 1) : addWeeks(d, 1))), [view]);
+  const [slideDir, setSlideDir] = useState<"next" | "prev" | null>(null);
+  const slideKey = useRef(0);
+
+  const goToday = () => { setSlideDir(null); setCurrentDate(new Date()); };
+  const goPrev = useCallback(() => {
+    slideKey.current++;
+    setSlideDir("prev");
+    setCurrentDate((d) => (view === "day" ? subDays(d, 1) : subWeeks(d, 1)));
+  }, [view]);
+  const goNext = useCallback(() => {
+    slideKey.current++;
+    setSlideDir("next");
+    setCurrentDate((d) => (view === "day" ? addDays(d, 1) : addWeeks(d, 1)));
+  }, [view]);
 
   if (loading) {
     return (
@@ -101,7 +110,13 @@ export default function CalendarPage() {
         </div>
       </header>
 
-      <div className="flex-1 flex flex-col min-h-0">
+      <div
+        key={slideKey.current}
+        className={`flex-1 flex flex-col min-h-0 ${
+          slideDir === "next" ? "slide-next" : slideDir === "prev" ? "slide-prev" : ""
+        }`}
+        onAnimationEnd={() => setSlideDir(null)}
+      >
         {view === "day" ? (
           <DayView
             orders={filteredOrders}
