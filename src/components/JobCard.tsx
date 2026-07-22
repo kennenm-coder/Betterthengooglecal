@@ -292,7 +292,10 @@ export default function JobCard({
           {/* Open Install Instructions — navigates to full page */}
           {mat && (
             <button
-              onClick={() => router.push(`/install/${mat.id}`)}
+              onClick={() => {
+                window.history.replaceState(null, "", `/?order=${order.id}`);
+                router.push(`/install/${mat.id}`);
+              }}
               className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-primary text-white text-sm font-medium active:scale-[0.98] transition-transform"
             >
               <FileText className="w-4 h-4" />

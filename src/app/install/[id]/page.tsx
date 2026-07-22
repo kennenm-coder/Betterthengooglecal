@@ -363,48 +363,6 @@ export default function InstallInstructionsPage() {
           </div>
         )}
 
-        {/* Trim & Finish */}
-        {job.globalTrim &&
-          (job.globalTrim.species ||
-            job.globalTrim.trimStyle ||
-            job.globalTrim.finishType) && (
-            <div className="mb-5">
-              <div className="bg-[#1a1a1a] text-white text-[11px] font-bold tracking-wider uppercase px-3.5 py-1.5">
-                Trim & Finish
-              </div>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 px-3.5 py-3 text-sm">
-                {job.globalTrim.species && (
-                  <TrimLine label="Species" value={job.globalTrim.species} />
-                )}
-                {job.globalTrim.trimStyle && (
-                  <TrimLine label="Style" value={job.globalTrim.trimStyle} />
-                )}
-                {job.globalTrim.casingProfile && (
-                  <TrimLine label="Casing" value={job.globalTrim.casingProfile} />
-                )}
-                {job.globalTrim.finishType && (
-                  <TrimLine label="Finish" value={job.globalTrim.finishType} />
-                )}
-                {job.globalTrim.stain && (
-                  <TrimLine label="Stain" value={job.globalTrim.stain} />
-                )}
-                {job.globalTrim.paint && (
-                  <TrimLine label="Paint" value={job.globalTrim.paint} />
-                )}
-                {(job.globalTrim.jambDepthWhole || job.globalTrim.jambDepthFrac) && (
-                  <TrimLine
-                    label="Jamb"
-                    value={`${job.globalTrim.jambDepthWhole || "0"}${
-                      job.globalTrim.jambDepthFrac
-                        ? ` ${fracToString(job.globalTrim.jambDepthFrac)}`
-                        : ""
-                    }"`}
-                  />
-                )}
-              </div>
-            </div>
-          )}
-
         {/* Prefinish / Warehouse Notes */}
         {(job.job.prefinishNotes || job.job.pfWindowsNeeded) && (
           <div className="mb-5">
@@ -456,11 +414,3 @@ export default function InstallInstructionsPage() {
   );
 }
 
-function TrimLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="text-xs">
-      <span className="text-muted">{label}: </span>
-      <span className="text-foreground font-medium">{value}</span>
-    </div>
-  );
-}

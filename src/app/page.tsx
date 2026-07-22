@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useData } from "@/components/DataProvider";
 import DayView from "@/components/DayView";
 import WeekView from "@/components/WeekView";
@@ -14,6 +15,8 @@ import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database } from "lucide-
 
 export default function CalendarPage() {
   const { orders, loading, refresh } = useData();
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefresh = async () => {
@@ -32,6 +35,16 @@ export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedOrder, setSelectedOrder] = useState<WorkOrder | null>(null);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+
+  // Restore OrderSheet when returning from install instructions page
+  useEffect(() => {
+    const orderId = searchParams.get("order");
+    if (orderId && orders.length > 0) {
+      const match = orders.find((o) => o.id === orderId);
+      if (match) setSelectedOrder(match);
+      window.history.replaceState(null, "", "/");
+    }
+  }, [searchParams, orders]);
 
   const filteredOrders = useMemo(() => applyFilters(orders, filters), [orders, filters]);
 
