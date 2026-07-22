@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo, useCallback, useRef } from "react";
+import { Suspense, useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useData } from "@/components/DataProvider";
 import DayView from "@/components/DayView";
 import WeekView from "@/components/WeekView";
@@ -12,8 +13,17 @@ import { WorkOrder, ViewMode } from "@/lib/types";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday } from "date-fns";
 import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database } from "lucide-react";
 
-export default function CalendarPage() {
+export default function CalendarPageWrapper() {
+  return (
+    <Suspense fallback={<div className="flex-1 flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+      <CalendarPage />
+    </Suspense>
+  );
+}
+
+function CalendarPage() {
   const { orders, loading, refresh } = useData();
+  const searchParams = useSearchParams();
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefresh = async () => {
@@ -32,6 +42,16 @@ export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedOrder, setSelectedOrder] = useState<WorkOrder | null>(null);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+
+  // Restore OrderSheet when returning from install instructions page
+  useEffect(() => {
+    const orderId = searchParams.get("order");
+    if (orderId && orders.length > 0) {
+      const match = orders.find((o) => o.id === orderId);
+      if (match) setSelectedOrder(match);
+      window.history.replaceState(null, "", "/");
+    }
+  }, [searchParams, orders]);
 
   const filteredOrders = useMemo(() => applyFilters(orders, filters), [orders, filters]);
 

@@ -24,17 +24,21 @@ export function searchMaterialJobs(
   query: string
 ): MaterialJobData[] {
   const q = query.toLowerCase().trim();
-  if (!q) return jobs;
+  if (!q) return [];
 
   return jobs.filter((j) => {
-    const job = j.job;
-    return (
-      job.customerName.toLowerCase().includes(q) ||
-      job.poNumber.toLowerCase().includes(q) ||
-      job.address.toLowerCase().includes(q) ||
-      job.techMeasurer.toLowerCase().includes(q) ||
-      job.installNotes?.toLowerCase().includes(q) ||
-      j.units.some((u) => u.type.toLowerCase().includes(q))
-    );
+    try {
+      const job = j.job;
+      return (
+        (job.customerName || "").toLowerCase().includes(q) ||
+        (job.poNumber || "").toLowerCase().includes(q) ||
+        (job.address || "").toLowerCase().includes(q) ||
+        (job.techMeasurer || "").toLowerCase().includes(q) ||
+        (job.installNotes || "").toLowerCase().includes(q) ||
+        j.units.some((u) => (u.type || u.unitType || "").toLowerCase().includes(q))
+      );
+    } catch {
+      return false;
+    }
   });
 }

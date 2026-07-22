@@ -41,6 +41,11 @@ export interface MaterialJobData {
     additionalMaterials: any[];
     universalFinish: string;
     vendorAssignments?: Record<string, any>;
+    unitSummaryRows?: any[];
+    globalMaterials?: any[];
+    bayMaterials?: any[];
+    pfWindowsNeeded?: boolean;
+    pfWindowsList?: string;
   };
   units: MaterialUnit[];
   globalTrim: {
@@ -59,6 +64,7 @@ export interface MaterialJobData {
 }
 
 export interface MaterialUnit {
+  [key: string]: any;
   label: string;
   type: string;
   qty: number;
@@ -73,6 +79,40 @@ export interface MaterialUnit {
   tempered: boolean;
   isMisc?: boolean;
   approved?: boolean;
+  // Actual DB field names from material list app
+  unitType?: string;
+  exteriorColor?: string;
+  interiorColor?: string;
+  abbrev?: string;
+  subType?: string;
+  frame?: string;
+  summaryAbbrev?: string;
+  summaryExterior?: string;
+  summaryInterior?: string;
+  summarySubType?: string;
+  summaryFrameType?: string;
+  summaryQty?: number;
+  description?: string;
+  location?: string;
+  species?: string;
+  trimStyle?: string;
+  casingProfile?: string;
+  finishType?: string;
+  finish?: string;
+  jambDepthWhole?: string | number | null;
+  jambDepthFrac?: number | null;
+  jambSpecies?: string;
+  jambMaterial?: string;
+  specDescription?: string;
+  deepEJ?: boolean;
+  stool5_4?: boolean;
+  nsprGlassS1?: string;
+  nsprGlassS2?: string;
+  nsprGrilleType?: string;
+  nsprGrillePattern?: string;
+  nsprScreenType?: string;
+  nsprFrameType?: string;
+  nsprSashOp?: string;
 }
 
 export type ViewMode = "day" | "week" | "list";

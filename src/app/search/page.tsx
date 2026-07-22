@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useData } from "@/components/DataProvider";
 import JobCard from "@/components/JobCard";
 import BottomNav from "@/components/BottomNav";
@@ -9,9 +9,13 @@ import { fetchAllMaterialJobs } from "@/lib/store";
 import { lastFirst } from "@/lib/format-utils";
 import { MaterialJobData } from "@/lib/types";
 import { Search, Loader2, X, Database } from "lucide-react";
+import { useRouter } from "next/navigation";
+
+const MAX_RESULTS = 50;
 
 export default function SearchPage() {
   const { orders, loading } = useData();
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [materialJobs, setMaterialJobs] = useState<MaterialJobData[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
@@ -32,13 +36,23 @@ export default function SearchPage() {
     [materialJobs, scheduledPOs]
   );
 
-  const orderResults = useMemo(() => searchOrders(orders, query), [orders, query]);
+  const trimmed = query.trim();
+
+  const orderResults = useMemo(
+    () => (trimmed.length >= 2 ? searchOrders(orders, trimmed).slice(0, MAX_RESULTS) : []),
+    [orders, trimmed]
+  );
   const jobResults = useMemo(
-    () => searchMaterialJobs(unscheduledJobs, query),
-    [unscheduledJobs, query]
+    () => (trimmed.length >= 2 ? searchMaterialJobs(unscheduledJobs, trimmed).slice(0, MAX_RESULTS) : []),
+    [unscheduledJobs, trimmed]
   );
 
   const totalResults = orderResults.length + jobResults.length;
+
+  const openInstall = useCallback(
+    (id: string) => router.push(`/install/${id}`),
+    [router]
+  );
 
   return (
     <div className="flex flex-col h-full">
@@ -62,7 +76,7 @@ export default function SearchPage() {
             </button>
           )}
         </div>
-        {query && (
+        {trimmed.length >= 2 && (
           <p className="text-xs text-muted mt-1.5 px-1">
             {totalResults} result{totalResults !== 1 ? "s" : ""}
             {jobResults.length > 0 && (
@@ -79,14 +93,14 @@ export default function SearchPage() {
           <div className="flex items-center justify-center h-40">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
           </div>
-        ) : !query ? (
+        ) : trimmed.length < 2 ? (
           <div className="flex flex-col items-center justify-center h-40 text-muted text-sm">
             <Search className="w-8 h-8 mb-2 opacity-40" />
-            <p>Search for a customer, work order, or address</p>
+            <p>{trimmed.length === 0 ? "Search for a customer, work order, or address" : "Type at least 2 characters to search"}</p>
           </div>
         ) : totalResults === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-muted text-sm">
-            <p>No results found for &ldquo;{query}&rdquo;</p>
+            <p>No results found for &ldquo;{trimmed}&rdquo;</p>
           </div>
         ) : (
           <div className="p-3 space-y-3">
@@ -112,7 +126,7 @@ export default function SearchPage() {
                   </h3>
                 </div>
                 {jobResults.map((job) => (
-                  <MaterialJobTile key={job.id} job={job} />
+                  <MaterialJobTile key={job.id} job={job} onTap={openInstall} />
                 ))}
               </>
             )}
@@ -125,7 +139,7 @@ export default function SearchPage() {
   );
 }
 
-function MaterialJobTile({ job }: { job: MaterialJobData }) {
+function MaterialJobTile({ job, onTap }: { job: MaterialJobData; onTap: (id: string) => void }) {
   const unitCount = job.units.length;
   const unitSummary = job.units
     .slice(0, 3)
@@ -133,7 +147,7 @@ function MaterialJobTile({ job }: { job: MaterialJobData }) {
     .join(", ");
 
   return (
-    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+    <button onClick={() => onTap(job.id)} className="w-full text-left rounded-lg border border-border bg-surface overflow-hidden active:scale-[0.99] transition-transform">
       <div className="flex">
         <div className="w-1 bg-amber-600 shrink-0" />
         <div className="flex-1 px-3 py-2.5">
@@ -171,6 +185,6 @@ function MaterialJobTile({ job }: { job: MaterialJobData }) {
           )}
         </div>
       </div>
-    </div>
+    </button>
   );
 }
