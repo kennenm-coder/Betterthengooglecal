@@ -411,6 +411,32 @@ function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
   const [open, setOpen] = useState(false);
   const ext = getExterior(unit);
   const int_ = getInterior(unit);
+  const unitLabel = unit.label || `#${index + 1}`;
+  const unitName = unit.type || unit.unitType || unit.abbrev || "Unit";
+  const subType = unit.subType || unit.summarySubType || "";
+  const frame = unit.frame || unit.summaryFrameType || unit.nsprFrameType || "";
+  const hasGrilles = unit.grilles || !!unit.nsprGrilleType;
+  const grilleDetail = unit.nsprGrilleType || (unit.grilles ? "Yes" : "No");
+  const glassS1 = unit.nsprGlassS1 || "";
+  const glassS2 = unit.nsprGlassS2 || "";
+  const isTempered = unit.tempered || glassS1.includes("T") || glassS2.includes("T");
+
+  if (unit.isMisc) {
+    return (
+      <div className="rounded-lg border border-border overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-2 bg-surface">
+          <span className="text-xs text-muted font-mono shrink-0">{unitLabel}</span>
+          <span className="text-sm font-medium">MISC</span>
+          <span className="text-sm text-muted truncate">{unit.description || ""}</span>
+          {(unit.qty || 1) > 1 && (
+            <span className="text-xs px-1.5 py-0.5 rounded bg-primary-light text-primary font-medium shrink-0">
+              x{unit.qty}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg border border-border overflow-hidden">
@@ -419,21 +445,21 @@ function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
         className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left bg-surface hover:bg-surface/80 transition-colors"
       >
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs text-muted font-mono shrink-0">{unit.label || `#${index + 1}`}</span>
-          <span className="text-sm font-medium truncate">{unit.type}</span>
-          {unit.qty > 1 && (
+          <span className="text-xs text-muted font-mono shrink-0">{unitLabel}</span>
+          <span className="text-sm font-medium truncate">{unitName}</span>
+          {(unit.qty || unit.summaryQty || 0) > 1 && (
             <span className="text-xs px-1.5 py-0.5 rounded bg-primary-light text-primary font-medium shrink-0">
-              x{unit.qty}
+              x{unit.qty || unit.summaryQty}
             </span>
           )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          {unit.grilles && (
+          {hasGrilles && (
             <span className="text-[10px] px-1 py-0.5 rounded bg-primary-light text-primary font-medium">
               Grilles
             </span>
           )}
-          {unit.tempered && (
+          {isTempered && (
             <span className="text-[10px] px-1 py-0.5 rounded bg-warning/15 text-warning font-medium">
               Tempered
             </span>
@@ -448,15 +474,40 @@ function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
 
       {open && (
         <div className="px-3 py-2 border-t border-border text-sm space-y-1">
+          {subType && <SpecLine label="Product" value={subType} />}
           <SpecLine label="Size" value={formatSize(unit)} />
           {ext && <SpecLine label="Ext Color" value={ext} />}
           {int_ && <SpecLine label="Int Color" value={int_} />}
           {unit.intFinish && <SpecLine label="Int Finish" value={unit.intFinish} />}
-          <SpecLine label="Grilles" value={unit.grilles ? "Yes" : "No"} />
-          <SpecLine label="Tempered" value={unit.tempered ? "Yes" : "No"} />
-          {unit.qty > 1 && <SpecLine label="Qty" value={String(unit.qty)} />}
-          {unit.subType && <SpecLine label="Details" value={unit.subType} />}
-          {unit.frame && <SpecLine label="Frame" value={unit.frame} />}
+          {frame && <SpecLine label="Frame" value={frame} />}
+          <SpecLine label="Grilles" value={grilleDetail} />
+          {unit.nsprGrillePattern && <SpecLine label="Grille Pattern" value={unit.nsprGrillePattern} />}
+          {glassS1 && <SpecLine label="Glass S1" value={glassS1} />}
+          {glassS2 && <SpecLine label="Glass S2" value={glassS2} />}
+          {unit.nsprScreenType && <SpecLine label="Screen" value={unit.nsprScreenType} />}
+          {unit.nsprSashOp && <SpecLine label="Sash Operation" value={unit.nsprSashOp} />}
+          {unit.location && <SpecLine label="Location" value={unit.location} />}
+          {unit.species && <SpecLine label="Species" value={unit.species} />}
+          {unit.trimStyle && <SpecLine label="Trim Style" value={unit.trimStyle} />}
+          {unit.casingProfile && <SpecLine label="Casing" value={unit.casingProfile} />}
+          {unit.finishType && <SpecLine label="Finish Type" value={unit.finishType} />}
+          {unit.finish && <SpecLine label="Finish" value={unit.finish} />}
+          {unit.jambDepthWhole && (
+            <SpecLine
+              label="Jamb Depth"
+              value={`${unit.jambDepthWhole}${unit.jambDepthFrac ? ` ${fracToString(unit.jambDepthFrac)}` : ""}"`}
+            />
+          )}
+          {unit.jambSpecies && <SpecLine label="Jamb Species" value={unit.jambSpecies} />}
+          {unit.jambMaterial && <SpecLine label="Jamb Material" value={unit.jambMaterial} />}
+          {unit.deepEJ && <SpecLine label="Deep EJ" value="Yes" />}
+          {unit.stool5_4 && <SpecLine label="Stool" value="5/4" />}
+          {unit.specDescription && (
+            <div className="mt-1 pt-1 border-t border-border/50">
+              <div className="text-[10px] font-semibold uppercase text-muted mb-0.5">Full Specs</div>
+              <p className="text-xs text-muted whitespace-pre-wrap">{unit.specDescription}</p>
+            </div>
+          )}
         </div>
       )}
     </div>

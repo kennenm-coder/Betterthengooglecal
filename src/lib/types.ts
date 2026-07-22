@@ -64,6 +64,7 @@ export interface MaterialJobData {
 }
 
 export interface MaterialUnit {
+  [key: string]: any;
   label: string;
   type: string;
   qty: number;
@@ -78,7 +79,8 @@ export interface MaterialUnit {
   tempered: boolean;
   isMisc?: boolean;
   approved?: boolean;
-  // Fields from material list app (actual DB field names)
+  // Actual DB field names from material list app
+  unitType?: string;
   exteriorColor?: string;
   interiorColor?: string;
   abbrev?: string;
@@ -89,7 +91,28 @@ export interface MaterialUnit {
   summaryInterior?: string;
   summarySubType?: string;
   summaryFrameType?: string;
+  summaryQty?: number;
   description?: string;
+  location?: string;
+  species?: string;
+  trimStyle?: string;
+  casingProfile?: string;
+  finishType?: string;
+  finish?: string;
+  jambDepthWhole?: string | number | null;
+  jambDepthFrac?: number | null;
+  jambSpecies?: string;
+  jambMaterial?: string;
+  specDescription?: string;
+  deepEJ?: boolean;
+  stool5_4?: boolean;
+  nsprGlassS1?: string;
+  nsprGlassS2?: string;
+  nsprGrilleType?: string;
+  nsprGrillePattern?: string;
+  nsprScreenType?: string;
+  nsprFrameType?: string;
+  nsprSashOp?: string;
 }
 
 export type ViewMode = "day" | "week" | "list";

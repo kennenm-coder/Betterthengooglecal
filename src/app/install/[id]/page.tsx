@@ -161,8 +161,12 @@ export default function InstallInstructionsPage() {
   const totalQty =
     summaryRows.reduce((s, r) => s + r.qty, 0) +
     miscUnits.reduce((s, u) => s + (u.qty || 1), 0);
+  const globalMaterials = job.job.globalMaterials || [];
   const extraMaterials = job.job.extraMaterials || [];
   const additionalMaterials = job.job.additionalMaterials || [];
+  const nwoMaterials = globalMaterials.length > 0
+    ? globalMaterials
+    : [...extraMaterials, ...additionalMaterials];
 
   const thStyle =
     "px-2.5 py-1.5 text-[10px] font-bold tracking-wider uppercase text-white text-left";
@@ -292,7 +296,7 @@ export default function InstallInstructionsPage() {
         )}
 
         {/* NWO Material List */}
-        {(extraMaterials.length > 0 || additionalMaterials.length > 0) && (
+        {nwoMaterials.length > 0 && (
           <div className="mb-5 overflow-x-auto">
             <table className="w-full border-collapse text-left">
               <thead>
@@ -315,7 +319,7 @@ export default function InstallInstructionsPage() {
                 </tr>
               </thead>
               <tbody>
-                {[...extraMaterials, ...additionalMaterials]
+                {nwoMaterials
                   .filter((r: any) => r.item || r.profile || r.description)
                   .map((r: any, i: number) => {
                     const vendorAssignments = job.job.vendorAssignments || {};
