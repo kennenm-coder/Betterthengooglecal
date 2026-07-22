@@ -16,12 +16,11 @@ import {
   Briefcase,
   ExternalLink,
   Package,
-  AlertTriangle,
-  Paintbrush,
   ClipboardList,
   FileText,
 } from "lucide-react";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { parseISO, isSameDay } from "date-fns";
 
 function phoneHref(phone: string): string {
@@ -61,6 +60,14 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function getExterior(u: MaterialUnit): string {
+  return u.exteriorColor || u.summaryExterior || u.extColor || "";
+}
+
+function getInterior(u: MaterialUnit): string {
+  return u.interiorColor || u.summaryInterior || u.intColor || "";
+}
+
 export default function JobCard({
   order,
   compact = false,
@@ -69,6 +76,7 @@ export default function JobCard({
   compact?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const router = useRouter();
   const typeBg = typeColor(order.workOrderType);
   const multiDay = isMultiDay(order);
   const mat = order.materialJob;
@@ -281,10 +289,18 @@ export default function JobCard({
             </div>
           )}
 
-          {/* Install Instructions button + Product Specs */}
-          {mat && <InstallInstructionsSection data={mat} />}
+          {/* Open Install Instructions — navigates to full page */}
+          {mat && (
+            <button
+              onClick={() => router.push(`/install/${mat.id}`)}
+              className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-primary text-white text-sm font-medium active:scale-[0.98] transition-transform"
+            >
+              <FileText className="w-4 h-4" />
+              Open Install Instructions
+            </button>
+          )}
 
-          {/* Product Specs — always shown when material job is paired */}
+          {/* Product Specs — collapsible per-unit */}
           {mat && mat.units.length > 0 && <ProductSpecs units={mat.units} />}
         </div>
       </div>
@@ -368,89 +384,6 @@ function formatSize(u: MaterialUnit): string {
   return `${w}" x ${h}"`;
 }
 
-/* ── Install Instructions ── */
-
-function InstallInstructionsSection({ data }: { data: MaterialJobData }) {
-  const [open, setOpen] = useState(false);
-
-  const hasLeadPaint = data.job.leadPaint;
-  const hasTrim =
-    data.globalTrim &&
-    (data.globalTrim.species || data.globalTrim.trimStyle || data.globalTrim.finishType);
-  const hasPrefinish = data.job.prefinishNotes?.trim();
-  const hasContent = hasLeadPaint || hasTrim || hasPrefinish;
-
-  if (!hasContent) return null;
-
-  return (
-    <div className="mt-3">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-primary text-white text-sm font-medium active:scale-[0.98] transition-transform"
-      >
-        <FileText className="w-4 h-4" />
-        {open ? "Hide Install Instructions" : "Open Install Instructions"}
-      </button>
-
-      {open && (
-        <div className="mt-2 space-y-3 text-sm">
-          {hasLeadPaint && (
-            <div className="rounded-lg bg-danger/5 border border-danger/20 p-3 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-danger mt-0.5 shrink-0" />
-              <p className="text-danger font-medium">Lead paint present — follow safe work practices</p>
-            </div>
-          )}
-
-          {hasTrim && (
-            <div className="rounded-lg bg-surface p-3">
-              <div className="flex items-center gap-1.5 mb-1 text-muted">
-                <Paintbrush className="w-3.5 h-3.5" />
-                <span className="text-xs font-semibold uppercase tracking-wide">Trim & Finish</span>
-              </div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                {data.globalTrim.species && (
-                  <TrimLine label="Species" value={data.globalTrim.species} />
-                )}
-                {data.globalTrim.trimStyle && (
-                  <TrimLine label="Style" value={data.globalTrim.trimStyle} />
-                )}
-                {data.globalTrim.casingProfile && (
-                  <TrimLine label="Casing" value={data.globalTrim.casingProfile} />
-                )}
-                {data.globalTrim.finishType && (
-                  <TrimLine label="Finish" value={data.globalTrim.finishType} />
-                )}
-                {data.globalTrim.stain && (
-                  <TrimLine label="Stain" value={data.globalTrim.stain} />
-                )}
-                {data.globalTrim.paint && (
-                  <TrimLine label="Paint" value={data.globalTrim.paint} />
-                )}
-                {(data.globalTrim.jambDepthWhole || data.globalTrim.jambDepthFrac) && (
-                  <TrimLine
-                    label="Jamb"
-                    value={`${data.globalTrim.jambDepthWhole || "0"}${data.globalTrim.jambDepthFrac ? ` ${fracToString(data.globalTrim.jambDepthFrac)}` : ""}"`}
-                  />
-                )}
-              </div>
-            </div>
-          )}
-
-          {hasPrefinish && (
-            <div className="rounded-lg bg-surface p-3">
-              <div className="flex items-center gap-1.5 mb-1 text-muted">
-                <Paintbrush className="w-3.5 h-3.5" />
-                <span className="text-xs font-semibold uppercase tracking-wide">Prefinish Notes</span>
-              </div>
-              <p className="text-foreground whitespace-pre-wrap">{data.job.prefinishNotes}</p>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ── Product Specs ── */
 
 function ProductSpecs({ units }: { units: MaterialUnit[] }) {
@@ -473,6 +406,8 @@ function ProductSpecs({ units }: { units: MaterialUnit[] }) {
 
 function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
   const [open, setOpen] = useState(false);
+  const ext = getExterior(unit);
+  const int_ = getInterior(unit);
 
   return (
     <div className="rounded-lg border border-border overflow-hidden">
@@ -511,12 +446,14 @@ function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
       {open && (
         <div className="px-3 py-2 border-t border-border text-sm space-y-1">
           <SpecLine label="Size" value={formatSize(unit)} />
-          {unit.extColor && <SpecLine label="Ext Color" value={unit.extColor} />}
-          {unit.intColor && <SpecLine label="Int Color" value={unit.intColor} />}
+          {ext && <SpecLine label="Ext Color" value={ext} />}
+          {int_ && <SpecLine label="Int Color" value={int_} />}
           {unit.intFinish && <SpecLine label="Int Finish" value={unit.intFinish} />}
           <SpecLine label="Grilles" value={unit.grilles ? "Yes" : "No"} />
           <SpecLine label="Tempered" value={unit.tempered ? "Yes" : "No"} />
           {unit.qty > 1 && <SpecLine label="Qty" value={String(unit.qty)} />}
+          {unit.subType && <SpecLine label="Details" value={unit.subType} />}
+          {unit.frame && <SpecLine label="Frame" value={unit.frame} />}
         </div>
       )}
     </div>
@@ -527,15 +464,6 @@ function SpecLine({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between text-xs">
       <span className="text-muted">{label}</span>
-      <span className="text-foreground font-medium">{value}</span>
-    </div>
-  );
-}
-
-function TrimLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="text-xs">
-      <span className="text-muted">{label}: </span>
       <span className="text-foreground font-medium">{value}</span>
     </div>
   );

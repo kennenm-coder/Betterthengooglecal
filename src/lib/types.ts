@@ -41,6 +41,11 @@ export interface MaterialJobData {
     additionalMaterials: any[];
     universalFinish: string;
     vendorAssignments?: Record<string, any>;
+    unitSummaryRows?: any[];
+    globalMaterials?: any[];
+    bayMaterials?: any[];
+    pfWindowsNeeded?: boolean;
+    pfWindowsList?: string;
   };
   units: MaterialUnit[];
   globalTrim: {
@@ -73,6 +78,18 @@ export interface MaterialUnit {
   tempered: boolean;
   isMisc?: boolean;
   approved?: boolean;
+  // Fields from material list app (actual DB field names)
+  exteriorColor?: string;
+  interiorColor?: string;
+  abbrev?: string;
+  subType?: string;
+  frame?: string;
+  summaryAbbrev?: string;
+  summaryExterior?: string;
+  summaryInterior?: string;
+  summarySubType?: string;
+  summaryFrameType?: string;
+  description?: string;
 }
 
 export type ViewMode = "day" | "week" | "list";

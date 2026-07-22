@@ -9,6 +9,7 @@ import { fetchAllMaterialJobs } from "@/lib/store";
 import { lastFirst } from "@/lib/format-utils";
 import { MaterialJobData } from "@/lib/types";
 import { Search, Loader2, X, Database } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 export default function SearchPage() {
   const { orders, loading } = useData();
@@ -126,6 +127,7 @@ export default function SearchPage() {
 }
 
 function MaterialJobTile({ job }: { job: MaterialJobData }) {
+  const router = useRouter();
   const unitCount = job.units.length;
   const unitSummary = job.units
     .slice(0, 3)
@@ -133,7 +135,7 @@ function MaterialJobTile({ job }: { job: MaterialJobData }) {
     .join(", ");
 
   return (
-    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+    <button onClick={() => router.push(`/install/${job.id}`)} className="w-full text-left rounded-lg border border-border bg-surface overflow-hidden active:scale-[0.99] transition-transform">
       <div className="flex">
         <div className="w-1 bg-amber-600 shrink-0" />
         <div className="flex-1 px-3 py-2.5">
@@ -171,6 +173,6 @@ function MaterialJobTile({ job }: { job: MaterialJobData }) {
           )}
         </div>
       </div>
-    </div>
+    </button>
   );
 }

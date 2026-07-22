@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { MaterialJobData, WorkOrder } from "@/lib/types";
 import { fetchAllMaterialJobs } from "@/lib/store";
 import { lastFirst } from "@/lib/format-utils";
@@ -13,6 +14,7 @@ export default function UnscheduledJobs({
   orders: WorkOrder[];
   onSelectOrder: (order: WorkOrder) => void;
 }) {
+  const router = useRouter();
   const [jobs, setJobs] = useState<MaterialJobData[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -33,6 +35,8 @@ export default function UnscheduledJobs({
     const match = orders.find((o) => o.orderNumber === job.job.poNumber);
     if (match) {
       onSelectOrder(match);
+    } else {
+      router.push(`/install/${job.id}`);
     }
   };
 
@@ -71,7 +75,7 @@ export default function UnscheduledJobs({
               </h3>
               <div className="space-y-1">
                 {unscheduledJobs.map((job) => (
-                  <JobTile key={job.id} job={job} matched={false} onTap={() => {}} />
+                  <JobTile key={job.id} job={job} matched={false} onTap={() => handleTap(job)} />
                 ))}
               </div>
             </section>
@@ -118,7 +122,6 @@ function JobTile({
   return (
     <button
       onClick={onTap}
-      disabled={!matched}
       className={`w-full text-left rounded-md px-2.5 py-1.5 text-white text-sm transition-all active:scale-[0.98] ${
         matched ? "bg-install" : "bg-amber-600"
       }`}
