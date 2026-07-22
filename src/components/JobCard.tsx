@@ -407,19 +407,24 @@ function ProductSpecs({ units }: { units: MaterialUnit[] }) {
   );
 }
 
+function parseSpecDescription(spec: string): { label: string; value: string }[] {
+  return spec
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const idx = line.indexOf(":");
+      if (idx === -1) return { label: line, value: "" };
+      return { label: line.slice(0, idx).trim(), value: line.slice(idx + 1).trim() };
+    });
+}
+
 function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
   const [open, setOpen] = useState(false);
-  const ext = getExterior(unit);
-  const int_ = getInterior(unit);
   const unitLabel = unit.label || `#${index + 1}`;
   const unitName = unit.type || unit.unitType || unit.abbrev || "Unit";
-  const subType = unit.subType || unit.summarySubType || "";
-  const frame = unit.frame || unit.summaryFrameType || unit.nsprFrameType || "";
-  const hasGrilles = unit.grilles || !!unit.nsprGrilleType;
-  const grilleDetail = unit.nsprGrilleType || (unit.grilles ? "Yes" : "No");
-  const glassS1 = unit.nsprGlassS1 || "";
-  const glassS2 = unit.nsprGlassS2 || "";
-  const isTempered = unit.tempered || glassS1.includes("T") || glassS2.includes("T");
+  const specLines = unit.specDescription ? parseSpecDescription(unit.specDescription) : [];
+  const fieldCount = specLines.length;
 
   if (unit.isMisc) {
     return (
@@ -454,14 +459,9 @@ function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
           )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          {hasGrilles && (
-            <span className="text-[10px] px-1 py-0.5 rounded bg-primary-light text-primary font-medium">
-              Grilles
-            </span>
-          )}
-          {isTempered && (
-            <span className="text-[10px] px-1 py-0.5 rounded bg-warning/15 text-warning font-medium">
-              Tempered
+          {fieldCount > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-light text-primary font-medium">
+              {fieldCount} fields
             </span>
           )}
           {open ? (
@@ -473,40 +473,19 @@ function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
       </button>
 
       {open && (
-        <div className="px-3 py-2 border-t border-border text-sm space-y-1">
-          {subType && <SpecLine label="Product" value={subType} />}
-          <SpecLine label="Size" value={formatSize(unit)} />
-          {ext && <SpecLine label="Ext Color" value={ext} />}
-          {int_ && <SpecLine label="Int Color" value={int_} />}
-          {unit.intFinish && <SpecLine label="Int Finish" value={unit.intFinish} />}
-          {frame && <SpecLine label="Frame" value={frame} />}
-          <SpecLine label="Grilles" value={grilleDetail} />
-          {unit.nsprGrillePattern && <SpecLine label="Grille Pattern" value={unit.nsprGrillePattern} />}
-          {glassS1 && <SpecLine label="Glass S1" value={glassS1} />}
-          {glassS2 && <SpecLine label="Glass S2" value={glassS2} />}
-          {unit.nsprScreenType && <SpecLine label="Screen" value={unit.nsprScreenType} />}
-          {unit.nsprSashOp && <SpecLine label="Sash Operation" value={unit.nsprSashOp} />}
-          {unit.location && <SpecLine label="Location" value={unit.location} />}
-          {unit.species && <SpecLine label="Species" value={unit.species} />}
-          {unit.trimStyle && <SpecLine label="Trim Style" value={unit.trimStyle} />}
-          {unit.casingProfile && <SpecLine label="Casing" value={unit.casingProfile} />}
-          {unit.finishType && <SpecLine label="Finish Type" value={unit.finishType} />}
-          {unit.finish && <SpecLine label="Finish" value={unit.finish} />}
-          {unit.jambDepthWhole && (
-            <SpecLine
-              label="Jamb Depth"
-              value={`${unit.jambDepthWhole}${unit.jambDepthFrac ? ` ${fracToString(unit.jambDepthFrac)}` : ""}"`}
-            />
-          )}
-          {unit.jambSpecies && <SpecLine label="Jamb Species" value={unit.jambSpecies} />}
-          {unit.jambMaterial && <SpecLine label="Jamb Material" value={unit.jambMaterial} />}
-          {unit.deepEJ && <SpecLine label="Deep EJ" value="Yes" />}
-          {unit.stool5_4 && <SpecLine label="Stool" value="5/4" />}
-          {unit.specDescription && (
-            <div className="mt-1 pt-1 border-t border-border/50">
-              <div className="text-[10px] font-semibold uppercase text-muted mb-0.5">Full Specs</div>
-              <p className="text-xs text-muted whitespace-pre-wrap">{unit.specDescription}</p>
-            </div>
+        <div className="px-3 py-2 border-t border-border text-sm space-y-0.5">
+          {specLines.length > 0 ? (
+            specLines.map((s, i) => (
+              <SpecLine key={i} label={s.label} value={s.value} />
+            ))
+          ) : (
+            <>
+              <SpecLine label="Size" value={formatSize(unit)} />
+              {getExterior(unit) && <SpecLine label="Ext Color" value={getExterior(unit)} />}
+              {getInterior(unit) && <SpecLine label="Int Color" value={getInterior(unit)} />}
+              {unit.intFinish && <SpecLine label="Int Finish" value={unit.intFinish} />}
+              {unit.location && <SpecLine label="Location" value={unit.location} />}
+            </>
           )}
         </div>
       )}
