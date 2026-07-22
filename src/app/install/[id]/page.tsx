@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { MaterialJobData, MaterialUnit } from "@/lib/types";
 import { getSupabase } from "@/lib/supabase";
+import { buildNwoRows, fetchCatalogAndOffsets, NwoRow } from "@/lib/nwo-builder";
 import { ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
 
 function fracToString(frac: number): string {
@@ -105,6 +106,7 @@ export default function InstallInstructionsPage() {
   const params = useParams();
   const router = useRouter();
   const [job, setJob] = useState<MaterialJobData | null>(null);
+  const [nwoRows, setNwoRows] = useState<NwoRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -114,23 +116,25 @@ export default function InstallInstructionsPage() {
         setLoading(false);
         return;
       }
-      const { data, error } = await supabase
-        .from("jobs")
-        .select("id, data")
-        .eq("id", params.id)
-        .single();
 
-      if (!error && data?.data) {
-        const d = data.data;
-        setJob({
-          id: data.id,
+      const [jobRes, catalogData] = await Promise.all([
+        supabase.from("jobs").select("id, data").eq("id", params.id).single(),
+        fetchCatalogAndOffsets(),
+      ]);
+
+      if (!jobRes.error && jobRes.data?.data) {
+        const d = jobRes.data.data;
+        const jobData: MaterialJobData = {
+          id: jobRes.data.id,
           job: d.job,
           units: d.units || [],
           globalTrim: d.globalTrim || {},
           submitted: d.submitted ?? false,
           status: d.status || "draft",
           savedAt: d.savedAt || "",
-        });
+        };
+        setJob(jobData);
+        setNwoRows(buildNwoRows(d.job, d.units || [], catalogData.catalog, catalogData.offsets));
       }
       setLoading(false);
     }
@@ -161,12 +165,6 @@ export default function InstallInstructionsPage() {
   const totalQty =
     summaryRows.reduce((s, r) => s + r.qty, 0) +
     miscUnits.reduce((s, u) => s + (u.qty || 1), 0);
-  const globalMaterials = job.job.globalMaterials || [];
-  const extraMaterials = job.job.extraMaterials || [];
-  const additionalMaterials = job.job.additionalMaterials || [];
-  const nwoMaterials = globalMaterials.length > 0
-    ? globalMaterials
-    : [...extraMaterials, ...additionalMaterials];
 
   const thStyle =
     "px-2.5 py-1.5 text-[10px] font-bold tracking-wider uppercase text-white text-left";
@@ -296,7 +294,7 @@ export default function InstallInstructionsPage() {
         )}
 
         {/* NWO Material List */}
-        {nwoMaterials.length > 0 && (
+        {nwoRows.length > 0 && (
           <div className="mb-5 overflow-x-auto">
             <table className="w-full border-collapse text-left">
               <thead>
@@ -319,48 +317,20 @@ export default function InstallInstructionsPage() {
                 </tr>
               </thead>
               <tbody>
-                {nwoMaterials
-                  .filter((r: any) => r.item || r.profile || r.description)
-                  .map((r: any, i: number) => {
-                    const vendorAssignments = job.job.vendorAssignments || {};
-                    const vaKey = `${r.item || r.profile || ""}|${r.color || ""}|${
-                      r.species || ""
-                    }`;
-                    const vendor =
-                      vendorAssignments[vaKey] || r.vendor || "—";
-                    return (
-                      <tr
-                        key={i}
-                        className={
-                          i % 2 === 0 ? "bg-surface" : "bg-background"
-                        }
-                      >
-                        <td className={`${tdStyle} font-bold`}>
-                          {r.qty || 1}
-                        </td>
-                        <td className={`${tdStyle} text-muted`}>
-                          {r.unit || "PCS"}
-                        </td>
-                        <td className={`${tdStyle} font-semibold`}>
-                          {r.item || r.profile || r.description || "—"}
-                        </td>
-                        <td className={`${tdStyle} text-muted`}>
-                          {r.color || "—"}
-                        </td>
-                        <td className={`${tdStyle} text-muted`}>
-                          {r.species || "—"}
-                        </td>
-                        <td
-                          className={`${tdStyle} text-muted font-mono text-[11px]`}
-                        >
-                          {r.lengths || "—"}
-                        </td>
-                        <td className={`${tdStyle} font-bold text-[#6DB344] text-[11px]`}>
-                          {vendor}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                {nwoRows.map((r, i) => (
+                  <tr
+                    key={i}
+                    className={i % 2 === 0 ? "bg-surface" : "bg-background"}
+                  >
+                    <td className={`${tdStyle} font-bold`}>{r.qty}</td>
+                    <td className={`${tdStyle} text-muted`}>{r.unit}</td>
+                    <td className={`${tdStyle} font-semibold`}>{r.item || "—"}</td>
+                    <td className={`${tdStyle} text-muted`}>{r.color || "—"}</td>
+                    <td className={`${tdStyle} text-muted`}>{r.species || "—"}</td>
+                    <td className={`${tdStyle} text-muted font-mono text-[11px]`}>{r.lengths || "—"}</td>
+                    <td className={`${tdStyle} font-bold text-[#6DB344] text-[11px]`}>{r.vendor || "—"}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
             <div className="border-b-2 border-[#6DB344]" />
@@ -417,4 +387,3 @@ export default function InstallInstructionsPage() {
     </div>
   );
 }
-

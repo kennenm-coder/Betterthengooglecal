@@ -106,6 +106,11 @@ export default function JobCard({
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="text-xs text-muted">{order.workOrderType}</span>
                 <span className="text-xs text-muted">#{order.workOrderNumber}</span>
+                {mat && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#6DB344]/15 text-[#6DB344] font-semibold">
+                    Linked
+                  </span>
+                )}
                 {multiDay && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-light text-primary font-medium">
                     Multi-day
@@ -495,8 +500,8 @@ function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
 
 function SpecLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between text-xs">
-      <span className="text-muted">{label}</span>
+    <div className="flex items-baseline gap-2 text-xs">
+      <span className="text-muted shrink-0">{label}:</span>
       <span className="text-foreground font-medium">{value}</span>
     </div>
   );
