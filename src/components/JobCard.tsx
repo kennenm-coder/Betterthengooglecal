@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   Paintbrush,
   ClipboardList,
+  FileText,
 } from "lucide-react";
 import { useState } from "react";
 import { parseISO, isSameDay } from "date-fns";
@@ -34,6 +35,15 @@ function mapsHref(address: string): string {
 function isMultiDay(order: WorkOrder): boolean {
   if (!order.scheduledStart || !order.scheduledEnd) return false;
   return !isSameDay(parseISO(order.scheduledStart), parseISO(order.scheduledEnd));
+}
+
+function openSalesforce(workOrderNumber: string) {
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  if (isMobile) {
+    window.location.href = `salesforce1://search/${encodeURIComponent(workOrderNumber)}`;
+  } else {
+    navigator.clipboard.writeText(workOrderNumber).catch(() => {});
+  }
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -61,6 +71,7 @@ export default function JobCard({
   const [expanded, setExpanded] = useState(false);
   const typeBg = typeColor(order.workOrderType);
   const multiDay = isMultiDay(order);
+  const mat = order.materialJob;
 
   if (compact) {
     return (
@@ -132,20 +143,28 @@ export default function JobCard({
                 )}
               </div>
             </div>
-            <button
-              onClick={() => setExpanded(!expanded)}
-              className="p-1 rounded hover:bg-surface"
-            >
-              {expanded ? (
-                <ChevronUp className="w-5 h-5 text-muted" />
-              ) : (
-                <ChevronDown className="w-5 h-5 text-muted" />
-              )}
-            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => openSalesforce(order.workOrderNumber)}
+                className="p-1 rounded hover:bg-surface"
+                title="Open in Salesforce"
+              >
+                <ExternalLink className="w-4 h-4 text-muted" />
+              </button>
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="p-1 rounded hover:bg-surface"
+              >
+                {expanded ? (
+                  <ChevronUp className="w-5 h-5 text-muted" />
+                ) : (
+                  <ChevronDown className="w-5 h-5 text-muted" />
+                )}
+              </button>
+            </div>
           </div>
 
           <div className="mt-3 space-y-2">
-            {/* Schedule — show full date range for multi-day */}
             <InfoRow icon={Calendar} label="Scheduled">
               {multiDay ? (
                 <span>
@@ -162,7 +181,6 @@ export default function JobCard({
               )}
             </InfoRow>
 
-            {/* Order # and WO# — Order Number is primary */}
             <InfoRow icon={Hash} label="Order#">
               <span className="font-medium">{order.orderNumber}</span>
               <CopyButton text={order.orderNumber} label="order number" />
@@ -171,7 +189,6 @@ export default function JobCard({
               <CopyButton text={order.workOrderNumber} label="work order" />
             </InfoRow>
 
-            {/* Address */}
             <InfoRow icon={MapPin} label="Address">
               <a
                 href={mapsHref(order.address)}
@@ -184,7 +201,6 @@ export default function JobCard({
               <CopyButton text={order.address} label="address" />
             </InfoRow>
 
-            {/* Key people — always visible */}
             {order.orderOwner && (
               <InfoRow icon={Briefcase} label="Owner">
                 <span>{order.orderOwner}</span>
@@ -211,7 +227,6 @@ export default function JobCard({
               </InfoRow>
             )}
 
-            {/* Phone */}
             {order.phones.length > 0 && (
               <InfoRow icon={Phone} label="Phone">
                 <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -228,7 +243,6 @@ export default function JobCard({
               </InfoRow>
             )}
 
-            {/* Email */}
             {order.email && (
               <InfoRow icon={Mail} label="Email">
                 <a href={`mailto:${order.email}`} className="text-primary underline break-all">
@@ -237,12 +251,8 @@ export default function JobCard({
                 <CopyButton text={order.email} label="email" />
               </InfoRow>
             )}
-
-            {/* Salesforce */}
-            <SalesforceButton workOrderNumber={order.workOrderNumber} />
           </div>
 
-          {/* Expanded: booking date + job status */}
           {expanded && (
             <div className="mt-3 pt-3 border-t border-border space-y-1.5 text-sm">
               <div className="flex items-center gap-2 text-muted">
@@ -258,10 +268,24 @@ export default function JobCard({
             </div>
           )}
 
-          {/* Materials section — shown when linked material data exists */}
-          {order.materialJob && (
-            <MaterialsSection data={order.materialJob} />
+          {/* Install Notes — always visible when material job is paired */}
+          {mat?.job.installNotes?.trim() && (
+            <div className="mt-3 pt-3 border-t border-border">
+              <div className="rounded-lg bg-surface p-3">
+                <div className="flex items-center gap-1.5 mb-1 text-muted">
+                  <ClipboardList className="w-3.5 h-3.5" />
+                  <span className="text-xs font-semibold uppercase tracking-wide">Install Notes</span>
+                </div>
+                <p className="text-sm text-foreground whitespace-pre-wrap">{mat.job.installNotes}</p>
+              </div>
+            </div>
           )}
+
+          {/* Install Instructions button + Product Specs */}
+          {mat && <InstallInstructionsSection data={mat} />}
+
+          {/* Product Specs — always shown when material job is paired */}
+          {mat && mat.units.length > 0 && <ProductSpecs units={mat.units} />}
         </div>
       </div>
     </div>
@@ -326,33 +350,6 @@ function DetailLine({
   );
 }
 
-function unitSummary(units: MaterialUnit[]): string {
-  const counts: Record<string, number> = {};
-  for (const u of units) {
-    const abbr = u.type
-      .replace(/Double Hung/i, "DH")
-      .replace(/Casement/i, "CAS")
-      .replace(/Patio Door/i, "PD")
-      .replace(/Picture/i, "PIC")
-      .replace(/Sliding/i, "SLD")
-      .replace(/Bay/i, "BAY")
-      .replace(/Bow/i, "BOW")
-      .replace(/Awning/i, "AWN")
-      .replace(/Entry Door/i, "ED")
-      .replace(/Gliding/i, "GLD");
-    counts[abbr] = (counts[abbr] || 0) + (u.qty || 1);
-  }
-  return Object.entries(counts)
-    .map(([type, qty]) => `${qty} ${type}`)
-    .join(", ");
-}
-
-function formatSize(u: MaterialUnit): string {
-  const w = u.widthWhole + (u.widthFrac ? ` ${fracToString(u.widthFrac)}` : "");
-  const h = u.heightWhole + (u.heightFrac ? ` ${fracToString(u.heightFrac)}` : "");
-  return `${w}" x ${h}"`;
-}
-
 function fracToString(frac: number): string {
   if (frac === 0.125) return "1/8";
   if (frac === 0.25) return "1/4";
@@ -365,52 +362,38 @@ function fracToString(frac: number): string {
   return String(frac);
 }
 
-function MaterialsSection({ data }: { data: MaterialJobData }) {
+function formatSize(u: MaterialUnit): string {
+  const w = u.widthWhole + (u.widthFrac ? ` ${fracToString(u.widthFrac)}` : "");
+  const h = u.heightWhole + (u.heightFrac ? ` ${fracToString(u.heightFrac)}` : "");
+  return `${w}" x ${h}"`;
+}
+
+/* ── Install Instructions ── */
+
+function InstallInstructionsSection({ data }: { data: MaterialJobData }) {
   const [open, setOpen] = useState(false);
-  const summary = unitSummary(data.units);
-  const hasNotes = data.job.installNotes?.trim();
-  const hasPrefinish = data.job.prefinishNotes?.trim();
+
   const hasLeadPaint = data.job.leadPaint;
+  const hasTrim =
+    data.globalTrim &&
+    (data.globalTrim.species || data.globalTrim.trimStyle || data.globalTrim.finishType);
+  const hasPrefinish = data.job.prefinishNotes?.trim();
+  const hasContent = hasLeadPaint || hasTrim || hasPrefinish;
+
+  if (!hasContent) return null;
 
   return (
-    <div className="mt-3 pt-3 border-t border-border">
+    <div className="mt-3">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between gap-2 text-left"
+        className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-primary text-white text-sm font-medium active:scale-[0.98] transition-transform"
       >
-        <div className="flex items-center gap-2">
-          <Package className="w-4 h-4 text-primary" />
-          <span className="text-sm font-semibold">Materials</span>
-          {hasLeadPaint && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-danger/10 text-danger font-semibold uppercase">
-              Lead Paint
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted">{summary || `${data.units.length} units`}</span>
-          {open ? (
-            <ChevronUp className="w-4 h-4 text-muted" />
-          ) : (
-            <ChevronDown className="w-4 h-4 text-muted" />
-          )}
-        </div>
+        <FileText className="w-4 h-4" />
+        {open ? "Hide Install Instructions" : "Open Install Instructions"}
       </button>
 
       {open && (
         <div className="mt-2 space-y-3 text-sm">
-          {/* Install Notes */}
-          {hasNotes && (
-            <div className="rounded-lg bg-surface p-3">
-              <div className="flex items-center gap-1.5 mb-1 text-muted">
-                <ClipboardList className="w-3.5 h-3.5" />
-                <span className="text-xs font-semibold uppercase tracking-wide">Install Notes</span>
-              </div>
-              <p className="text-foreground whitespace-pre-wrap">{data.job.installNotes}</p>
-            </div>
-          )}
-
-          {/* Lead Paint Warning */}
           {hasLeadPaint && (
             <div className="rounded-lg bg-danger/5 border border-danger/20 p-3 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 text-danger mt-0.5 shrink-0" />
@@ -418,8 +401,7 @@ function MaterialsSection({ data }: { data: MaterialJobData }) {
             </div>
           )}
 
-          {/* Trim / Finish */}
-          {data.globalTrim && (data.globalTrim.species || data.globalTrim.trimStyle || data.globalTrim.finishType) && (
+          {hasTrim && (
             <div className="rounded-lg bg-surface p-3">
               <div className="flex items-center gap-1.5 mb-1 text-muted">
                 <Paintbrush className="w-3.5 h-3.5" />
@@ -454,7 +436,6 @@ function MaterialsSection({ data }: { data: MaterialJobData }) {
             </div>
           )}
 
-          {/* Prefinish Notes */}
           {hasPrefinish && (
             <div className="rounded-lg bg-surface p-3">
               <div className="flex items-center gap-1.5 mb-1 text-muted">
@@ -464,53 +445,89 @@ function MaterialsSection({ data }: { data: MaterialJobData }) {
               <p className="text-foreground whitespace-pre-wrap">{data.job.prefinishNotes}</p>
             </div>
           )}
-
-          {/* Unit List */}
-          <div>
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Units ({data.units.length})
-            </span>
-            <div className="mt-1 space-y-1.5">
-              {data.units.map((unit, i) => (
-                <div
-                  key={i}
-                  className="rounded-lg bg-surface p-2.5 flex items-start justify-between gap-2"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium">{unit.type}</span>
-                      {unit.qty > 1 && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-primary-light text-primary font-medium">
-                          x{unit.qty}
-                        </span>
-                      )}
-                      {unit.grilles && (
-                        <span className="text-[10px] px-1 py-0.5 rounded bg-primary-light text-primary font-medium">
-                          Grilles
-                        </span>
-                      )}
-                      {unit.tempered && (
-                        <span className="text-[10px] px-1 py-0.5 rounded bg-warning/15 text-warning font-medium">
-                          Tempered
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-muted mt-0.5">
-                      {formatSize(unit)}
-                      {unit.extColor && ` · Ext: ${unit.extColor}`}
-                      {unit.intColor && ` · Int: ${unit.intColor}`}
-                    </div>
-                    {unit.intFinish && (
-                      <div className="text-xs text-muted">{unit.intFinish}</div>
-                    )}
-                  </div>
-                  <span className="text-xs text-muted shrink-0">{unit.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── Product Specs ── */
+
+function ProductSpecs({ units }: { units: MaterialUnit[] }) {
+  return (
+    <div className="mt-3 pt-3 border-t border-border">
+      <div className="flex items-center gap-2 mb-2">
+        <Package className="w-4 h-4 text-primary" />
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+          Product Specs ({units.length})
+        </span>
+      </div>
+      <div className="space-y-1">
+        {units.map((unit, i) => (
+          <UnitAccordion key={i} unit={unit} index={i} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-border overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left bg-surface hover:bg-surface/80 transition-colors"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs text-muted font-mono shrink-0">{unit.label || `#${index + 1}`}</span>
+          <span className="text-sm font-medium truncate">{unit.type}</span>
+          {unit.qty > 1 && (
+            <span className="text-xs px-1.5 py-0.5 rounded bg-primary-light text-primary font-medium shrink-0">
+              x{unit.qty}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {unit.grilles && (
+            <span className="text-[10px] px-1 py-0.5 rounded bg-primary-light text-primary font-medium">
+              Grilles
+            </span>
+          )}
+          {unit.tempered && (
+            <span className="text-[10px] px-1 py-0.5 rounded bg-warning/15 text-warning font-medium">
+              Tempered
+            </span>
+          )}
+          {open ? (
+            <ChevronUp className="w-4 h-4 text-muted" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-muted" />
+          )}
+        </div>
+      </button>
+
+      {open && (
+        <div className="px-3 py-2 border-t border-border text-sm space-y-1">
+          <SpecLine label="Size" value={formatSize(unit)} />
+          {unit.extColor && <SpecLine label="Ext Color" value={unit.extColor} />}
+          {unit.intColor && <SpecLine label="Int Color" value={unit.intColor} />}
+          {unit.intFinish && <SpecLine label="Int Finish" value={unit.intFinish} />}
+          <SpecLine label="Grilles" value={unit.grilles ? "Yes" : "No"} />
+          <SpecLine label="Tempered" value={unit.tempered ? "Yes" : "No"} />
+          {unit.qty > 1 && <SpecLine label="Qty" value={String(unit.qty)} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SpecLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <span className="text-muted">{label}</span>
+      <span className="text-foreground font-medium">{value}</span>
     </div>
   );
 }
@@ -521,31 +538,5 @@ function TrimLine({ label, value }: { label: string; value: string }) {
       <span className="text-muted">{label}: </span>
       <span className="text-foreground font-medium">{value}</span>
     </div>
-  );
-}
-
-function SalesforceButton({ workOrderNumber }: { workOrderNumber: string }) {
-  const [copied, setCopied] = useState(false);
-
-  function handleClick() {
-    navigator.clipboard.writeText(workOrderNumber).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }).catch(() => {});
-
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-    if (isMobile) {
-      window.location.href = `salesforce1://search/${encodeURIComponent(workOrderNumber)}`;
-    }
-  }
-
-  return (
-    <button
-      onClick={handleClick}
-      className="mt-1 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-[#0176D3] text-white text-sm font-medium active:scale-[0.98] transition-transform"
-    >
-      <ExternalLink className="w-4 h-4" />
-      {copied ? "Copied! Paste in Salesforce search" : "Open Salesforce"}
-    </button>
   );
 }

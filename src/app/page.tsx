@@ -4,12 +4,13 @@ import { useState, useMemo, useCallback, useRef } from "react";
 import { useData } from "@/components/DataProvider";
 import DayView from "@/components/DayView";
 import WeekView from "@/components/WeekView";
+import UnscheduledJobs from "@/components/UnscheduledJobs";
 import OrderSheet from "@/components/OrderSheet";
 import BottomNav from "@/components/BottomNav";
 import FilterPanel, { Filters, EMPTY_FILTERS, applyFilters } from "@/components/FilterPanel";
 import { WorkOrder, ViewMode } from "@/lib/types";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday } from "date-fns";
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database } from "lucide-react";
 
 export default function CalendarPage() {
   const { orders, loading, refresh } = useData();
@@ -95,6 +96,16 @@ export default function CalendarPage() {
 
         <FilterPanel orders={orders} filters={filters} onChange={setFilters} />
 
+        <button
+          onClick={() => setView(view === "list" ? "day" : "list")}
+          className={`p-1.5 rounded-full transition-colors ${
+            view === "list" ? "bg-primary text-white" : "hover:bg-surface"
+          }`}
+          title="Jobs Not Scheduled"
+        >
+          <Database className="w-4.5 h-4.5" />
+        </button>
+
         <div className="flex bg-surface rounded-lg p-0.5">
           {(["day", "week"] as ViewMode[]).map((v) => (
             <button
@@ -117,7 +128,12 @@ export default function CalendarPage() {
         }`}
         onAnimationEnd={() => setSlideDir(null)}
       >
-        {view === "day" ? (
+        {view === "list" ? (
+          <UnscheduledJobs
+            orders={orders}
+            onSelectOrder={setSelectedOrder}
+          />
+        ) : view === "day" ? (
           <DayView
             orders={filteredOrders}
             date={currentDate}
