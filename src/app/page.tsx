@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { Suspense, useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useData } from "@/components/DataProvider";
 import DayView from "@/components/DayView";
 import WeekView from "@/components/WeekView";
@@ -13,10 +13,17 @@ import { WorkOrder, ViewMode } from "@/lib/types";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday } from "date-fns";
 import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database } from "lucide-react";
 
-export default function CalendarPage() {
+export default function CalendarPageWrapper() {
+  return (
+    <Suspense fallback={<div className="flex-1 flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+      <CalendarPage />
+    </Suspense>
+  );
+}
+
+function CalendarPage() {
   const { orders, loading, refresh } = useData();
   const searchParams = useSearchParams();
-  const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefresh = async () => {
