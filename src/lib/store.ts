@@ -1,4 +1,4 @@
-import { WorkOrder } from "./types";
+import { WorkOrder, MaterialJobData } from "./types";
 import { getSupabase } from "./supabase";
 
 const STORAGE_KEY = "rba-field-cal-data";
@@ -161,6 +161,32 @@ export function enrichWithMaterials(
     ...wo,
     materialJob: jobByPO.get(wo.orderNumber) || null,
   }));
+}
+
+export async function fetchAllMaterialJobs(): Promise<MaterialJobData[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase.from("jobs").select("id, data");
+
+  if (error || !data) return [];
+
+  const jobs: MaterialJobData[] = [];
+  for (const row of data) {
+    const d = row.data;
+    if (d && d.job?.poNumber) {
+      jobs.push({
+        id: row.id,
+        job: d.job,
+        units: d.units || [],
+        globalTrim: d.globalTrim || {},
+        submitted: d.submitted ?? false,
+        status: d.status || "draft",
+        savedAt: d.savedAt || "",
+      });
+    }
+  }
+  return jobs;
 }
 
 export const saveOrders = saveOrdersLocal;

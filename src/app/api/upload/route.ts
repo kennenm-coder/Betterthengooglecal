@@ -1,9 +1,97 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseXlsHtml } from "@/lib/parse-xls";
+import { createClient } from "@supabase/supabase-js";
 
-const REPO = "kennenm-coder/Betterthengooglecal";
-const FILE_PATH = "data/orders.json";
-const BRANCH = "Main";
+const SUPA_URL = "https://xusqjotoyntnfysquvlv.supabase.co";
+const SUPA_KEY = "sb_publishable_HQigRx1Q8I6OpPffXMxRZQ_iqegVCka";
+
+async function getFileContent(request: NextRequest): Promise<string | null> {
+  const contentType = request.headers.get("content-type") || "";
+
+  // Power Automate path: raw body (base64 or plain text)
+  if (
+    contentType.includes("application/octet-stream") ||
+    contentType.includes("text/html") ||
+    contentType.includes("text/plain") ||
+    contentType.includes("application/json")
+  ) {
+    if (contentType.includes("application/json")) {
+      const json = await request.json();
+      // Accept { file: "<base64 string>" } or { file: "<html string>" }
+      const raw: string = json.file || json.content || json.body || "";
+      if (!raw) return null;
+      // Check if it's base64 encoded (no < at start means it's not raw HTML)
+      if (raw.startsWith("<") || raw.startsWith("﻿<")) return raw;
+      try {
+        return Buffer.from(raw, "base64").toString("utf-8");
+      } catch {
+        return raw;
+      }
+    }
+    const raw = await request.text();
+    if (!raw) return null;
+    if (raw.startsWith("<") || raw.startsWith("﻿<")) return raw;
+    try {
+      return Buffer.from(raw, "base64").toString("utf-8");
+    } catch {
+      return raw;
+    }
+  }
+
+  // Browser upload path: multipart form-data
+  if (contentType.includes("multipart/form-data")) {
+    const formData = await request.formData();
+    const file = formData.get("file") as File | null;
+    if (!file) return null;
+    return file.text();
+  }
+
+  // Fallback: try reading as text
+  const text = await request.text();
+  return text || null;
+}
+
+async function upsertToSupabase(orders: ReturnType<typeof parseXlsHtml>) {
+  const supabase = createClient(SUPA_URL, SUPA_KEY);
+
+  const rows = orders.map((wo) => ({
+    id: wo.id,
+    order_number: wo.orderNumber,
+    work_order_number: wo.workOrderNumber,
+    status: wo.status,
+    appointment_status: wo.appointmentStatus,
+    customer_name: wo.customerName,
+    address: wo.address,
+    booking_date: wo.bookingDate,
+    scheduled_start: wo.scheduledStart,
+    scheduled_end: wo.scheduledEnd,
+    work_order_type: wo.workOrderType,
+    order_owner: wo.orderOwner,
+    sales_rep: wo.salesRep,
+    tech_measure: wo.techMeasure,
+    installer: wo.installer,
+    service_rep: wo.serviceRep,
+    contact_name: wo.contactName,
+    email: wo.email,
+    phones: wo.phones,
+    updated_at: new Date().toISOString(),
+  }));
+
+  const BATCH = 500;
+  let upserted = 0;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const chunk = rows.slice(i, i + BATCH);
+    const { error } = await supabase
+      .from("work_orders")
+      .upsert(chunk, { onConflict: "id" });
+
+    if (error) {
+      throw new Error(`Batch ${Math.floor(i / BATCH) + 1}: ${error.message}`);
+    }
+    upserted += chunk.length;
+  }
+  return upserted;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,14 +103,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const formData = await request.formData();
-    const file = formData.get("file") as File | null;
+    const text = await getFileContent(request);
 
-    if (!file) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    if (!text) {
+      return NextResponse.json({ error: "No file content provided" }, { status: 400 });
     }
 
-    const text = await file.text();
     const orders = parseXlsHtml(text);
 
     if (orders.length === 0) {
@@ -32,62 +118,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const payload = {
-      orders,
-      uploadedAt: new Date().toISOString(),
-      count: orders.length,
-    };
-
-    const token = process.env.GITHUB_TOKEN;
-    if (!token) {
-      return NextResponse.json(
-        { error: "GitHub token not configured" },
-        { status: 500 }
-      );
-    }
-
-    const content = Buffer.from(JSON.stringify(payload)).toString("base64");
-
-    let sha: string | undefined;
-    const getRes = await fetch(
-      `https://api.github.com/repos/${REPO}/contents/${FILE_PATH}?ref=${BRANCH}`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json" } }
-    );
-    if (getRes.ok) {
-      const existing = await getRes.json();
-      sha = existing.sha;
-    }
-
-    const putRes = await fetch(
-      `https://api.github.com/repos/${REPO}/contents/${FILE_PATH}`,
-      {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/vnd.github.v3+json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: `Update orders data - ${orders.length} orders`,
-          content,
-          branch: BRANCH,
-          ...(sha ? { sha } : {}),
-        }),
-      }
-    );
-
-    if (!putRes.ok) {
-      const err = await putRes.text();
-      console.error("GitHub API error:", err);
-      return NextResponse.json(
-        { error: "Failed to save to GitHub" },
-        { status: 500 }
-      );
-    }
+    const upserted = await upsertToSupabase(orders);
 
     return NextResponse.json({
       success: true,
-      count: orders.length,
+      count: upserted,
     });
   } catch (err) {
     console.error("Upload error:", err);
