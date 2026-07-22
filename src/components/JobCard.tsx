@@ -430,6 +430,8 @@ function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
   const unitName = unit.type || unit.unitType || unit.abbrev || "Unit";
   const specLines = unit.specDescription ? parseSpecDescription(unit.specDescription) : [];
   const fieldCount = specLines.length;
+  const category = specLines.find(s => s.label === "Category")?.value || "";
+  const subCategory = specLines.find(s => s.label === "Sub-Category")?.value || "";
 
   if (unit.isMisc) {
     return (
@@ -457,6 +459,8 @@ function UnitAccordion({ unit, index }: { unit: MaterialUnit; index: number }) {
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-xs text-muted font-mono shrink-0">{unitLabel}</span>
           <span className="text-sm font-medium truncate">{unitName}</span>
+          {category && <span className="text-xs text-muted truncate">· {category}</span>}
+          {subCategory && <span className="text-xs text-muted truncate">· {subCategory}</span>}
           {(unit.qty || unit.summaryQty || 0) > 1 && (
             <span className="text-xs px-1.5 py-0.5 rounded bg-primary-light text-primary font-medium shrink-0">
               x{unit.qty || unit.summaryQty}

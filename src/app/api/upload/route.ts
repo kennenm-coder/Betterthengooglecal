@@ -1,41 +1,61 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseXlsHtml } from "@/lib/parse-xls";
+import { parseCsv } from "@/lib/parse-csv";
 import { createClient } from "@supabase/supabase-js";
+import { WorkOrder } from "@/lib/types";
 
 const SUPA_URL = "https://xusqjotoyntnfysquvlv.supabase.co";
 const SUPA_KEY = "sb_publishable_HQigRx1Q8I6OpPffXMxRZQ_iqegVCka";
 
-async function getFileContent(request: NextRequest): Promise<string | null> {
+type FileResult = {
+  text: string;
+  format: "xls" | "csv" | "unknown";
+};
+
+async function getFileContent(request: NextRequest): Promise<FileResult | null> {
   const contentType = request.headers.get("content-type") || "";
 
-  // Power Automate path: raw body (base64 or plain text)
+  // Power Automate path: JSON body with base64 file content
+  if (contentType.includes("application/json")) {
+    const json = await request.json();
+    const raw: string = json.file || json.content || json.body || "";
+    if (!raw) return null;
+
+    // Decode base64
+    let decoded: string;
+    if (raw.startsWith("<") || raw.startsWith("﻿<") || raw.startsWith('"')) {
+      decoded = raw;
+    } else {
+      try {
+        decoded = Buffer.from(raw, "base64").toString("utf-8");
+      } catch {
+        decoded = raw;
+      }
+    }
+
+    return { text: decoded, format: detectFormat(decoded) };
+  }
+
+  // Raw body paths
   if (
     contentType.includes("application/octet-stream") ||
     contentType.includes("text/html") ||
     contentType.includes("text/plain") ||
-    contentType.includes("application/json")
+    contentType.includes("text/csv")
   ) {
-    if (contentType.includes("application/json")) {
-      const json = await request.json();
-      // Accept { file: "<base64 string>" } or { file: "<html string>" }
-      const raw: string = json.file || json.content || json.body || "";
-      if (!raw) return null;
-      // Check if it's base64 encoded (no < at start means it's not raw HTML)
-      if (raw.startsWith("<") || raw.startsWith("﻿<")) return raw;
-      try {
-        return Buffer.from(raw, "base64").toString("utf-8");
-      } catch {
-        return raw;
-      }
-    }
     const raw = await request.text();
     if (!raw) return null;
-    if (raw.startsWith("<") || raw.startsWith("﻿<")) return raw;
-    try {
-      return Buffer.from(raw, "base64").toString("utf-8");
-    } catch {
-      return raw;
+    let decoded: string;
+    if (raw.startsWith("<") || raw.startsWith("﻿<") || raw.startsWith('"') || raw.startsWith("﻿\"")) {
+      decoded = raw;
+    } else {
+      try {
+        decoded = Buffer.from(raw, "base64").toString("utf-8");
+      } catch {
+        decoded = raw;
+      }
     }
+    return { text: decoded, format: detectFormat(decoded) };
   }
 
   // Browser upload path: multipart form-data
@@ -43,15 +63,46 @@ async function getFileContent(request: NextRequest): Promise<string | null> {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     if (!file) return null;
-    return file.text();
+    const text = await file.text();
+    return { text, format: detectFormat(text) };
   }
 
-  // Fallback: try reading as text
+  // Fallback
   const text = await request.text();
-  return text || null;
+  if (!text) return null;
+  return { text, format: detectFormat(text) };
 }
 
-async function upsertToSupabase(orders: ReturnType<typeof parseXlsHtml>) {
+function detectFormat(text: string): "xls" | "csv" | "unknown" {
+  const trimmed = text.replace(/^﻿/, "").trimStart();
+
+  // HTML table (XLS export)
+  if (trimmed.startsWith("<") && trimmed.includes("<table")) {
+    return "xls";
+  }
+
+  // CSV — check for quoted header row with known columns
+  if (
+    trimmed.startsWith('"') &&
+    trimmed.includes('"Order Number"') &&
+    trimmed.includes('"Work Order Number"')
+  ) {
+    return "csv";
+  }
+
+  // Unquoted CSV
+  if (
+    trimmed.includes("Order Number") &&
+    trimmed.includes("Work Order Number") &&
+    !trimmed.includes("<table")
+  ) {
+    return "csv";
+  }
+
+  return "unknown";
+}
+
+async function upsertToSupabase(orders: WorkOrder[]) {
   const supabase = createClient(SUPA_URL, SUPA_KEY);
 
   const rows = orders.map((wo) => ({
@@ -86,7 +137,7 @@ async function upsertToSupabase(orders: ReturnType<typeof parseXlsHtml>) {
       .upsert(chunk, { onConflict: "id" });
 
     if (error) {
-      throw new Error(`Batch ${Math.floor(i / BATCH) + 1}: ${error.message}`);
+      throw new Error(`Supabase upsert failed at batch ${Math.floor(i / BATCH) + 1}: ${error.message}`);
     }
     upserted += chunk.length;
   }
@@ -103,17 +154,40 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const text = await getFileContent(request);
+    const result = await getFileContent(request);
 
-    if (!text) {
-      return NextResponse.json({ error: "No file content provided" }, { status: 400 });
+    if (!result || !result.text) {
+      return NextResponse.json({ error: "Missing file content" }, { status: 400 });
     }
 
-    const orders = parseXlsHtml(text);
+    let orders: WorkOrder[];
+    let format: string;
+
+    if (result.format === "csv") {
+      orders = parseCsv(result.text);
+      format = "csv";
+    } else if (result.format === "xls") {
+      orders = parseXlsHtml(result.text);
+      format = "xls";
+    } else {
+      // Try both parsers
+      orders = parseXlsHtml(result.text);
+      format = "xls";
+      if (orders.length === 0) {
+        orders = parseCsv(result.text);
+        format = "csv";
+      }
+      if (orders.length === 0) {
+        return NextResponse.json(
+          { error: "Unsupported file format" },
+          { status: 400 }
+        );
+      }
+    }
 
     if (orders.length === 0) {
       return NextResponse.json(
-        { error: "No orders found in file. Make sure it's an .xls export." },
+        { error: `${format.toUpperCase()} parsed successfully but contained no valid work-order rows` },
         { status: 400 }
       );
     }
@@ -122,12 +196,15 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      count: upserted,
+      format,
+      parsed: orders.length,
+      upserted,
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error("Upload error:", err);
+    const message = err?.message || "Failed to process file";
     return NextResponse.json(
-      { error: "Failed to process file" },
+      { error: message },
       { status: 500 }
     );
   }
