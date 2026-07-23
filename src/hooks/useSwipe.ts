@@ -1,35 +1,54 @@
 "use client";
 
-import { useRef, useCallback, useEffect } from "react";
+import { useRef, useCallback, useEffect, useState } from "react";
 
 interface SwipeHandlers {
   onSwipeLeft?: () => void;
   onSwipeRight?: () => void;
 }
 
-const MIN_SWIPE_DISTANCE = 30;
-const MAX_SWIPE_TIME = 800;
+const MIN_SWIPE_DISTANCE = 50;
+const VELOCITY_THRESHOLD = 0.3;
 
 export function useSwipe({ onSwipeLeft, onSwipeRight }: SwipeHandlers) {
   const touchStart = useRef<{ x: number; y: number; t: number } | null>(null);
   const locked = useRef<"horizontal" | "vertical" | null>(null);
+  const offsetRef = useRef(0);
+  const ref = useRef<HTMLDivElement>(null);
 
   const onTouchStart = useCallback((e: TouchEvent) => {
     const touch = e.touches[0];
     touchStart.current = { x: touch.clientX, y: touch.clientY, t: Date.now() };
     locked.current = null;
+    const el = ref.current;
+    if (el) {
+      el.style.transition = "none";
+      el.style.willChange = "transform";
+    }
   }, []);
 
   const onTouchMove = useCallback((e: TouchEvent) => {
     if (!touchStart.current) return;
-    if (locked.current) return;
-
     const touch = e.touches[0];
-    const dx = Math.abs(touch.clientX - touchStart.current.x);
-    const dy = Math.abs(touch.clientY - touchStart.current.y);
+    const dx = touch.clientX - touchStart.current.x;
+    const dy = touch.clientY - touchStart.current.y;
 
-    if (dx > 10 || dy > 10) {
-      locked.current = dx > dy ? "horizontal" : "vertical";
+    if (!locked.current) {
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        locked.current = Math.abs(dx) > Math.abs(dy) ? "horizontal" : "vertical";
+      }
+      return;
+    }
+
+    if (locked.current !== "horizontal") return;
+
+    const resistance = 0.4;
+    const dampened = dx * resistance;
+    offsetRef.current = dampened;
+    const el = ref.current;
+    if (el) {
+      el.style.transform = `translateX(${dampened}px)`;
+      el.style.opacity = String(1 - Math.abs(dampened) / 800);
     }
   }, []);
 
@@ -38,22 +57,47 @@ export function useSwipe({ onSwipeLeft, onSwipeRight }: SwipeHandlers) {
       if (!touchStart.current) return;
       const touch = e.changedTouches[0];
       const dx = touch.clientX - touchStart.current.x;
-      const dt = Date.now() - touchStart.current.t;
+      const dt = (Date.now() - touchStart.current.t) / 1000;
+      const velocity = Math.abs(dx) / dt / 1000;
       const direction = locked.current;
       touchStart.current = null;
       locked.current = null;
 
-      if (dt > MAX_SWIPE_TIME) return;
-      if (Math.abs(dx) < MIN_SWIPE_DISTANCE) return;
-      if (direction !== "horizontal") return;
+      const el = ref.current;
+      if (!el) return;
 
-      if (dx < 0) onSwipeLeft?.();
-      else onSwipeRight?.();
+      const shouldSwipe =
+        direction === "horizontal" &&
+        (Math.abs(dx) > MIN_SWIPE_DISTANCE || velocity > VELOCITY_THRESHOLD);
+
+      if (shouldSwipe) {
+        const exitX = dx < 0 ? -120 : 120;
+        el.style.transition = "transform 0.18s ease-out, opacity 0.18s ease-out";
+        el.style.transform = `translateX(${exitX}px)`;
+        el.style.opacity = "0.2";
+        setTimeout(() => {
+          if (dx < 0) onSwipeLeft?.();
+          else onSwipeRight?.();
+          el.style.transition = "none";
+          el.style.transform = `translateX(${dx < 0 ? 80 : -80}px)`;
+          el.style.opacity = "0.2";
+          requestAnimationFrame(() => {
+            el.style.transition = "transform 0.22s ease-out, opacity 0.22s ease-out";
+            el.style.transform = "translateX(0)";
+            el.style.opacity = "1";
+            el.style.willChange = "auto";
+          });
+        }, 180);
+      } else {
+        el.style.transition = "transform 0.2s ease-out, opacity 0.2s ease-out";
+        el.style.transform = "translateX(0)";
+        el.style.opacity = "1";
+        el.style.willChange = "auto";
+      }
+      offsetRef.current = 0;
     },
     [onSwipeLeft, onSwipeRight]
   );
-
-  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = ref.current;

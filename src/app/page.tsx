@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { Suspense, useState, useMemo, useCallback, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { useData } from "@/components/DataProvider";
 import DayView from "@/components/DayView";
@@ -10,8 +10,8 @@ import OrderSheet from "@/components/OrderSheet";
 import BottomNav from "@/components/BottomNav";
 import FilterPanel, { Filters, EMPTY_FILTERS, applyFilters } from "@/components/FilterPanel";
 import { WorkOrder, ViewMode } from "@/lib/types";
-import { addDays, addWeeks, subDays, subWeeks, format, isToday } from "date-fns";
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database } from "lucide-react";
+import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO } from "date-fns";
+import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database, CalendarDays } from "lucide-react";
 
 export default function CalendarPageWrapper() {
   return (
@@ -55,18 +55,11 @@ function CalendarPage() {
 
   const filteredOrders = useMemo(() => applyFilters(orders, filters), [orders, filters]);
 
-  const [slideDir, setSlideDir] = useState<"next" | "prev" | null>(null);
-  const slideKey = useRef(0);
-
-  const goToday = () => { setSlideDir(null); setCurrentDate(new Date()); };
+  const goToday = () => setCurrentDate(new Date());
   const goPrev = useCallback(() => {
-    slideKey.current++;
-    setSlideDir("prev");
     setCurrentDate((d) => (view === "day" ? subDays(d, 1) : subWeeks(d, 1)));
   }, [view]);
   const goNext = useCallback(() => {
-    slideKey.current++;
-    setSlideDir("next");
     setCurrentDate((d) => (view === "day" ? addDays(d, 1) : addWeeks(d, 1)));
   }, [view]);
 
@@ -138,16 +131,24 @@ function CalendarPage() {
               {v}
             </button>
           ))}
+          <label className="px-2 py-1 rounded-md text-muted hover:bg-background/50 cursor-pointer transition-colors flex items-center">
+            <CalendarDays className="w-4 h-4" />
+            <input
+              type="date"
+              className="sr-only"
+              value={format(currentDate, "yyyy-MM-dd")}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setCurrentDate(parseISO(e.target.value));
+                  if (view !== "day" && view !== "week") setView("day");
+                }
+              }}
+            />
+          </label>
         </div>
       </header>
 
-      <div
-        key={slideKey.current}
-        className={`flex-1 flex flex-col min-h-0 ${
-          slideDir === "next" ? "slide-next" : slideDir === "prev" ? "slide-prev" : ""
-        }`}
-        onAnimationEnd={() => setSlideDir(null)}
-      >
+      <div className="flex-1 flex flex-col min-h-0">
         {view === "list" ? (
           <UnscheduledJobs
             orders={orders}
