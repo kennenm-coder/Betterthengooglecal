@@ -171,10 +171,10 @@ export default function JobCard({
             <div className="flex items-center gap-1 shrink-0">
               <button
                 onClick={() => setShowAction(true)}
-                className="p-1 rounded hover:bg-surface"
+                className="p-1.5 rounded-lg border border-primary/30 bg-primary/10 hover:bg-primary/20 transition-colors"
                 title="Log Action"
               >
-                <MessageSquarePlus className="w-4 h-4 text-primary" />
+                <MessageSquarePlus className="w-5 h-5 text-primary" />
               </button>
               <button
                 onClick={() => openSalesforce(order.workOrderNumber)}
