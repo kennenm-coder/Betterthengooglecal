@@ -9,12 +9,7 @@ export function lastFirst(fullName: string): string {
 }
 
 export function crewName(order: WorkOrder): string {
-  if (order.primaryResource) return order.primaryResource;
-  if (order.workOrderType === "Service" && order.serviceRep) return order.serviceRep;
-  if (order.installer) return order.installer;
-  if (order.serviceRep) return order.serviceRep;
-  if (order.techMeasure) return order.techMeasure;
-  return "";
+  return order.primaryResource || "";
 }
 
 export function sortByNameAlpha(orders: WorkOrder[]): WorkOrder[] {
