@@ -43,15 +43,16 @@ export default function DayView({
   }, [dayOrders]);
 
   return (
-    <div ref={swipeRef} className="flex-1 overflow-y-auto overscroll-contain">
-      <div className="sticky top-0 bg-background z-10 px-4 py-2 border-b border-border">
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="bg-background z-10 px-4 py-2 border-b border-border">
         <h2 className="text-lg font-semibold">{format(date, "EEEE, MMMM d")}</h2>
         <p className="text-sm text-muted">
           {dayOrders.length} appointment{dayOrders.length !== 1 ? "s" : ""}
         </p>
       </div>
 
-      <div className="relative">
+      <div ref={swipeRef} className="flex-1 overflow-y-auto overscroll-contain">
+        <div className="relative">
         {HOURS.map((hour) => {
           const hourOrders = ordersByHour.get(hour) || [];
           return (
@@ -89,6 +90,7 @@ export default function DayView({
             </div>
           );
         })}
+        </div>
       </div>
     </div>
   );

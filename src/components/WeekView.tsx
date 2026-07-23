@@ -35,8 +35,8 @@ export default function WeekView({
   }, [orders, date]);
 
   return (
-    <div ref={swipeRef} className="flex-1 overflow-y-auto overscroll-contain">
-      <div className="sticky top-0 bg-background z-10 border-b border-border">
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="bg-background z-10 border-b border-border">
         <div className="grid grid-cols-7">
           {days.map((day) => {
             const dayKey = format(day, "yyyy-MM-dd");
@@ -68,7 +68,8 @@ export default function WeekView({
         </div>
       </div>
 
-      <div className="divide-y divide-border">
+      <div ref={swipeRef} className="flex-1 overflow-y-auto overscroll-contain">
+        <div className="divide-y divide-border">
         {days.map((day) => {
           const dayKey = format(day, "yyyy-MM-dd");
           const dayOrders = ordersByDay.get(dayKey) || [];
@@ -109,6 +110,7 @@ export default function WeekView({
             </div>
           );
         })}
+        </div>
       </div>
     </div>
   );

@@ -69,7 +69,7 @@ export default function FilterPanel({
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 w-72 bg-background border border-border rounded-lg shadow-lg z-40 p-3 space-y-3">
+          <div className="fixed right-2 top-14 w-72 max-w-[calc(100vw-1rem)] bg-background border border-border rounded-lg shadow-lg z-40 p-3 space-y-3">
             <div className="flex items-center justify-between">
               <span className="font-medium text-sm">Filters</span>
               {active && (
