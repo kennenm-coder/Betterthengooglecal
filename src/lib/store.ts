@@ -53,6 +53,11 @@ interface WorkOrderRow {
   updated_at: string;
 }
 
+function stripUtcSuffix(iso: string | null): string | null {
+  if (!iso) return null;
+  return iso.replace(/Z$/, "").replace(/[+-]\d{2}:\d{2}$/, "");
+}
+
 function rowToWorkOrder(row: WorkOrderRow): WorkOrder {
   return {
     id: row.id,
@@ -63,8 +68,8 @@ function rowToWorkOrder(row: WorkOrderRow): WorkOrder {
     customerName: row.customer_name || "",
     address: row.address || "",
     bookingDate: row.booking_date,
-    scheduledStart: row.scheduled_start,
-    scheduledEnd: row.scheduled_end,
+    scheduledStart: stripUtcSuffix(row.scheduled_start),
+    scheduledEnd: stripUtcSuffix(row.scheduled_end),
     workOrderType: (row.work_order_type as WorkOrder["workOrderType"]) || "Install",
     orderOwner: row.order_owner || "",
     salesRep: row.sales_rep || "",
