@@ -146,7 +146,7 @@ export default function JobCard({
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-base truncate">
+                <h3 className="font-semibold text-lg truncate">
                   {order.customerName}
                 </h3>
                 <CopyButton text={order.customerName} label="name" />
@@ -282,7 +282,7 @@ export default function JobCard({
           </div>
 
           {expanded && (
-            <div className="mt-3 pt-3 border-t border-border space-y-1.5 text-sm">
+            <div className="mt-3 pt-3 border-t border-border space-y-1.5 text-[15px]">
               <div className="flex items-center gap-2 text-muted">
                 <Hash className="w-3.5 h-3.5" />
                 <span>Job Status: <span className="text-foreground">{order.status}</span></span>
@@ -341,7 +341,7 @@ function InfoRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start gap-2 text-sm">
+    <div className="flex items-start gap-2 text-[15px]">
       <Icon className="w-4 h-4 text-muted mt-0.5 shrink-0" />
       <div className="flex items-center gap-1 flex-wrap min-w-0">{children}</div>
     </div>

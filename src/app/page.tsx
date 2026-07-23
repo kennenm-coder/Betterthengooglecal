@@ -72,7 +72,7 @@ function CalendarPage() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden touch-manipulation">
       <header className="bg-background border-b border-border px-3 py-1.5 z-20 space-y-1.5">
         {/* Row 1: Navigation */}
         <div className="flex items-center gap-1.5">
