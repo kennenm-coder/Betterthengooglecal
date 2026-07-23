@@ -27,8 +27,8 @@ export default function ActionModal({
   const [recognition, setRecognition] = useState<any>(null);
 
   useEffect(() => {
-    setActionTypes(getActionTypes());
-    setPeople(getActionPeople());
+    getActionTypes().then(setActionTypes);
+    getActionPeople().then(setPeople);
   }, []);
 
   useEffect(() => {

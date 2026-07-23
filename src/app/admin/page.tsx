@@ -142,8 +142,8 @@ function SettingsTab() {
   const [newEmail, setNewEmail] = useState("");
 
   useEffect(() => {
-    setTypes(getActionTypes());
-    setPeople(getActionPeople());
+    getActionTypes().then(setTypes);
+    getActionPeople().then(setPeople);
   }, []);
 
   function addType() {
