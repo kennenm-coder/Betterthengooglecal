@@ -233,6 +233,11 @@ export default function JobCard({
               <CopyButton text={order.address} label="address" />
             </InfoRow>
 
+            {order.primaryResource && (
+              <InfoRow icon={User} label="Primary Resource">
+                <span className="font-medium">{order.primaryResource}</span>
+              </InfoRow>
+            )}
             {order.orderOwner && (
               <InfoRow icon={Briefcase} label="Owner">
                 <span>{order.orderOwner}</span>
@@ -243,17 +248,17 @@ export default function JobCard({
                 <span>{order.salesRep}</span>
               </InfoRow>
             )}
-            {order.techMeasure && (
+            {order.techMeasure && order.techMeasure !== order.primaryResource && (
               <InfoRow icon={User} label="Measure Tech">
                 <span>{order.techMeasure}</span>
               </InfoRow>
             )}
-            {order.installer && (
+            {order.installer && order.installer !== order.primaryResource && (
               <InfoRow icon={Wrench} label="Installer">
                 <span>{order.installer}</span>
               </InfoRow>
             )}
-            {order.serviceRep && (
+            {order.serviceRep && order.serviceRep !== order.primaryResource && (
               <InfoRow icon={Wrench} label="Service Tech">
                 <span>{order.serviceRep}</span>
               </InfoRow>

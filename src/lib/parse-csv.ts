@@ -13,16 +13,17 @@ import { WorkOrder, PhoneEntry } from "./types";
 // 8  Primary Tech Measure Name
 // 9  Primary Installer: Name
 // 10 Primary Service: Name
-// 11 Status (appointment status, e.g. "Scheduled & Assigned", "Appt Complete / Closed")
-// 12 Scheduled Start Time
-// 13 Install_Sched_End_Time
-// 14 Contact: Full Name
-// 15 Bill to Contact Email
-// 16 Bill to Contact Mobile Phone
-// 17 Bill to Contact Home Phone
-// 18 Bill to Contact Business Phone
-// 19 Service Request Description
-// 20 Work Order Type
+// 11 Primary Resource Name
+// 12 Status (appointment status, e.g. "Scheduled & Assigned", "Appt Complete / Closed")
+// 13 Scheduled Start Time
+// 14 Install_Sched_End_Time
+// 15 Contact: Full Name
+// 16 Bill to Contact Email
+// 17 Bill to Contact Mobile Phone
+// 18 Bill to Contact Home Phone
+// 19 Bill to Contact Business Phone
+// 20 Service Request Description
+// 21 Work Order Type
 
 const COL = {
   RECORD_STATUS: 0,
@@ -36,16 +37,17 @@ const COL = {
   TECH_MEASURE: 8,
   INSTALLER: 9,
   SERVICE_REP: 10,
-  APPOINTMENT_STATUS: 11,
-  SCHEDULED_START: 12,
-  SCHEDULED_END: 13,
-  CONTACT_NAME: 14,
-  EMAIL: 15,
-  MOBILE_PHONE: 16,
-  HOME_PHONE: 17,
-  BUSINESS_PHONE: 18,
-  SERVICE_DESCRIPTION: 19,
-  WORK_ORDER_TYPE: 20,
+  PRIMARY_RESOURCE: 11,
+  APPOINTMENT_STATUS: 12,
+  SCHEDULED_START: 13,
+  SCHEDULED_END: 14,
+  CONTACT_NAME: 15,
+  EMAIL: 16,
+  MOBILE_PHONE: 17,
+  HOME_PHONE: 18,
+  BUSINESS_PHONE: 19,
+  SERVICE_DESCRIPTION: 20,
+  WORK_ORDER_TYPE: 21,
 } as const;
 
 function val(row: string[], col: number): string {
@@ -149,6 +151,7 @@ export function parseCsv(csvText: string): WorkOrder[] {
         val(row, COL.BUSINESS_PHONE)
       ),
       serviceDescription: val(row, COL.SERVICE_DESCRIPTION),
+      primaryResource: val(row, COL.PRIMARY_RESOURCE),
       workOrderType: (val(row, COL.WORK_ORDER_TYPE) || "Install") as WorkOrder["workOrderType"],
     });
   }
