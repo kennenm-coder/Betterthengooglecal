@@ -18,9 +18,11 @@ import {
   Package,
   ClipboardList,
   FileText,
+  MessageSquarePlus,
 } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import ActionModal from "./ActionModal";
 import { parseISO, isSameDay } from "date-fns";
 
 function phoneHref(phone: string): string {
@@ -85,6 +87,7 @@ export default function JobCard({
   compact?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showAction, setShowAction] = useState(false);
   const router = useRouter();
   const typeBg = typeColor(order.workOrderType);
   const multiDay = isMultiDay(order);
@@ -166,6 +169,13 @@ export default function JobCard({
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => setShowAction(true)}
+                className="p-1 rounded hover:bg-surface"
+                title="Log Action"
+              >
+                <MessageSquarePlus className="w-4 h-4 text-primary" />
+              </button>
               <button
                 onClick={() => openSalesforce(order.workOrderNumber)}
                 className="p-1 rounded hover:bg-surface"
@@ -327,6 +337,10 @@ export default function JobCard({
           {mat && mat.units.length > 0 && <ProductSpecs units={mat.units} />}
         </div>
       </div>
+
+      {showAction && (
+        <ActionModal order={order} onClose={() => setShowAction(false)} />
+      )}
     </div>
   );
 }

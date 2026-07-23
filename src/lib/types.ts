@@ -117,3 +117,21 @@ export interface MaterialUnit {
 }
 
 export type ViewMode = "day" | "week" | "list";
+
+export interface ActionPerson {
+  name: string;
+  email: string;
+}
+
+export interface ActionLogEntry {
+  id: string;
+  timestamp: string;
+  actionType: string;
+  person: ActionPerson;
+  notes: string;
+  customerName: string;
+  orderNumber: string;
+  workOrderNumber: string;
+  workOrderType: string;
+  address: string;
+}

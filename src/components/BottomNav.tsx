@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Calendar, Search, Upload } from "lucide-react";
+import { Calendar, Search, Settings } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: Calendar },
   { href: "/search", label: "Search", icon: Search },
-  { href: "/admin", label: "Upload", icon: Upload },
+  { href: "/admin", label: "Dev", icon: Settings },
 ];
 
 export default function BottomNav() {
