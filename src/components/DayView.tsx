@@ -57,8 +57,8 @@ export default function DayView({
           const hourOrders = ordersByHour.get(hour) || [];
           return (
             <div key={hour} className="flex border-b border-border/50 min-h-[60px]">
-              <div className="w-16 shrink-0 text-xs text-muted py-2 text-right pr-3 pt-1">
-                {format(new Date(2000, 0, 1, hour), "h a")}
+              <div className="w-12 shrink-0 text-[11px] text-muted py-2 text-right pr-2 pt-1">
+                {format(new Date(2000, 0, 1, hour), "ha").toLowerCase()}
               </div>
               <div className="flex-1 border-l border-border/50 py-1 px-2 space-y-1">
                 {hourOrders.map((order) => {
@@ -67,18 +67,18 @@ export default function DayView({
                     <button
                       key={order.id}
                       onClick={() => onSelectOrder(order)}
-                      className={`w-full text-left rounded-md px-2.5 py-1.5 text-white text-sm transition-all active:scale-[0.98] ${typeColor(
+                      className={`w-full text-left rounded-md px-3 py-2 text-white text-base transition-all active:scale-[0.98] ${typeColor(
                         order.workOrderType
                       )}`}
                     >
                       <div className="font-medium truncate">
                         {lastFirst(order.customerName)} - {order.orderNumber}
                       </div>
-                      <div className="text-xs opacity-90 flex items-center gap-2">
+                      <div className="text-sm opacity-90 flex items-center gap-2">
                         <span>{formatTime(order.scheduledStart)}</span>
                         {crew && <span>{crew}</span>}
                         {order.materialJob && (
-                          <span className="px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-semibold">
+                          <span className="px-1.5 py-0.5 rounded bg-white/20 text-xs font-semibold">
                             Linked
                           </span>
                         )}

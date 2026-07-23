@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback, useEffect, useState } from "react";
+import { useRef, useCallback, useEffect } from "react";
 
 interface SwipeHandlers {
   onSwipeLeft?: () => void;
@@ -9,6 +9,7 @@ interface SwipeHandlers {
 
 const MIN_SWIPE_DISTANCE = 40;
 const VELOCITY_THRESHOLD = 0.2;
+const LOCK_THRESHOLD = 20;
 
 export function useSwipe({ onSwipeLeft, onSwipeRight }: SwipeHandlers) {
   const touchStart = useRef<{ x: number; y: number; t: number } | null>(null);
@@ -20,11 +21,7 @@ export function useSwipe({ onSwipeLeft, onSwipeRight }: SwipeHandlers) {
     const touch = e.touches[0];
     touchStart.current = { x: touch.clientX, y: touch.clientY, t: Date.now() };
     locked.current = null;
-    const el = ref.current;
-    if (el) {
-      el.style.transition = "none";
-      el.style.willChange = "transform";
-    }
+    offsetRef.current = 0;
   }, []);
 
   const onTouchMove = useCallback((e: TouchEvent) => {
@@ -32,24 +29,38 @@ export function useSwipe({ onSwipeLeft, onSwipeRight }: SwipeHandlers) {
     const touch = e.touches[0];
     const dx = touch.clientX - touchStart.current.x;
     const dy = touch.clientY - touchStart.current.y;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
 
     if (!locked.current) {
-      if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
-        locked.current = Math.abs(dx) > Math.abs(dy) * 1.2 ? "horizontal" : "vertical";
+      // Wait until finger has moved far enough to confidently determine direction
+      if (absDx < LOCK_THRESHOLD && absDy < LOCK_THRESHOLD) return;
+
+      // Horizontal only if dx is at least 2x dy — strongly horizontal gesture
+      if (absDx > absDy * 2) {
+        locked.current = "horizontal";
+        const el = ref.current;
+        if (el) {
+          el.style.transition = "none";
+          el.style.willChange = "transform";
+        }
+      } else {
+        // Anything else is vertical — let the browser scroll normally
+        locked.current = "vertical";
+        return;
       }
-      return;
     }
 
-    if (locked.current === "horizontal") {
-      e.preventDefault();
-      const resistance = 0.4;
-      const dampened = dx * resistance;
-      offsetRef.current = dampened;
-      const el = ref.current;
-      if (el) {
-        el.style.transform = `translateX(${dampened}px)`;
-        el.style.opacity = String(1 - Math.abs(dampened) / 800);
-      }
+    if (locked.current === "vertical") return;
+
+    e.preventDefault();
+    const resistance = 0.4;
+    const dampened = dx * resistance;
+    offsetRef.current = dampened;
+    const el = ref.current;
+    if (el) {
+      el.style.transform = `translateX(${dampened}px)`;
+      el.style.opacity = String(1 - Math.abs(dampened) / 800);
     }
   }, []);
 
@@ -67,9 +78,13 @@ export function useSwipe({ onSwipeLeft, onSwipeRight }: SwipeHandlers) {
       const el = ref.current;
       if (!el) return;
 
+      if (direction !== "horizontal") {
+        el.style.willChange = "auto";
+        return;
+      }
+
       const shouldSwipe =
-        direction === "horizontal" &&
-        (Math.abs(dx) > MIN_SWIPE_DISTANCE || velocity > VELOCITY_THRESHOLD);
+        Math.abs(dx) > MIN_SWIPE_DISTANCE || velocity > VELOCITY_THRESHOLD;
 
       if (shouldSwipe) {
         const exitX = dx < 0 ? -120 : 120;
