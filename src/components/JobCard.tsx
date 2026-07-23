@@ -38,10 +38,19 @@ function isMultiDay(order: WorkOrder): boolean {
 
 function openSalesforce(workOrderNumber: string) {
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  const webUrl = `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${encodeURIComponent(workOrderNumber)}`;
+
   if (isMobile) {
-    window.location.href = `salesforce1://search/${encodeURIComponent(workOrderNumber)}`;
+    const appUrl = `salesforce1://search/${encodeURIComponent(workOrderNumber)}`;
+    const start = Date.now();
+    window.location.href = appUrl;
+    setTimeout(() => {
+      if (Date.now() - start < 1800) {
+        window.open(webUrl, "_blank");
+      }
+    }, 1500);
   } else {
-    navigator.clipboard.writeText(workOrderNumber).catch(() => {});
+    window.open(webUrl, "_blank");
   }
 }
 
