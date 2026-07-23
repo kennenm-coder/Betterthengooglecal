@@ -1,35 +1,55 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#1a1a1a"/>
-  <g fill="#4a8c2a">
-    <!-- Body - wider, flatter oval -->
-    <ellipse cx="280" cy="310" rx="130" ry="75"/>
-    <!-- Breast -->
-    <ellipse cx="175" cy="290" rx="50" ry="65"/>
-    <!-- Neck - thinner, more curved -->
-    <ellipse cx="168" cy="225" rx="24" ry="55"/>
-    <!-- Upper neck -->
-    <ellipse cx="165" cy="185" rx="22" ry="35"/>
-    <!-- Head - slightly smaller -->
-    <circle cx="162" cy="148" r="35"/>
-    <!-- Beak - longer, flatter -->
-    <rect x="92" y="150" width="42" height="13" rx="2" fill="#6db344"/>
-    <rect x="92" y="143" width="42" height="12" rx="2"/>
-    <!-- Nostril -->
-    <circle cx="115" cy="149" r="2.5" fill="#3d7523"/>
+  <rect width="512" height="512" rx="96" fill="#4a8c2a"/>
+  <g transform="translate(50,55) scale(0.85)">
+    <!-- Duck silhouette - facing right, matching cartoon reference -->
+    <path d="
+      M 355,155
+      C 365,140 380,130 395,130
+      C 412,130 425,140 430,155
+      C 435,168 432,182 425,190
+      L 465,185
+      C 475,184 480,188 480,195
+      C 480,202 475,208 465,210
+      L 425,212
+      C 420,220 410,225 398,228
+      C 390,240 380,258 370,278
+      C 358,302 350,325 348,345
+      C 346,365 350,380 360,392
+      C 370,404 385,410 405,410
+      C 395,418 378,422 355,422
+      C 330,422 308,418 290,410
+      C 270,402 255,390 245,375
+      C 238,388 228,396 215,400
+      C 200,405 185,404 172,398
+      C 160,392 152,382 148,370
+      C 144,358 145,345 150,335
+      C 138,342 122,348 105,348
+      C 88,348 75,342 68,332
+      C 60,322 58,310 62,298
+      C 66,286 76,278 90,275
+      L 78,268
+      C 68,260 65,248 70,238
+      C 75,228 85,222 98,222
+      C 108,222 118,226 125,232
+      C 130,222 140,212 155,205
+      C 175,195 198,190 222,190
+      C 250,190 275,195 298,205
+      C 318,215 335,228 345,245
+      C 348,230 350,215 350,200
+      C 350,185 348,172 345,162
+      C 348,158 352,155 355,155
+      Z
+    " fill="#1a1a1a"/>
     <!-- Eye -->
-    <circle cx="152" cy="140" r="7" fill="#1a1a1a"/>
-    <!-- Tail feathers - sharper -->
-    <polygon points="408,295 445,245 418,288"/>
-    <polygon points="410,285 450,258 422,282"/>
-    <polygon points="405,305 440,275 415,300"/>
-    <!-- Back flatness -->
-    <rect x="200" y="238" width="180" height="8" rx="4"/>
-    <!-- Leg -->
-    <rect x="250" y="378" width="7" height="45"/>
-    <!-- Foot -->
-    <polygon points="228,423 260,423 270,436 253,427 243,438 248,425 220,435"/>
-    <!-- Wing accent lines -->
-    <path d="M185,295 C225,282 285,278 365,288" stroke="#3d7523" stroke-width="3" fill="none"/>
-    <path d="M195,315 C240,306 300,303 370,310" stroke="#3d7523" stroke-width="2.5" fill="none" opacity="0.5"/>
+    <circle cx="410" cy="165" r="8" fill="#4a8c2a"/>
+    <!-- Wing lines -->
+    <path d="M 140,290 C 190,270 250,265 320,275" stroke="#333" stroke-width="4" fill="none"/>
+    <path d="M 155,315 C 200,300 260,295 325,302" stroke="#333" stroke-width="3" fill="none" opacity="0.5"/>
+    <!-- Legs -->
+    <rect x="270" y="415" width="9" height="42" rx="3" fill="#1a1a1a"/>
+    <rect x="310" y="415" width="9" height="36" rx="3" fill="#1a1a1a"/>
+    <!-- Feet -->
+    <path d="M 255,457 L 272,450 L 280,457 L 288,450 L 298,460 L 255,460 Z" fill="#1a1a1a"/>
+    <path d="M 298,451 L 312,445 L 320,451 L 328,445 L 335,454 L 298,454 Z" fill="#1a1a1a"/>
   </g>
 </svg>
