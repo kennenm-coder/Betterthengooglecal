@@ -240,6 +240,12 @@ export default function JobCard({
               </InfoRow>
             )}
 
+            {order.workOrderType === "Service" && order.serviceDescription && (
+              <InfoRow icon={ClipboardList} label="Service Details">
+                <span className="text-foreground">{order.serviceDescription}</span>
+              </InfoRow>
+            )}
+
             {order.phones.length > 0 && (
               <InfoRow icon={Phone} label="Phone">
                 <div className="flex flex-wrap gap-x-3 gap-y-1">
