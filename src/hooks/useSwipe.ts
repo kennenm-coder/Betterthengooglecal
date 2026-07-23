@@ -34,21 +34,22 @@ export function useSwipe({ onSwipeLeft, onSwipeRight }: SwipeHandlers) {
     const dy = touch.clientY - touchStart.current.y;
 
     if (!locked.current) {
-      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-        locked.current = Math.abs(dx) > Math.abs(dy) ? "horizontal" : "vertical";
+      if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
+        locked.current = Math.abs(dx) > Math.abs(dy) * 1.2 ? "horizontal" : "vertical";
       }
       return;
     }
 
-    if (locked.current !== "horizontal") return;
-
-    const resistance = 0.4;
-    const dampened = dx * resistance;
-    offsetRef.current = dampened;
-    const el = ref.current;
-    if (el) {
-      el.style.transform = `translateX(${dampened}px)`;
-      el.style.opacity = String(1 - Math.abs(dampened) / 800);
+    if (locked.current === "horizontal") {
+      e.preventDefault();
+      const resistance = 0.4;
+      const dampened = dx * resistance;
+      offsetRef.current = dampened;
+      const el = ref.current;
+      if (el) {
+        el.style.transform = `translateX(${dampened}px)`;
+        el.style.opacity = String(1 - Math.abs(dampened) / 800);
+      }
     }
   }, []);
 
@@ -103,7 +104,7 @@ export function useSwipe({ onSwipeLeft, onSwipeRight }: SwipeHandlers) {
     const el = ref.current;
     if (!el) return;
     el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
     el.addEventListener("touchend", onTouchEnd, { passive: true });
     return () => {
       el.removeEventListener("touchstart", onTouchStart);
