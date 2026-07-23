@@ -18,6 +18,7 @@ export interface WorkOrder {
   email: string;
   phones: PhoneEntry[];
   serviceDescription: string;
+  primaryResource: string;
   workOrderType: "Install" | "Service" | "Job Site Visit";
   materialJob?: MaterialJobData | null;
 }

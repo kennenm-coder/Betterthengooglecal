@@ -126,6 +126,7 @@ async function upsertToSupabase(orders: WorkOrder[]) {
     email: wo.email,
     phones: wo.phones,
     service_description: wo.serviceDescription || "",
+    primary_resource: wo.primaryResource || "",
     updated_at: new Date().toISOString(),
   }));
 

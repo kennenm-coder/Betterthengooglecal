@@ -98,7 +98,7 @@ export function parseXlsHtml(html: string): WorkOrder[] {
   return rows.map((row, idx): WorkOrder => {
     const tds = Object.values(row);
     const appointmentStatus =
-      headers.length > 11 ? (tds[11] ?? "").trim() : cell(row, "Status");
+      headers.length > 12 ? (tds[12] ?? "").trim() : cell(row, "Status");
 
     return {
       id: `${cell(row, "Work Order Number") || idx}`,
@@ -113,6 +113,7 @@ export function parseXlsHtml(html: string): WorkOrder[] {
       techMeasure: cell(row, "Primary Tech Measure Name"),
       installer: cell(row, "Primary Installer: Name"),
       serviceRep: cell(row, "Primary Service: Name"),
+      primaryResource: cell(row, "Primary Resource Name"),
       appointmentStatus: appointmentStatus || cell(row, "Status"),
       scheduledStart: parseDate(cell(row, "Scheduled Start Time")),
       scheduledEnd: parseDate(cell(row, "Install_Sched_End_Time")),
