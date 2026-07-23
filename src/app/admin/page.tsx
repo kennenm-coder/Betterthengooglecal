@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { useData } from "@/components/DataProvider";
 import { parseXlsHtml } from "@/lib/parse-xls";
+import { parseCsv } from "@/lib/parse-csv";
 import { upsertWorkOrders } from "@/lib/store";
 import BottomNav from "@/components/BottomNav";
 import { Upload, CheckCircle, AlertCircle, FileSpreadsheet, Loader2 } from "lucide-react";
@@ -21,7 +22,10 @@ export default function AdminPage() {
 
     try {
       const text = await file.text();
-      const parsed = parseXlsHtml(text);
+      let parsed = parseXlsHtml(text);
+      if (parsed.length === 0) {
+        parsed = parseCsv(text);
+      }
 
       if (parsed.length === 0) {
         setResult({ success: false, message: "No orders found in file." });
@@ -52,7 +56,8 @@ export default function AdminPage() {
       // Full fallback to client-side parsing
       try {
         const text = await file.text();
-        const parsed = parseXlsHtml(text);
+        let parsed = parseXlsHtml(text);
+        if (parsed.length === 0) parsed = parseCsv(text);
         if (parsed.length > 0) {
           setOrdersLocal(parsed);
           setResult({
@@ -130,7 +135,7 @@ export default function AdminPage() {
           <input
             ref={fileRef}
             type="file"
-            accept=".xls,.xlsx,.html"
+            accept=".xls,.xlsx,.html,.csv"
             onChange={onFileChange}
             className="hidden"
           />

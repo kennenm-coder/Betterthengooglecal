@@ -14,13 +14,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "RbA Field Calendar",
+  title: "Duck Force",
   description: "Renewal by Andersen field operations calendar",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Field Cal",
+    title: "Duck Force",
   },
 };
 

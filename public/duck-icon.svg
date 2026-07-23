@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#1a1a1a"/>
+  <g fill="#4a8c2a">
+    <!-- Body - wider, flatter oval -->
+    <ellipse cx="280" cy="310" rx="130" ry="75"/>
+    <!-- Breast -->
+    <ellipse cx="175" cy="290" rx="50" ry="65"/>
+    <!-- Neck - thinner, more curved -->
+    <ellipse cx="168" cy="225" rx="24" ry="55"/>
+    <!-- Upper neck -->
+    <ellipse cx="165" cy="185" rx="22" ry="35"/>
+    <!-- Head - slightly smaller -->
+    <circle cx="162" cy="148" r="35"/>
+    <!-- Beak - longer, flatter -->
+    <rect x="92" y="150" width="42" height="13" rx="2" fill="#6db344"/>
+    <rect x="92" y="143" width="42" height="12" rx="2"/>
+    <!-- Nostril -->
+    <circle cx="115" cy="149" r="2.5" fill="#3d7523"/>
+    <!-- Eye -->
+    <circle cx="152" cy="140" r="7" fill="#1a1a1a"/>
+    <!-- Tail feathers - sharper -->
+    <polygon points="408,295 445,245 418,288"/>
+    <polygon points="410,285 450,258 422,282"/>
+    <polygon points="405,305 440,275 415,300"/>
+    <!-- Back flatness -->
+    <rect x="200" y="238" width="180" height="8" rx="4"/>
+    <!-- Leg -->
+    <rect x="250" y="378" width="7" height="45"/>
+    <!-- Foot -->
+    <polygon points="228,423 260,423 270,436 253,427 243,438 248,425 220,435"/>
+    <!-- Wing accent lines -->
+    <path d="M185,295 C225,282 285,278 365,288" stroke="#3d7523" stroke-width="3" fill="none"/>
+    <path d="M195,315 C240,306 300,303 370,310" stroke="#3d7523" stroke-width="2.5" fill="none" opacity="0.5"/>
+  </g>
+</svg>
