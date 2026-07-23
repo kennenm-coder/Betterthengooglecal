@@ -56,7 +56,8 @@ function parseDate(raw: string): string | null {
   if (!raw) return null;
   const d = new Date(raw);
   if (isNaN(d.getTime())) return null;
-  return d.toISOString();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 function normalizePhone(raw: string): string {
@@ -147,6 +148,7 @@ export function parseCsv(csvText: string): WorkOrder[] {
         val(row, COL.HOME_PHONE),
         val(row, COL.BUSINESS_PHONE)
       ),
+      serviceDescription: val(row, COL.SERVICE_DESCRIPTION),
       workOrderType: (val(row, COL.WORK_ORDER_TYPE) || "Install") as WorkOrder["workOrderType"],
     });
   }

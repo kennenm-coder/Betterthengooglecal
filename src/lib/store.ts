@@ -48,6 +48,7 @@ interface WorkOrderRow {
   contact_name: string;
   email: string;
   phones: any;
+  service_description: string;
   uploaded_at: string;
   updated_at: string;
 }
@@ -73,6 +74,7 @@ function rowToWorkOrder(row: WorkOrderRow): WorkOrder {
     contactName: row.contact_name || "",
     email: row.email || "",
     phones: row.phones || [],
+    serviceDescription: row.service_description || "",
   };
 }
 
@@ -97,6 +99,7 @@ function workOrderToRow(wo: WorkOrder) {
     contact_name: wo.contactName,
     email: wo.email,
     phones: wo.phones,
+    service_description: wo.serviceDescription || "",
     updated_at: new Date().toISOString(),
   };
 }

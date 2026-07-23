@@ -43,7 +43,8 @@ function parseDate(raw: string | null | undefined): string | null {
   if (!raw || raw.trim() === "") return null;
   const d = new Date(raw);
   if (isNaN(d.getTime())) return null;
-  return d.toISOString();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 function decodeHtmlEntities(str: string): string {
@@ -122,6 +123,7 @@ export function parseXlsHtml(html: string): WorkOrder[] {
         cell(row, "Bill to Contact Home Phone"),
         cell(row, "Bill to Contact Business Phone")
       ),
+      serviceDescription: cell(row, "Service Request Description"),
       workOrderType: (cell(row, "Work Order Type") || "Install") as WorkOrder["workOrderType"],
     };
   });

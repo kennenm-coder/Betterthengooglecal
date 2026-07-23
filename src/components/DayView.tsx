@@ -76,6 +76,11 @@ export default function DayView({
                       <div className="text-xs opacity-90 flex items-center gap-2">
                         <span>{formatTime(order.scheduledStart)}</span>
                         {crew && <span>{crew}</span>}
+                        {order.materialJob && (
+                          <span className="px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-semibold">
+                            Linked
+                          </span>
+                        )}
                       </div>
                     </button>
                   );
