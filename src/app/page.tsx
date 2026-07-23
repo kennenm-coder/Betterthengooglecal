@@ -73,78 +73,87 @@ function CalendarPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <header className="bg-background border-b border-border px-3 py-2 flex items-center gap-2 z-20">
-        <button
-          onClick={goToday}
-          className={`text-sm px-3 py-1.5 rounded-md border border-border font-medium ${
-            isToday(currentDate) ? "bg-primary text-white border-primary" : "hover:bg-surface"
-          }`}
-        >
-          Today
-        </button>
-
-        <div className="flex items-center">
-          <button onClick={goPrev} className="p-1.5 rounded-full hover:bg-surface">
-            <ChevronLeft className="w-5 h-5" />
+      <header className="bg-background border-b border-border px-3 py-2 z-20">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={goToday}
+            className={`text-xs px-2 py-1.5 rounded-md border border-border font-medium shrink-0 ${
+              isToday(currentDate) ? "bg-primary text-white border-primary" : "hover:bg-surface"
+            }`}
+          >
+            Today
           </button>
-          <button onClick={goNext} className="p-1.5 rounded-full hover:bg-surface">
-            <ChevronRight className="w-5 h-5" />
+
+          <button onClick={goPrev} className="p-1 rounded-full hover:bg-surface shrink-0">
+            <ChevronLeft className="w-4.5 h-4.5" />
           </button>
-        </div>
+          <button onClick={goNext} className="p-1 rounded-full hover:bg-surface shrink-0">
+            <ChevronRight className="w-4.5 h-4.5" />
+          </button>
 
-        <h1 className="text-sm sm:text-base font-semibold flex-1 truncate">
-          {view === "day"
-            ? format(currentDate, "MMM d")
-            : format(currentDate, "MMM yyyy")}
-        </h1>
+          <h1 className="text-sm font-semibold flex-1 truncate">
+            {view === "day"
+              ? format(currentDate, "MMM d")
+              : format(currentDate, "MMM yyyy")}
+          </h1>
 
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="p-1.5 rounded-full hover:bg-surface disabled:opacity-50"
-          title="Refresh data"
-        >
-          <RefreshCw className={`w-4.5 h-4.5 ${refreshing ? "animate-spin" : ""}`} />
-        </button>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="p-1.5 rounded-full hover:bg-surface disabled:opacity-50 shrink-0"
+            title="Refresh data"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+          </button>
 
-        <FilterPanel orders={orders} filters={filters} onChange={setFilters} />
+          <FilterPanel orders={orders} filters={filters} onChange={setFilters} />
 
-        <button
-          onClick={() => setView(view === "list" ? "day" : "list")}
-          className={`p-1.5 rounded-full transition-colors ${
-            view === "list" ? "bg-primary text-white" : "hover:bg-surface"
-          }`}
-          title="Jobs Not Scheduled"
-        >
-          <Database className="w-4.5 h-4.5" />
-        </button>
+          <button
+            onClick={() => setView(view === "list" ? "day" : "list")}
+            className={`p-1.5 rounded-full transition-colors shrink-0 ${
+              view === "list" ? "bg-primary text-white" : "hover:bg-surface"
+            }`}
+            title="Jobs Not Scheduled"
+          >
+            <Database className="w-4 h-4" />
+          </button>
 
-        <div className="flex bg-surface rounded-lg p-0.5">
-          {(["day", "week"] as ViewMode[]).map((v) => (
+          <div className="flex bg-surface rounded-lg p-0.5 shrink-0">
+            {(["day", "week"] as ViewMode[]).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`px-2.5 py-1 text-xs rounded-md capitalize transition-colors ${
+                  view === v ? "bg-background shadow-sm font-medium" : "text-muted"
+                }`}
+              >
+                {v}
+              </button>
+            ))}
             <button
-              key={v}
-              onClick={() => setView(v)}
-              className={`px-3 py-1 text-sm rounded-md capitalize transition-colors ${
-                view === v ? "bg-background shadow-sm font-medium" : "text-muted"
-              }`}
-            >
-              {v}
-            </button>
-          ))}
-          <label className="px-2 py-1 rounded-md text-muted hover:bg-background/50 cursor-pointer transition-colors flex items-center">
-            <CalendarDays className="w-4 h-4" />
-            <input
-              type="date"
-              className="sr-only"
-              value={format(currentDate, "yyyy-MM-dd")}
-              onChange={(e) => {
-                if (e.target.value) {
-                  setCurrentDate(parseISO(e.target.value));
-                  if (view !== "day" && view !== "week") setView("day");
-                }
+              onClick={() => {
+                const input = document.getElementById("cal-picker") as HTMLInputElement;
+                input?.showPicker?.();
+                input?.click();
               }}
-            />
-          </label>
+              className="px-1.5 py-1 rounded-md text-muted hover:bg-background/50 transition-colors"
+              title="Pick a date"
+            >
+              <CalendarDays className="w-4 h-4" />
+            </button>
+          </div>
+          <input
+            id="cal-picker"
+            type="date"
+            className="absolute opacity-0 w-0 h-0 pointer-events-none"
+            value={format(currentDate, "yyyy-MM-dd")}
+            onChange={(e) => {
+              if (e.target.value) {
+                setCurrentDate(parseISO(e.target.value));
+                if (view !== "day" && view !== "week") setView("day");
+              }
+            }}
+          />
         </div>
       </header>
 

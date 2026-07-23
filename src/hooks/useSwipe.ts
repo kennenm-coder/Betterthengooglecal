@@ -7,8 +7,8 @@ interface SwipeHandlers {
   onSwipeRight?: () => void;
 }
 
-const MIN_SWIPE_DISTANCE = 50;
-const VELOCITY_THRESHOLD = 0.3;
+const MIN_SWIPE_DISTANCE = 40;
+const VELOCITY_THRESHOLD = 0.2;
 
 export function useSwipe({ onSwipeLeft, onSwipeRight }: SwipeHandlers) {
   const touchStart = useRef<{ x: number; y: number; t: number } | null>(null);
@@ -72,22 +72,22 @@ export function useSwipe({ onSwipeLeft, onSwipeRight }: SwipeHandlers) {
 
       if (shouldSwipe) {
         const exitX = dx < 0 ? -120 : 120;
-        el.style.transition = "transform 0.18s ease-out, opacity 0.18s ease-out";
+        el.style.transition = "transform 0.12s ease-out, opacity 0.12s ease-out";
         el.style.transform = `translateX(${exitX}px)`;
-        el.style.opacity = "0.2";
+        el.style.opacity = "0.3";
         setTimeout(() => {
           if (dx < 0) onSwipeLeft?.();
           else onSwipeRight?.();
           el.style.transition = "none";
-          el.style.transform = `translateX(${dx < 0 ? 80 : -80}px)`;
-          el.style.opacity = "0.2";
+          el.style.transform = `translateX(${dx < 0 ? 60 : -60}px)`;
+          el.style.opacity = "0.3";
           requestAnimationFrame(() => {
-            el.style.transition = "transform 0.22s ease-out, opacity 0.22s ease-out";
+            el.style.transition = "transform 0.15s ease-out, opacity 0.15s ease-out";
             el.style.transform = "translateX(0)";
             el.style.opacity = "1";
             el.style.willChange = "auto";
           });
-        }, 180);
+        }, 120);
       } else {
         el.style.transition = "transform 0.2s ease-out, opacity 0.2s ease-out";
         el.style.transform = "translateX(0)";
