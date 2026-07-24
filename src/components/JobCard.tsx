@@ -19,6 +19,9 @@ import {
   ClipboardList,
   FileText,
   MessageSquarePlus,
+  Hammer,
+  Ruler,
+  BadgeDollarSign,
 } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -253,17 +256,17 @@ export default function JobCard({
               </InfoRow>
             )}
             {order.salesRep && (
-              <InfoRow icon={User} label="Sales Rep">
+              <InfoRow icon={BadgeDollarSign} label="Sales Rep">
                 <span>{order.salesRep}</span>
               </InfoRow>
             )}
             {order.techMeasure && order.techMeasure !== order.primaryResource && (
-              <InfoRow icon={User} label="Measure Tech">
+              <InfoRow icon={Ruler} label="Measure Tech">
                 <span>{order.techMeasure}</span>
               </InfoRow>
             )}
             {order.installer && order.installer !== order.primaryResource && (
-              <InfoRow icon={Wrench} label="Installer">
+              <InfoRow icon={Hammer} label="Installer">
                 <span>{order.installer}</span>
               </InfoRow>
             )}
@@ -383,13 +386,13 @@ function FullDetails({ order }: { order: WorkOrder }) {
         <DetailLine icon={Briefcase} label="Owner" value={order.orderOwner} />
       )}
       {order.salesRep && (
-        <DetailLine icon={User} label="Sales Rep" value={order.salesRep} />
+        <DetailLine icon={BadgeDollarSign} label="Sales Rep" value={order.salesRep} />
       )}
       {order.techMeasure && (
-        <DetailLine icon={User} label="Measure Tech" value={order.techMeasure} />
+        <DetailLine icon={Ruler} label="Measure Tech" value={order.techMeasure} />
       )}
       {order.installer && (
-        <DetailLine icon={Wrench} label="Installer" value={order.installer} />
+        <DetailLine icon={Hammer} label="Installer" value={order.installer} />
       )}
       {order.serviceRep && (
         <DetailLine icon={Wrench} label="Service Tech" value={order.serviceRep} />
