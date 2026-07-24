@@ -2,7 +2,7 @@
 
 import { WorkOrder } from "@/lib/types";
 import { getOrdersForWeek, typeColor, formatTime } from "@/lib/calendar-utils";
-import { lastFirst, crewName, sortByStartTime } from "@/lib/format-utils";
+import { lastFirst, crewName, sortByStartTime, extractCity } from "@/lib/format-utils";
 import { format, startOfWeek, addDays, isToday } from "date-fns";
 import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
@@ -83,6 +83,7 @@ export default function WeekView({
               <div className="space-y-1.5">
                 {dayOrders.map((order) => {
                   const crew = crewName(order);
+                  const city = extractCity(order.address);
                   return (
                     <button
                       key={order.id}
@@ -91,19 +92,13 @@ export default function WeekView({
                         order.workOrderType
                       )}`}
                     >
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium truncate">
-                          {lastFirst(order.customerName)} - {order.orderNumber}
-                        </span>
-                        <span className="text-xs opacity-90 whitespace-nowrap ml-2">
-                          {formatTime(order.scheduledStart)}
-                        </span>
+                      <div className="font-medium truncate">
+                        {lastFirst(order.customerName)} - {order.orderNumber}
                       </div>
-                      <div className="text-xs opacity-80 mt-0.5 flex items-center gap-2">
-                        <span>
-                          {order.workOrderType}
-                          {crew && <> &middot; {crew}</>}
-                        </span>
+                      <div className="text-xs opacity-90 flex items-center gap-2">
+                        <span>{formatTime(order.scheduledStart)}</span>
+                        {city && <span>&middot; {city}</span>}
+                        {crew && <span>&middot; {crew}</span>}
                         {order.materialJob && (
                           <span className="px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-semibold">
                             Linked

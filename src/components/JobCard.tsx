@@ -30,7 +30,14 @@ function phoneHref(phone: string): string {
 }
 
 function mapsHref(address: string): string {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  const encoded = encodeURIComponent(address);
+  if (typeof navigator === "undefined") {
+    return `https://www.google.com/maps/search/?api=1&query=${encoded}`;
+  }
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/i.test(ua)) return `maps:?q=${encoded}`;
+  if (/Android/i.test(ua)) return `geo:0,0?q=${encoded}`;
+  return `https://www.google.com/maps/search/?api=1&query=${encoded}`;
 }
 
 function isMultiDay(order: WorkOrder): boolean {

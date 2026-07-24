@@ -24,3 +24,10 @@ export function sortByStartTime(orders: WorkOrder[]): WorkOrder[] {
     (a.scheduledStart || "").localeCompare(b.scheduledStart || "")
   );
 }
+
+export function extractCity(address: string): string {
+  if (!address) return "";
+  const parts = address.split(",");
+  if (parts.length >= 2) return parts[1].trim();
+  return "";
+}
