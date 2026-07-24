@@ -95,7 +95,7 @@ export default function WeekView({
                       <div className="font-medium truncate">
                         {lastFirst(order.customerName)} - {order.orderNumber}
                       </div>
-                      <div className="text-xs opacity-90 flex items-center gap-2">
+                      <div className="text-xs opacity-90 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                         <span>{formatTime(order.scheduledStart)}</span>
                         {city && <span>&middot; {city}</span>}
                         {crew && <span>&middot; {crew}</span>}
