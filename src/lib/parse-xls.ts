@@ -116,7 +116,7 @@ export function parseXlsHtml(html: string): WorkOrder[] {
       primaryResource: cell(row, "Primary Resource Name"),
       appointmentStatus: appointmentStatus || cell(row, "Status"),
       scheduledStart: parseDate(cell(row, "Scheduled Start Time")),
-      scheduledEnd: parseDate(cell(row, "Install_Sched_End_Time")),
+      scheduledEnd: parseDate(cell(row, "Scheduled End Time")),
       contactName: cell(row, "Contact: Full Name"),
       email: cell(row, "Bill to Contact Email"),
       phones: deduplicatePhones(

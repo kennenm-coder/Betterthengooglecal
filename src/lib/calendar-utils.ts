@@ -14,10 +14,9 @@ import {
 function orderSpansDay(order: WorkOrder, date: Date): boolean {
   if (!order.scheduledStart) return false;
   const start = startOfDay(parseISO(order.scheduledStart));
-  const end =
-    order.scheduledEnd && order.workOrderType === "Install"
-      ? startOfDay(parseISO(order.scheduledEnd))
-      : start;
+  const end = order.scheduledEnd
+    ? startOfDay(parseISO(order.scheduledEnd))
+    : start;
   const target = startOfDay(date);
   return target >= start && target <= end;
 }
