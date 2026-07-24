@@ -148,17 +148,34 @@ export async function fetchMaterialJobs(): Promise<Map<string, any>> {
   if (error || !data) return jobByPO;
 
   for (const row of data) {
-    const d = row.data;
-    if (d && d.submitted && d.job?.poNumber) {
-      jobByPO.set(d.job.poNumber, {
-        id: d.id,
-        job: d.job,
-        units: d.units || [],
-        globalTrim: d.globalTrim || {},
-        submitted: d.submitted,
-        status: d.status || "submitted",
-        savedAt: d.savedAt || "",
-      });
+    try {
+      const d = row.data;
+      if (d && d.submitted && d.job?.poNumber) {
+        const job = d.job;
+        jobByPO.set(job.poNumber, {
+          id: row.id,
+          job: {
+            ...job,
+            customerName: job.customerName || "",
+            address: job.address || "",
+            poNumber: job.poNumber || "",
+            techMeasurer: job.techMeasurer || "",
+            installNotes: job.installNotes || "",
+            date: job.date || "",
+            prefinishNotes: job.prefinishNotes || "",
+            extraMaterials: job.extraMaterials || [],
+            additionalMaterials: job.additionalMaterials || [],
+            universalFinish: job.universalFinish || "",
+          },
+          units: d.units || [],
+          globalTrim: d.globalTrim || {},
+          submitted: d.submitted,
+          status: d.status || "submitted",
+          savedAt: d.savedAt || "",
+        });
+      }
+    } catch {
+      // Skip malformed rows
     }
   }
   return jobByPO;
@@ -184,17 +201,34 @@ export async function fetchAllMaterialJobs(): Promise<MaterialJobData[]> {
 
   const jobs: MaterialJobData[] = [];
   for (const row of data) {
-    const d = row.data;
-    if (d && d.job?.poNumber) {
-      jobs.push({
-        id: row.id,
-        job: d.job,
-        units: d.units || [],
-        globalTrim: d.globalTrim || {},
-        submitted: d.submitted ?? false,
-        status: d.status || "draft",
-        savedAt: d.savedAt || "",
-      });
+    try {
+      const d = row.data;
+      if (d && d.job?.poNumber) {
+        const job = d.job;
+        jobs.push({
+          id: row.id,
+          job: {
+            ...job,
+            customerName: job.customerName || "",
+            address: job.address || "",
+            poNumber: job.poNumber || "",
+            techMeasurer: job.techMeasurer || "",
+            installNotes: job.installNotes || "",
+            date: job.date || "",
+            prefinishNotes: job.prefinishNotes || "",
+            extraMaterials: job.extraMaterials || [],
+            additionalMaterials: job.additionalMaterials || [],
+            universalFinish: job.universalFinish || "",
+          },
+          units: d.units || [],
+          globalTrim: d.globalTrim || {},
+          submitted: d.submitted ?? false,
+          status: d.status || "draft",
+          savedAt: d.savedAt || "",
+        });
+      }
+    } catch {
+      // Skip malformed rows
     }
   }
   return jobs;
