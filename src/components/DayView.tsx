@@ -3,7 +3,7 @@
 import { WorkOrder } from "@/lib/types";
 import { getOrdersForDay, getHourSlot, typeColor } from "@/lib/calendar-utils";
 import { formatTime } from "@/lib/calendar-utils";
-import { lastFirst, crewName, sortByStartTime } from "@/lib/format-utils";
+import { lastFirst, crewName, sortByStartTime, extractCity } from "@/lib/format-utils";
 import { format } from "date-fns";
 import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
@@ -63,6 +63,7 @@ export default function DayView({
               <div className="flex-1 border-l border-border/50 py-1 px-2 space-y-1">
                 {hourOrders.map((order) => {
                   const crew = crewName(order);
+                  const city = extractCity(order.address);
                   return (
                     <button
                       key={order.id}
@@ -76,7 +77,8 @@ export default function DayView({
                       </div>
                       <div className="text-sm opacity-90 flex items-center gap-2">
                         <span>{formatTime(order.scheduledStart)}</span>
-                        {crew && <span>{crew}</span>}
+                        {city && <span>&middot; {city}</span>}
+                        {crew && <span>&middot; {crew}</span>}
                         {order.materialJob && (
                           <span className="px-1.5 py-0.5 rounded bg-white/20 text-xs font-semibold">
                             Linked
