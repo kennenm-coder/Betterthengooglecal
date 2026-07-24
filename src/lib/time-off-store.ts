@@ -1,5 +1,6 @@
-import { TimeOffRequest } from "./types";
+import { TimeOffRequest, Employee } from "./types";
 import { getSupabase } from "./supabase";
+import staticEmployees from "@/data/employees.json";
 
 export async function fetchTimeOffRequests(): Promise<TimeOffRequest[]> {
   const supabase = getSupabase();
@@ -56,4 +57,48 @@ export function getTimeOffForDate(
     const end = r.end_date || r.start_date;
     return dateStr >= start && dateStr <= end;
   });
+}
+
+// --- Employees ---
+
+export async function fetchEmployees(): Promise<Employee[]> {
+  const supabase = getSupabase();
+  if (!supabase) return staticEmployees as Employee[];
+
+  const { data, error } = await supabase
+    .from("employees")
+    .select("*")
+    .order("last_name", { ascending: true });
+
+  if (error || !data || data.length === 0) return staticEmployees as Employee[];
+
+  return data.map((r: any) => ({
+    firstName: r.first_name,
+    lastName: r.last_name,
+    department: r.department,
+  }));
+}
+
+export async function addEmployee(
+  emp: Employee
+): Promise<Employee | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from("employees")
+    .insert({
+      first_name: emp.firstName.trim(),
+      last_name: emp.lastName.trim(),
+      department: emp.department.trim(),
+    })
+    .select()
+    .single();
+
+  if (error || !data) return null;
+  return {
+    firstName: data.first_name,
+    lastName: data.last_name,
+    department: data.department,
+  };
 }

@@ -46,6 +46,8 @@ function isMultiDay(order: WorkOrder): boolean {
 }
 
 function openSalesforce(workOrderNumber: string) {
+  navigator.clipboard?.writeText(workOrderNumber).catch(() => {});
+
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   const webUrl = `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${encodeURIComponent(workOrderNumber)}`;
 
