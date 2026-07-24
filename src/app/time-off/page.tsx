@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { TimeOffRequest, Employee } from "@/lib/types";
 import {
@@ -15,6 +15,7 @@ import {
   Trash2,
   Loader2,
   Check,
+  X,
   Calendar,
 } from "lucide-react";
 import { format } from "date-fns";
@@ -45,7 +46,8 @@ export default function TimeOffPage() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [highlightIdx, setHighlightIdx] = useState(-1);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const suggestionsRef = useRef<HTMLDivElement>(null);
+  const startDateRef = useRef<HTMLInputElement>(null);
+  const endDateRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadData();
@@ -143,6 +145,15 @@ export default function TimeOffPage() {
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h1 className="text-lg font-semibold flex-1">Time Off Requests</h1>
+        {!draft && !loading && (
+          <button
+            onClick={() => setDraft({ ...emptyDraft })}
+            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-rba-green text-white font-medium active:scale-[0.97] transition-all"
+          >
+            <Plus className="w-4 h-4" />
+            Add
+          </button>
+        )}
       </header>
 
       <div className="flex-1 overflow-auto">
@@ -151,148 +162,198 @@ export default function TimeOffPage() {
             <Loader2 className="w-6 h-6 animate-spin text-muted" />
           </div>
         ) : (
-          <div className="min-w-[600px]">
-            {/* Table header */}
-            <div className="grid grid-cols-[1fr_140px_120px_120px_48px] bg-surface border-b border-border text-xs font-semibold text-muted px-3 py-2 sticky top-0 z-10">
-              <span>Employee</span>
-              <span>Department</span>
-              <span>Start Date</span>
-              <span>End Date</span>
-              <span />
-            </div>
-
-            {/* Existing rows */}
-            {requests.map((r) => (
-              <div
-                key={r.id}
-                className="grid grid-cols-[1fr_140px_120px_120px_48px] border-b border-border/50 px-3 py-2 text-sm items-center hover:bg-surface/50"
-              >
-                <span className="font-medium">{r.employee_name}</span>
-                <span className="text-muted">{r.department}</span>
-                <span>{formatDateDisplay(r.start_date)}</span>
-                <span className="text-muted">
-                  {r.end_date ? formatDateDisplay(r.end_date) : "—"}
-                </span>
-                <button
-                  onClick={() => handleDelete(r.id)}
-                  className="p-1.5 rounded-full hover:bg-danger/10 text-muted hover:text-danger transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
-
-            {requests.length === 0 && !draft && (
-              <div className="text-center py-12 text-muted text-sm">
-                No time off requests yet. Tap the button below to add one.
-              </div>
-            )}
-
-            {/* Draft row */}
+          <div className="max-w-3xl mx-auto w-full">
+            {/* Add form */}
             {draft && (
-              <div className="grid grid-cols-[1fr_140px_120px_120px_48px] border-b-2 border-rba-green/30 bg-rba-green-light/30 px-3 py-2 text-sm items-center gap-1">
-                <div className="relative">
-                  <input
-                    ref={nameInputRef}
-                    type="text"
-                    value={draft.employee_name}
-                    onChange={(e) => handleNameChange(e.target.value)}
-                    onKeyDown={handleNameKeyDown}
-                    onFocus={() => {
-                      if (suggestions.length > 0) setShowSuggestions(true);
-                    }}
-                    onBlur={() => {
-                      setTimeout(() => setShowSuggestions(false), 200);
-                    }}
-                    placeholder="Employee name..."
-                    autoFocus
-                    className="w-full border border-border rounded px-2 py-1.5 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-rba-green"
-                  />
-                  {showSuggestions && suggestions.length > 0 && (
-                    <div
-                      ref={suggestionsRef}
-                      className="absolute top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg z-30 max-h-48 overflow-y-auto"
-                    >
-                      {suggestions.map((emp, idx) => (
-                        <button
-                          key={`${emp.firstName}-${emp.lastName}`}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            selectEmployee(emp);
-                          }}
-                          className={`w-full text-left px-3 py-2 text-sm hover:bg-surface flex justify-between ${
-                            idx === highlightIdx ? "bg-surface" : ""
-                          }`}
-                        >
-                          <span className="font-medium">
-                            {emp.firstName} {emp.lastName}
-                          </span>
-                          <span className="text-xs text-muted">
-                            {emp.department}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+              <div className="border-b-2 border-rba-green/30 bg-rba-green-light/30 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-rba-green">New Time Off Request</h2>
+                  <button
+                    onClick={() => { setDraft(null); setShowSuggestions(false); }}
+                    className="p-1 rounded-full hover:bg-surface"
+                  >
+                    <X className="w-4 h-4 text-muted" />
+                  </button>
                 </div>
 
-                <input
-                  type="text"
-                  value={draft.department}
-                  readOnly
-                  placeholder="Auto-filled"
-                  className="border border-border rounded px-2 py-1.5 text-sm bg-surface text-muted cursor-not-allowed"
-                />
+                <div className="space-y-2.5">
+                  {/* Employee name */}
+                  <div className="relative">
+                    <label className="block text-xs font-medium text-muted mb-1">Employee</label>
+                    <input
+                      ref={nameInputRef}
+                      type="text"
+                      value={draft.employee_name}
+                      onChange={(e) => handleNameChange(e.target.value)}
+                      onKeyDown={handleNameKeyDown}
+                      onFocus={() => {
+                        if (suggestions.length > 0) setShowSuggestions(true);
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setShowSuggestions(false), 200);
+                      }}
+                      placeholder="Start typing a name..."
+                      autoFocus
+                      className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-rba-green"
+                    />
+                    {showSuggestions && suggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg z-30 max-h-48 overflow-y-auto">
+                        {suggestions.map((emp, idx) => (
+                          <button
+                            key={`${emp.firstName}-${emp.lastName}`}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              selectEmployee(emp);
+                            }}
+                            className={`w-full text-left px-3 py-2.5 text-sm hover:bg-surface flex justify-between ${
+                              idx === highlightIdx ? "bg-surface" : ""
+                            }`}
+                          >
+                            <span className="font-medium">
+                              {emp.firstName} {emp.lastName}
+                            </span>
+                            <span className="text-xs text-muted">
+                              {emp.department}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
-                <input
-                  type="date"
-                  value={draft.start_date}
-                  onChange={(e) =>
-                    setDraft((d) => d && { ...d, start_date: e.target.value })
-                  }
-                  className="border border-border rounded px-2 py-1.5 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-rba-green"
-                />
+                  {/* Department (auto-filled) */}
+                  {draft.department && (
+                    <div>
+                      <label className="block text-xs font-medium text-muted mb-1">Department</label>
+                      <div className="border border-border rounded-lg px-3 py-2.5 text-sm bg-surface text-muted">
+                        {draft.department}
+                      </div>
+                    </div>
+                  )}
 
-                <input
-                  type="date"
-                  value={draft.end_date}
-                  onChange={(e) =>
-                    setDraft((d) => d && { ...d, end_date: e.target.value })
-                  }
-                  className="border border-border rounded px-2 py-1.5 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-rba-green"
-                />
+                  {/* Dates side by side */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-muted mb-1">
+                        Start Date <span className="text-danger">*</span>
+                      </label>
+                      <div
+                        className="relative border border-border rounded-lg bg-background focus-within:ring-2 focus-within:ring-rba-green cursor-pointer"
+                        onClick={() => startDateRef.current?.showPicker?.()}
+                      >
+                        <input
+                          ref={startDateRef}
+                          type="date"
+                          value={draft.start_date}
+                          onChange={(e) =>
+                            setDraft((d) => d && { ...d, start_date: e.target.value })
+                          }
+                          className="w-full px-3 py-2.5 text-sm bg-transparent focus:outline-none cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted mb-1">
+                        End Date <span className="text-xs font-normal">(optional)</span>
+                      </label>
+                      <div
+                        className="relative border border-border rounded-lg bg-background focus-within:ring-2 focus-within:ring-rba-green cursor-pointer"
+                        onClick={() => endDateRef.current?.showPicker?.()}
+                      >
+                        <input
+                          ref={endDateRef}
+                          type="date"
+                          value={draft.end_date}
+                          onChange={(e) =>
+                            setDraft((d) => d && { ...d, end_date: e.target.value })
+                          }
+                          className="w-full px-3 py-2.5 text-sm bg-transparent focus:outline-none cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
+                {/* Save button */}
                 <button
                   onClick={handleSave}
-                  disabled={
-                    saving || !draft.employee_name || !draft.start_date
-                  }
-                  className="p-1.5 rounded-full bg-rba-green text-white disabled:opacity-40 active:scale-95 transition-all"
+                  disabled={saving || !draft.employee_name || !draft.start_date}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-rba-green text-white font-medium text-sm disabled:opacity-40 active:scale-[0.98] transition-all"
                 >
                   {saving ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <Check className="w-4 h-4" />
                   )}
+                  Save Request
                 </button>
+              </div>
+            )}
+
+            {/* Desktop table header - hidden on mobile */}
+            <div className="hidden sm:grid grid-cols-[1fr_140px_120px_120px_40px] bg-surface border-b border-border text-xs font-semibold text-muted px-4 py-2 sticky top-0 z-10">
+              <span>Employee</span>
+              <span>Department</span>
+              <span>Start</span>
+              <span>End</span>
+              <span />
+            </div>
+
+            {/* Rows */}
+            {requests.map((r) => (
+              <div key={r.id} className="border-b border-border/50 hover:bg-surface/50">
+                {/* Desktop row */}
+                <div className="hidden sm:grid grid-cols-[1fr_140px_120px_120px_40px] px-4 py-2.5 text-sm items-center">
+                  <span className="font-medium">{r.employee_name}</span>
+                  <span className="text-muted">{r.department}</span>
+                  <span>{formatDateDisplay(r.start_date)}</span>
+                  <span className="text-muted">
+                    {r.end_date ? formatDateDisplay(r.end_date) : "—"}
+                  </span>
+                  <button
+                    onClick={() => handleDelete(r.id)}
+                    className="p-1 rounded-full hover:bg-danger/10 text-muted hover:text-danger transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Mobile row */}
+                <div className="sm:hidden px-4 py-3 flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm">{r.employee_name}</div>
+                    <div className="text-xs text-muted mt-0.5">{r.department}</div>
+                    <div className="flex items-center gap-1.5 mt-1 text-xs">
+                      <Calendar className="w-3 h-3 text-muted" />
+                      <span>{formatDateDisplay(r.start_date)}</span>
+                      {r.end_date && (
+                        <>
+                          <span className="text-muted">→</span>
+                          <span>{formatDateDisplay(r.end_date)}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleDelete(r.id)}
+                    className="p-2 rounded-full hover:bg-danger/10 text-muted hover:text-danger transition-colors shrink-0"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {requests.length === 0 && !draft && (
+              <div className="text-center py-16 px-4">
+                <Calendar className="w-10 h-10 text-muted/40 mx-auto mb-3" />
+                <p className="text-muted text-sm">No time off requests yet.</p>
+                <p className="text-muted/60 text-xs mt-1">Tap the Add button above to get started.</p>
               </div>
             )}
           </div>
         )}
       </div>
-
-      {/* Add row button */}
-      {!draft && !loading && (
-        <div className="border-t border-border px-3 py-3 safe-area-bottom">
-          <button
-            onClick={() => setDraft({ ...emptyDraft })}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border-2 border-dashed border-rba-green/40 text-rba-green font-medium text-sm hover:bg-rba-green-light/30 active:scale-[0.98] transition-all"
-          >
-            <Plus className="w-4 h-4" />
-            Add Time Off Request
-          </button>
-        </div>
-      )}
     </div>
   );
 }
