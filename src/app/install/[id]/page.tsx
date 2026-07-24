@@ -117,24 +117,28 @@ export default function InstallInstructionsPage() {
         return;
       }
 
-      const [jobRes, catalogData] = await Promise.all([
-        supabase.from("jobs").select("id, data").eq("id", params.id).single(),
-        fetchCatalogAndOffsets(),
-      ]);
+      try {
+        const [jobRes, catalogData] = await Promise.all([
+          supabase.from("jobs").select("id, data").eq("id", params.id).single(),
+          fetchCatalogAndOffsets(),
+        ]);
 
-      if (!jobRes.error && jobRes.data?.data) {
-        const d = jobRes.data.data;
-        const jobData: MaterialJobData = {
-          id: jobRes.data.id,
-          job: d.job,
-          units: d.units || [],
-          globalTrim: d.globalTrim || {},
-          submitted: d.submitted ?? false,
-          status: d.status || "draft",
-          savedAt: d.savedAt || "",
-        };
-        setJob(jobData);
-        setNwoRows(buildNwoRows(d.job, d.units || [], catalogData.catalog, catalogData.offsets));
+        if (!jobRes.error && jobRes.data?.data) {
+          const d = jobRes.data.data;
+          const jobData: MaterialJobData = {
+            id: jobRes.data.id,
+            job: d.job || {},
+            units: d.units || [],
+            globalTrim: d.globalTrim || {},
+            submitted: d.submitted ?? false,
+            status: d.status || "draft",
+            savedAt: d.savedAt || "",
+          };
+          setJob(jobData);
+          setNwoRows(buildNwoRows(d.job || {}, d.units || [], catalogData.catalog, catalogData.offsets));
+        }
+      } catch {
+        // Network or query failure — job stays null, shows "Job not found"
       }
       setLoading(false);
     }
