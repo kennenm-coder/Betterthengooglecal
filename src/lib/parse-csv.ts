@@ -16,7 +16,7 @@ import { WorkOrder, PhoneEntry } from "./types";
 // 11 Primary Resource Name
 // 12 Status (appointment status, e.g. "Scheduled & Assigned", "Appt Complete / Closed")
 // 13 Scheduled Start Time
-// 14 Install_Sched_End_Time
+// 14 Scheduled End Time
 // 15 Contact: Full Name
 // 16 Bill to Contact Email
 // 17 Bill to Contact Mobile Phone
