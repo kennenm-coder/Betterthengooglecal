@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { TimeOffRequest, Employee } from "@/lib/types";
 import {
   fetchTimeOffRequests,
   addTimeOffRequest,
   deleteTimeOffRequest,
+  fetchEmployees,
+  addEmployee,
 } from "@/lib/time-off-store";
-import employeesData from "@/data/employees.json";
 import {
   ArrowLeft,
   Plus,
@@ -18,10 +19,10 @@ import {
   X,
   Calendar,
   Download,
+  UserPlus,
+  Filter,
 } from "lucide-react";
 import { format } from "date-fns";
-
-const employees: Employee[] = employeesData as Employee[];
 
 interface DraftRow {
   employee_name: string;
@@ -37,9 +38,18 @@ const emptyDraft: DraftRow = {
   end_date: "",
 };
 
+interface NewEmployee {
+  firstName: string;
+  lastName: string;
+  department: string;
+}
+
+const emptyEmployee: NewEmployee = { firstName: "", lastName: "", department: "" };
+
 export default function TimeOffPage() {
   const router = useRouter();
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState<DraftRow | null>(null);
   const [saving, setSaving] = useState(false);
@@ -49,6 +59,17 @@ export default function TimeOffPage() {
   const nameInputRef = useRef<HTMLInputElement>(null);
   const startDateRef = useRef<HTMLInputElement>(null);
   const endDateRef = useRef<HTMLInputElement>(null);
+  const filterStartRef = useRef<HTMLInputElement>(null);
+  const filterEndRef = useRef<HTMLInputElement>(null);
+
+  // Add employee state
+  const [showAddEmployee, setShowAddEmployee] = useState(false);
+  const [newEmp, setNewEmp] = useState<NewEmployee>({ ...emptyEmployee });
+  const [savingEmp, setSavingEmp] = useState(false);
+
+  // Date filter state
+  const [filterStart, setFilterStart] = useState("");
+  const [filterEnd, setFilterEnd] = useState("");
 
   useEffect(() => {
     loadData();
@@ -56,10 +77,26 @@ export default function TimeOffPage() {
 
   async function loadData() {
     setLoading(true);
-    const data = await fetchTimeOffRequests();
-    setRequests(data);
+    const [reqData, empData] = await Promise.all([
+      fetchTimeOffRequests(),
+      fetchEmployees(),
+    ]);
+    setRequests(reqData);
+    setEmployees(empData);
     setLoading(false);
   }
+
+  const filteredRequests = useMemo(() => {
+    if (!filterStart && !filterEnd) return requests;
+    return requests.filter((r) => {
+      const reqEnd = r.end_date || r.start_date;
+      if (filterStart && reqEnd < filterStart) return false;
+      if (filterEnd && r.start_date > filterEnd) return false;
+      return true;
+    });
+  }, [requests, filterStart, filterEnd]);
+
+  const hasActiveFilter = filterStart || filterEnd;
 
   function handleNameChange(value: string) {
     setDraft((d) => d && { ...d, employee_name: value, department: "" });
@@ -127,10 +164,27 @@ export default function TimeOffPage() {
     if (ok) setRequests((prev) => prev.filter((r) => r.id !== id));
   }
 
+  async function handleAddEmployee() {
+    if (!newEmp.firstName || !newEmp.lastName || !newEmp.department) return;
+    setSavingEmp(true);
+    const result = await addEmployee(newEmp);
+    if (result) {
+      setEmployees((prev) =>
+        [...prev, result].sort((a, b) =>
+          a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName)
+        )
+      );
+      setNewEmp({ ...emptyEmployee });
+      setShowAddEmployee(false);
+    }
+    setSavingEmp(false);
+  }
+
   function exportCsv() {
-    if (requests.length === 0) return;
+    const data = filteredRequests;
+    if (data.length === 0) return;
     const header = "Employee,Department,Start Date,End Date";
-    const rows = requests.map((r) => {
+    const rows = data.map((r) => {
       const esc = (s: string) => `"${s.replace(/"/g, '""')}"`;
       return [
         esc(r.employee_name),
@@ -160,7 +214,7 @@ export default function TimeOffPage() {
 
   return (
     <div className="flex flex-col h-full bg-background">
-      <header className="bg-background border-b border-border px-3 py-2.5 flex items-center gap-3 z-20">
+      <header className="bg-background border-b border-border px-3 py-2.5 flex items-center gap-2 z-20">
         <button
           onClick={() => router.push("/")}
           className="p-1.5 rounded-full hover:bg-surface"
@@ -168,9 +222,16 @@ export default function TimeOffPage() {
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h1 className="text-lg font-semibold flex-1">Time Off Requests</h1>
-        {!draft && !loading && (
-          <div className="flex items-center gap-2">
-            {requests.length > 0 && (
+        {!loading && (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setShowAddEmployee(true)}
+              className="p-1.5 rounded-full hover:bg-surface text-muted"
+              title="Add Employee"
+            >
+              <UserPlus className="w-4.5 h-4.5" />
+            </button>
+            {filteredRequests.length > 0 && (
               <button
                 onClick={exportCsv}
                 className="p-1.5 rounded-full hover:bg-surface text-muted"
@@ -179,13 +240,15 @@ export default function TimeOffPage() {
                 <Download className="w-4.5 h-4.5" />
               </button>
             )}
-            <button
-              onClick={() => setDraft({ ...emptyDraft })}
-              className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-rba-green text-white font-medium active:scale-[0.97] transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              Add
-            </button>
+            {!draft && (
+              <button
+                onClick={() => setDraft({ ...emptyDraft })}
+                className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-rba-green text-white font-medium active:scale-[0.97] transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                Add
+              </button>
+            )}
           </div>
         )}
       </header>
@@ -197,7 +260,108 @@ export default function TimeOffPage() {
           </div>
         ) : (
           <div className="max-w-3xl mx-auto w-full">
-            {/* Add form */}
+            {/* Add Employee modal */}
+            {showAddEmployee && (
+              <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                <div className="bg-background rounded-xl shadow-xl w-full max-w-sm p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base font-semibold">Add Employee</h2>
+                    <button
+                      onClick={() => { setShowAddEmployee(false); setNewEmp({ ...emptyEmployee }); }}
+                      className="p-1 rounded-full hover:bg-surface"
+                    >
+                      <X className="w-4 h-4 text-muted" />
+                    </button>
+                  </div>
+                  <div className="space-y-2.5">
+                    <div>
+                      <label className="block text-xs font-medium text-muted mb-1">First Name</label>
+                      <input
+                        type="text"
+                        value={newEmp.firstName}
+                        onChange={(e) => setNewEmp((p) => ({ ...p, firstName: e.target.value }))}
+                        autoFocus
+                        className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-rba-green"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted mb-1">Last Name</label>
+                      <input
+                        type="text"
+                        value={newEmp.lastName}
+                        onChange={(e) => setNewEmp((p) => ({ ...p, lastName: e.target.value }))}
+                        className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-rba-green"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted mb-1">Department</label>
+                      <input
+                        type="text"
+                        value={newEmp.department}
+                        onChange={(e) => setNewEmp((p) => ({ ...p, department: e.target.value }))}
+                        className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-rba-green"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleAddEmployee}
+                    disabled={savingEmp || !newEmp.firstName || !newEmp.lastName || !newEmp.department}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-rba-green text-white font-medium text-sm disabled:opacity-40 active:scale-[0.98] transition-all"
+                  >
+                    {savingEmp ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+                    Add Employee
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Date filter bar */}
+            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 bg-surface/50 border-b border-border">
+              <Filter className="w-3.5 h-3.5 text-muted shrink-0" />
+              <span className="text-xs text-muted shrink-0">Filter:</span>
+              <div
+                className="relative border border-border rounded-md bg-background cursor-pointer"
+                onClick={() => filterStartRef.current?.showPicker?.()}
+              >
+                <input
+                  ref={filterStartRef}
+                  type="date"
+                  value={filterStart}
+                  onChange={(e) => setFilterStart(e.target.value)}
+                  className="px-2 py-1 text-xs bg-transparent focus:outline-none cursor-pointer w-[130px]"
+                  placeholder="From"
+                />
+              </div>
+              <span className="text-xs text-muted">to</span>
+              <div
+                className="relative border border-border rounded-md bg-background cursor-pointer"
+                onClick={() => filterEndRef.current?.showPicker?.()}
+              >
+                <input
+                  ref={filterEndRef}
+                  type="date"
+                  value={filterEnd}
+                  onChange={(e) => setFilterEnd(e.target.value)}
+                  className="px-2 py-1 text-xs bg-transparent focus:outline-none cursor-pointer w-[130px]"
+                  placeholder="To"
+                />
+              </div>
+              {hasActiveFilter && (
+                <button
+                  onClick={() => { setFilterStart(""); setFilterEnd(""); }}
+                  className="text-xs text-danger hover:underline shrink-0"
+                >
+                  Clear
+                </button>
+              )}
+              {hasActiveFilter && (
+                <span className="text-xs text-muted ml-auto">
+                  {filteredRequests.length} result{filteredRequests.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+
+            {/* Add time off form */}
             {draft && (
               <div className="border-b-2 border-rba-green/30 bg-rba-green-light/30 p-4 space-y-3">
                 <div className="flex items-center justify-between">
@@ -211,7 +375,6 @@ export default function TimeOffPage() {
                 </div>
 
                 <div className="space-y-2.5">
-                  {/* Employee name */}
                   <div className="relative">
                     <label className="block text-xs font-medium text-muted mb-1">Employee</label>
                     <input
@@ -255,7 +418,6 @@ export default function TimeOffPage() {
                     )}
                   </div>
 
-                  {/* Department (auto-filled) */}
                   {draft.department && (
                     <div>
                       <label className="block text-xs font-medium text-muted mb-1">Department</label>
@@ -265,7 +427,6 @@ export default function TimeOffPage() {
                     </div>
                   )}
 
-                  {/* Dates side by side */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-muted mb-1">
@@ -308,7 +469,6 @@ export default function TimeOffPage() {
                   </div>
                 </div>
 
-                {/* Save button */}
                 <button
                   onClick={handleSave}
                   disabled={saving || !draft.employee_name || !draft.start_date}
@@ -324,7 +484,7 @@ export default function TimeOffPage() {
               </div>
             )}
 
-            {/* Desktop table header - hidden on mobile */}
+            {/* Desktop table header */}
             <div className="hidden sm:grid grid-cols-[1fr_140px_120px_120px_40px] bg-surface border-b border-border text-xs font-semibold text-muted px-4 py-2 sticky top-0 z-10">
               <span>Employee</span>
               <span>Department</span>
@@ -334,9 +494,8 @@ export default function TimeOffPage() {
             </div>
 
             {/* Rows */}
-            {requests.map((r) => (
+            {filteredRequests.map((r) => (
               <div key={r.id} className="border-b border-border/50 hover:bg-surface/50">
-                {/* Desktop row */}
                 <div className="hidden sm:grid grid-cols-[1fr_140px_120px_120px_40px] px-4 py-2.5 text-sm items-center">
                   <span className="font-medium">{r.employee_name}</span>
                   <span className="text-muted">{r.department}</span>
@@ -352,7 +511,6 @@ export default function TimeOffPage() {
                   </button>
                 </div>
 
-                {/* Mobile row */}
                 <div className="sm:hidden px-4 py-3 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-sm">{r.employee_name}</div>
@@ -378,11 +536,25 @@ export default function TimeOffPage() {
               </div>
             ))}
 
-            {requests.length === 0 && !draft && (
+            {filteredRequests.length === 0 && !draft && (
               <div className="text-center py-16 px-4">
                 <Calendar className="w-10 h-10 text-muted/40 mx-auto mb-3" />
-                <p className="text-muted text-sm">No time off requests yet.</p>
-                <p className="text-muted/60 text-xs mt-1">Tap the Add button above to get started.</p>
+                {hasActiveFilter ? (
+                  <>
+                    <p className="text-muted text-sm">No requests in this date range.</p>
+                    <button
+                      onClick={() => { setFilterStart(""); setFilterEnd(""); }}
+                      className="text-rba-green text-sm mt-2 hover:underline"
+                    >
+                      Clear filter
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-muted text-sm">No time off requests yet.</p>
+                    <p className="text-muted/60 text-xs mt-1">Tap the Add button above to get started.</p>
+                  </>
+                )}
               </div>
             )}
           </div>
