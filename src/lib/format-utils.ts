@@ -10,7 +10,7 @@ export function lastFirst(fullName: string): string {
 }
 
 export function crewName(order: WorkOrder): string {
-  return order.primaryResource || "";
+  return order.primaryResource || order.installer || order.serviceRep || "";
 }
 
 export function sortByNameAlpha(orders: WorkOrder[]): WorkOrder[] {
