@@ -48,13 +48,12 @@ function isMultiDay(order: WorkOrder): boolean {
   return !isSameDay(parseISO(order.scheduledStart), parseISO(order.scheduledEnd));
 }
 
-function openSalesforce(workOrderNumber: string) {
-  navigator.clipboard?.writeText(workOrderNumber).catch(() => {});
-
+function openSalesforce(workOrderNumber: string, orderNumber: string) {
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   const webUrl = `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${encodeURIComponent(workOrderNumber)}`;
 
   if (isMobile) {
+    navigator.clipboard?.writeText(orderNumber).catch(() => {});
     const appUrl = `salesforce1://search/${encodeURIComponent(workOrderNumber)}`;
     const start = Date.now();
     window.location.href = appUrl;
@@ -189,7 +188,7 @@ export default function JobCard({
                 <MessageSquarePlus className="w-5 h-5 text-primary" />
               </button>
               <button
-                onClick={() => openSalesforce(order.workOrderNumber)}
+                onClick={() => openSalesforce(order.workOrderNumber, order.orderNumber)}
                 className="p-1 rounded hover:bg-surface"
                 title="Open in Salesforce"
               >
