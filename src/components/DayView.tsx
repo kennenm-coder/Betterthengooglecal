@@ -3,7 +3,7 @@
 import { WorkOrder } from "@/lib/types";
 import { getOrdersForDay, getHourSlot, typeColor } from "@/lib/calendar-utils";
 import { formatTime } from "@/lib/calendar-utils";
-import { lastFirst, crewName, sortByNameAlpha } from "@/lib/format-utils";
+import { lastFirst, crewName, sortByStartTime } from "@/lib/format-utils";
 import { format } from "date-fns";
 import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
@@ -37,7 +37,7 @@ export default function DayView({
       map.get(closest)?.push(o);
     }
     for (const [h, list] of map) {
-      map.set(h, sortByNameAlpha(list));
+      map.set(h, sortByStartTime(list));
     }
     return map;
   }, [dayOrders]);

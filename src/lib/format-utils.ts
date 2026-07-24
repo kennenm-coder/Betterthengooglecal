@@ -18,3 +18,9 @@ export function sortByNameAlpha(orders: WorkOrder[]): WorkOrder[] {
     lastFirst(a.customerName).localeCompare(lastFirst(b.customerName))
   );
 }
+
+export function sortByStartTime(orders: WorkOrder[]): WorkOrder[] {
+  return [...orders].sort((a, b) =>
+    (a.scheduledStart || "").localeCompare(b.scheduledStart || "")
+  );
+}

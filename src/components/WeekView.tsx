@@ -2,7 +2,7 @@
 
 import { WorkOrder } from "@/lib/types";
 import { getOrdersForWeek, typeColor, formatTime } from "@/lib/calendar-utils";
-import { lastFirst, crewName, sortByNameAlpha } from "@/lib/format-utils";
+import { lastFirst, crewName, sortByStartTime } from "@/lib/format-utils";
 import { format, startOfWeek, addDays, isToday } from "date-fns";
 import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
@@ -29,7 +29,7 @@ export default function WeekView({
   const ordersByDay = useMemo(() => {
     const byDay = getOrdersForWeek(orders, date);
     for (const [key, list] of byDay) {
-      byDay.set(key, sortByNameAlpha(list));
+      byDay.set(key, sortByStartTime(list));
     }
     return byDay;
   }, [orders, date]);
