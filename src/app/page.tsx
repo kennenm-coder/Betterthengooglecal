@@ -41,9 +41,28 @@ function CalendarPage() {
     try {
       if ("serviceWorker" in navigator) {
         const reg = await navigator.serviceWorker.getRegistration();
-        if (reg) await reg.update();
+        if (reg) {
+          await reg.update();
+          const waiting = reg.waiting;
+          if (waiting) {
+            waiting.postMessage({ type: "SKIP_WAITING" });
+            await new Promise<void>((resolve) => {
+              const onStateChange = () => {
+                if (waiting.state === "activated") {
+                  waiting.removeEventListener("statechange", onStateChange);
+                  resolve();
+                }
+              };
+              waiting.addEventListener("statechange", onStateChange);
+              setTimeout(resolve, 3000);
+            });
+            window.location.reload();
+            return;
+          }
+        }
       }
       await refresh();
+      fetchTimeOffRequests().then(setTimeOffRequests);
     } finally {
       setRefreshing(false);
     }
