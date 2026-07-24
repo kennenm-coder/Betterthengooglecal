@@ -17,6 +17,7 @@ import {
   Check,
   X,
   Calendar,
+  Download,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -126,6 +127,28 @@ export default function TimeOffPage() {
     if (ok) setRequests((prev) => prev.filter((r) => r.id !== id));
   }
 
+  function exportCsv() {
+    if (requests.length === 0) return;
+    const header = "Employee,Department,Start Date,End Date";
+    const rows = requests.map((r) => {
+      const esc = (s: string) => `"${s.replace(/"/g, '""')}"`;
+      return [
+        esc(r.employee_name),
+        esc(r.department),
+        r.start_date,
+        r.end_date || "",
+      ].join(",");
+    });
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `time-off-${format(new Date(), "yyyy-MM-dd")}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   function formatDateDisplay(dateStr: string) {
     try {
       const [y, m, d] = dateStr.split("-").map(Number);
@@ -146,13 +169,24 @@ export default function TimeOffPage() {
         </button>
         <h1 className="text-lg font-semibold flex-1">Time Off Requests</h1>
         {!draft && !loading && (
-          <button
-            onClick={() => setDraft({ ...emptyDraft })}
-            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-rba-green text-white font-medium active:scale-[0.97] transition-all"
-          >
-            <Plus className="w-4 h-4" />
-            Add
-          </button>
+          <div className="flex items-center gap-2">
+            {requests.length > 0 && (
+              <button
+                onClick={exportCsv}
+                className="p-1.5 rounded-full hover:bg-surface text-muted"
+                title="Export CSV"
+              >
+                <Download className="w-4.5 h-4.5" />
+              </button>
+            )}
+            <button
+              onClick={() => setDraft({ ...emptyDraft })}
+              className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-rba-green text-white font-medium active:scale-[0.97] transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              Add
+            </button>
+          </div>
         )}
       </header>
 
