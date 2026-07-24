@@ -119,6 +119,21 @@ export interface MaterialUnit {
 
 export type ViewMode = "day" | "week" | "list";
 
+export interface Employee {
+  firstName: string;
+  lastName: string;
+  department: string;
+}
+
+export interface TimeOffRequest {
+  id: string;
+  employee_name: string;
+  department: string;
+  start_date: string;
+  end_date: string | null;
+  created_at: string;
+}
+
 export interface ActionPerson {
   name: string;
   email: string;

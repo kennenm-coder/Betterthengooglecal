@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useState, useMemo, useCallback, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { useData } from "@/components/DataProvider";
 import DayView from "@/components/DayView";
 import WeekView from "@/components/WeekView";
@@ -9,9 +9,12 @@ import UnscheduledJobs from "@/components/UnscheduledJobs";
 import OrderSheet from "@/components/OrderSheet";
 import BottomNav from "@/components/BottomNav";
 import FilterPanel, { Filters, EMPTY_FILTERS, applyFilters } from "@/components/FilterPanel";
-import { WorkOrder, ViewMode } from "@/lib/types";
+import TimeOffBanner from "@/components/TimeOffBanner";
+import PinModal from "@/components/PinModal";
+import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
+import { fetchTimeOffRequests } from "@/lib/time-off-store";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO } from "date-fns";
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database, CalendarDays } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database, CalendarDays, Plus } from "lucide-react";
 
 export default function CalendarPageWrapper() {
   return (
@@ -24,7 +27,14 @@ export default function CalendarPageWrapper() {
 function CalendarPage() {
   const { orders, loading, refresh } = useData();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
+  const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
+  const [showPinModal, setShowPinModal] = useState(false);
+
+  useEffect(() => {
+    fetchTimeOffRequests().then(setTimeOffRequests);
+  }, []);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -97,6 +107,15 @@ function CalendarPage() {
               ? format(currentDate, "EEE, MMM d")
               : format(currentDate, "MMM yyyy")}
           </h1>
+
+          <button
+            onClick={() => setShowPinModal(true)}
+            className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-md bg-rba-green text-white font-medium shrink-0 active:scale-[0.97] transition-all"
+            title="Add Time Off"
+          >
+            <Plus className="w-4 h-4" />
+            <span className="hidden sm:inline">Time Off</span>
+          </button>
         </div>
 
         {/* Row 2: Actions */}
@@ -153,6 +172,18 @@ function CalendarPage() {
           </button>
         </div>
       </header>
+
+      <TimeOffBanner requests={timeOffRequests} date={currentDate} />
+
+      {showPinModal && (
+        <PinModal
+          onSuccess={() => {
+            setShowPinModal(false);
+            router.push("/time-off");
+          }}
+          onClose={() => setShowPinModal(false)}
+        />
+      )}
 
       <div className="flex-1 flex flex-col min-h-0">
         {view === "list" ? (
