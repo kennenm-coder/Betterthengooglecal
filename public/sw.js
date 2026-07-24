@@ -1,4 +1,4 @@
-const CACHE_NAME = "rba-field-cal-v3";
+const CACHE_NAME = "rba-field-cal-v4";
 const PRECACHE_URLS = ["/", "/search", "/admin", "/time-off"];
 
 self.addEventListener("install", (event) => {
@@ -44,19 +44,14 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // App shell & static assets: stale-while-revalidate
+  // App shell & static assets: network-first, fall back to cache
   event.respondWith(
-    caches.open(CACHE_NAME).then((cache) =>
-      cache.match(event.request).then((cached) => {
-        const networkFetch = fetch(event.request)
-          .then((response) => {
-            cache.put(event.request, response.clone());
-            return response;
-          })
-          .catch(() => cached);
-
-        return cached || networkFetch;
+    fetch(event.request)
+      .then((response) => {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        return response;
       })
-    )
+      .catch(() => caches.match(event.request))
   );
 });
