@@ -99,9 +99,16 @@ export default function WeekView({
                           {formatTime(order.scheduledStart)}
                         </span>
                       </div>
-                      <div className="text-xs opacity-80 mt-0.5">
-                        {order.workOrderType}
-                        {crew && <> &middot; {crew}</>}
+                      <div className="text-xs opacity-80 mt-0.5 flex items-center gap-2">
+                        <span>
+                          {order.workOrderType}
+                          {crew && <> &middot; {crew}</>}
+                        </span>
+                        {order.materialJob && (
+                          <span className="px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-semibold">
+                            Linked
+                          </span>
+                        )}
                       </div>
                     </button>
                   );
