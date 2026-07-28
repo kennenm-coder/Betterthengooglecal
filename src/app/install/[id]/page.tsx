@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { MaterialJobData, MaterialUnit } from "@/lib/types";
 import { getSupabase } from "@/lib/supabase";
-import { buildNwoRows, fetchCatalogAndOffsets, NwoRow } from "@/lib/nwo-builder";
+import { buildNwoRows, buildBoardSummaryByUnit, fetchCatalogAndOffsets, NwoRow, BoardSummaryEntry } from "@/lib/nwo-builder";
 import { ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
 
 function fracToString(frac: number): string {
@@ -74,6 +74,20 @@ interface SummaryRow {
   frame: string;
 }
 
+function formatUnitLabels(labels: string[]): string {
+  const nums = labels.map(l => parseInt(l)).filter(n => !isNaN(n)).sort((a, b) => a - b);
+  const nonNums = labels.filter(l => isNaN(parseInt(l)));
+  const ranges: string[] = [];
+  let start: number | null = null, end: number | null = null;
+  for (const n of nums) {
+    if (start === null) { start = end = n; continue; }
+    if (n === end! + 1) { end = n; }
+    else { ranges.push(start === end ? String(start) : `${start}-${end}`); start = end = n; }
+  }
+  if (start !== null) ranges.push(start === end ? String(start) : `${start}-${end}`);
+  return [...ranges, ...nonNums].join(", ");
+}
+
 function buildSummaryRows(units: MaterialUnit[]): SummaryRow[] {
   const grouped = new Map<string, SummaryRow>();
   for (const u of units) {
@@ -107,6 +121,7 @@ export default function InstallInstructionsPage() {
   const router = useRouter();
   const [job, setJob] = useState<MaterialJobData | null>(null);
   const [nwoRows, setNwoRows] = useState<NwoRow[]>([]);
+  const [boardSummary, setBoardSummary] = useState<BoardSummaryEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -136,6 +151,7 @@ export default function InstallInstructionsPage() {
           };
           setJob(jobData);
           setNwoRows(buildNwoRows(d.job || {}, d.units || [], catalogData.catalog, catalogData.offsets));
+          setBoardSummary(buildBoardSummaryByUnit(d.job || {}, d.units || [], catalogData.catalog, catalogData.offsets));
         }
       } catch {
         // Network or query failure — job stays null, shows "Job not found"
@@ -229,6 +245,20 @@ export default function InstallInstructionsPage() {
                 LEAD
               </div>
             )}
+          </div>
+        )}
+
+        {/* Board Summary by Unit */}
+        {boardSummary.length > 0 && (
+          <div className="mb-5 bg-[#fafcf8] px-3.5 py-2 text-sm leading-relaxed border-b-2 border-[#6DB344]">
+            <strong>Board Summary: </strong>
+            {boardSummary.map((entry, i) => (
+              <span key={i}>
+                {i > 0 && "   "}
+                <strong>{formatUnitLabels(entry.unitLabels)}</strong>
+                {` — ${entry.sig}`}
+              </span>
+            ))}
           </div>
         )}
 

@@ -663,3 +663,70 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
 
   return merged;
 }
+
+// ─── Board Summary by Unit (owner-based assignment) ────────────────────────
+
+export interface BoardSummaryEntry {
+  sig: string;
+  unitLabels: string[];
+}
+
+export function buildBoardSummaryByUnit(
+  job: any,
+  units: any[],
+  materialCatalog: MaterialCatalog | null,
+  offsets: any
+): BoardSummaryEntry[] {
+  const gmNonAuto = (job.globalMaterials || []).filter((m: any) => !m.autoFormula && m.profileId);
+  if (!gmNonAuto.length) return [];
+
+  const { boards } = buildGlobalMaterialBoards(
+    (job.globalMaterials || []).filter((m: any) => !m.autoFormula),
+    units, materialCatalog, offsets?.boardWaste, job.mullLayouts,
+    { doors3pc: job.doors3pc !== false }
+  );
+  if (!boards.length) return [];
+
+  const SL: Record<number, string> = { 96:"8'", 120:"10'", 144:"12'", 168:"14'", 192:"16'", 216:"18'", 240:"20'" };
+
+  // Assign each board to the unit with the most cuts (owner logic)
+  const byUnit: Record<string, Record<string, Record<number, number>>> = {};
+  for (const b of boards) {
+    const cutCounts: Record<string, number> = {};
+    for (const c of b.cuts) {
+      const label = (c.source || "").replace(/\s*\(.*\)\s*$/, "");
+      if (label) cutCounts[label] = (cutCounts[label] || 0) + 1;
+    }
+    const entries = Object.entries(cutCounts);
+    if (!entries.length) continue;
+    const owner = entries.sort((a, b) => b[1] - a[1])[0][0];
+    if (!byUnit[owner]) byUnit[owner] = {};
+    if (!byUnit[owner][b.profile]) byUnit[owner][b.profile] = {};
+    byUnit[owner][b.profile][b.stockLength] = (byUnit[owner][b.profile][b.stockLength] || 0) + 1;
+  }
+
+  // Group units with identical board breakdowns
+  const sigMap: Record<string, string[]> = {};
+  for (const [label, profiles] of Object.entries(byUnit)) {
+    const parts = Object.entries(profiles)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([prof, stocks]) => {
+        const stockStr = Object.entries(stocks)
+          .sort((a, b) => Number(a[0]) - Number(b[0]))
+          .map(([sl, n]) => `${n}@${SL[Number(sl)] || Math.round(Number(sl) / 12) + "'"}`)
+          .join(" ");
+        return `${stockStr} ${prof}`;
+      });
+    const sig = parts.join(", ");
+    if (!sigMap[sig]) sigMap[sig] = [];
+    sigMap[sig].push(label);
+  }
+
+  return Object.entries(sigMap)
+    .sort((a, b) => {
+      const aFirst = parseInt(a[1][0]) || 0;
+      const bFirst = parseInt(b[1][0]) || 0;
+      return aFirst - bFirst;
+    })
+    .map(([sig, labels]) => ({ sig, unitLabels: labels }));
+}
