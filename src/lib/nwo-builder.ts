@@ -371,30 +371,36 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
     }
     if (!cuts.length) continue;
 
-    cuts.sort((a, b) => b.length - a.length);
-    const packed: any[] = [];
+    // Pack per-unit: group cuts by source so each board belongs to one unit
+    const bySource: Record<string, any[]> = {};
     for (const cut of cuts) {
-      const board = !cut._doors3pc && packed.find(b => b.remaining - cut.length >= MIN_BOARD_REMAINING);
-      if (board) {
-        board.cuts.push(cut);
-        board.remaining -= cut.length;
-      } else {
-        const stockLen = STOCK.find(s => s >= cut.length) || 168;
-        packed.push({ stockLength: stockLen, profile: mat.profile || catItem.profile, species: mat.species || "", color: mat.color || "", vendor: mat.vendor || "", category: catItem.category || "Casing", cuts: [cut], remaining: stockLen - cut.length });
+      if (!bySource[cut.source]) bySource[cut.source] = [];
+      bySource[cut.source].push(cut);
+    }
+    const packed: any[] = [];
+    for (const group of Object.values(bySource)) {
+      group.sort((a, b) => b.length - a.length);
+      for (const cut of group) {
+        const board = !cut._doors3pc && packed.find(b => b.cuts.length && b.cuts[0].source === cut.source && b.remaining - cut.length >= MIN_BOARD_REMAINING);
+        if (board) {
+          board.cuts.push(cut);
+          board.remaining -= cut.length;
+        } else {
+          const stockLen = STOCK.find(s => s >= cut.length) || 168;
+          packed.push({ stockLength: stockLen, profile: mat.profile || catItem.profile, species: mat.species || "", color: mat.color || "", vendor: mat.vendor || "", category: catItem.category || "Casing", cuts: [cut], remaining: stockLen - cut.length });
+        }
       }
     }
-    // Merge orphan single-cut boards
+    // Merge orphan single-cut boards (same source only, no upsizing)
     for (let i = packed.length - 1; i >= 1; i--) {
       if (packed[i].cuts.length !== 1) continue;
       if (packed[i].cuts[0]._doors3pc) continue;
+      const iSource = packed[i].cuts[0].source;
       for (let j = 0; j < i; j++) {
-        const usedJ = packed[j].stockLength - packed[j].remaining;
-        const usedI = packed[i].stockLength - packed[i].remaining;
-        const mergeStock = STOCK.find(s => s - usedJ - usedI >= MIN_BOARD_REMAINING);
-        if (mergeStock) {
-          packed[j].stockLength = mergeStock;
-          packed[j].remaining = mergeStock - usedJ - usedI;
+        if (!packed[j].cuts.some((c: any) => c.source === iSource)) continue;
+        if (packed[j].remaining - packed[i].cuts[0].length >= MIN_BOARD_REMAINING) {
           packed[j].cuts.push(...packed[i].cuts);
+          packed[j].remaining -= packed[i].cuts[0].length;
           packed.splice(i, 1);
           break;
         }
@@ -662,4 +668,71 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
   }
 
   return merged;
+}
+
+// ─── Board Summary by Unit (owner-based assignment) ────────────────────────
+
+export interface BoardSummaryEntry {
+  sig: string;
+  unitLabels: string[];
+}
+
+export function buildBoardSummaryByUnit(
+  job: any,
+  units: any[],
+  materialCatalog: MaterialCatalog | null,
+  offsets: any
+): BoardSummaryEntry[] {
+  const gmNonAuto = (job.globalMaterials || []).filter((m: any) => !m.autoFormula && m.profileId);
+  if (!gmNonAuto.length) return [];
+
+  const { boards } = buildGlobalMaterialBoards(
+    (job.globalMaterials || []).filter((m: any) => !m.autoFormula),
+    units, materialCatalog, offsets?.boardWaste, job.mullLayouts,
+    { doors3pc: job.doors3pc !== false }
+  );
+  if (!boards.length) return [];
+
+  const SL: Record<number, string> = { 96:"8'", 120:"10'", 144:"12'", 168:"14'", 192:"16'", 216:"18'", 240:"20'" };
+
+  // Assign each board to the unit with the most cuts (owner logic)
+  const byUnit: Record<string, Record<string, Record<number, number>>> = {};
+  for (const b of boards) {
+    const cutCounts: Record<string, number> = {};
+    for (const c of b.cuts) {
+      const label = (c.source || "").replace(/\s*\(.*\)\s*$/, "");
+      if (label) cutCounts[label] = (cutCounts[label] || 0) + 1;
+    }
+    const entries = Object.entries(cutCounts);
+    if (!entries.length) continue;
+    const owner = entries.sort((a, b) => b[1] - a[1])[0][0];
+    if (!byUnit[owner]) byUnit[owner] = {};
+    if (!byUnit[owner][b.profile]) byUnit[owner][b.profile] = {};
+    byUnit[owner][b.profile][b.stockLength] = (byUnit[owner][b.profile][b.stockLength] || 0) + 1;
+  }
+
+  // Group units with identical board breakdowns
+  const sigMap: Record<string, string[]> = {};
+  for (const [label, profiles] of Object.entries(byUnit)) {
+    const parts = Object.entries(profiles)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([prof, stocks]) => {
+        const stockStr = Object.entries(stocks)
+          .sort((a, b) => Number(a[0]) - Number(b[0]))
+          .map(([sl, n]) => `${n}@${SL[Number(sl)] || Math.round(Number(sl) / 12) + "'"}`)
+          .join(" ");
+        return `${stockStr} ${prof}`;
+      });
+    const sig = parts.join(", ");
+    if (!sigMap[sig]) sigMap[sig] = [];
+    sigMap[sig].push(label);
+  }
+
+  return Object.entries(sigMap)
+    .sort((a, b) => {
+      const aFirst = parseInt(a[1][0]) || 0;
+      const bFirst = parseInt(b[1][0]) || 0;
+      return aFirst - bFirst;
+    })
+    .map(([sig, labels]) => ({ sig, unitLabels: labels }));
 }

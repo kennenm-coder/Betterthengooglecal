@@ -1,4 +1,4 @@
-const CACHE_NAME = "rba-field-cal-v4";
+const CACHE_NAME = "rba-field-cal-v5";
 const PRECACHE_URLS = ["/", "/search", "/admin", "/time-off"];
 
 self.addEventListener("install", (event) => {
@@ -29,6 +29,9 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   const url = new URL(event.request.url);
+
+  // Never cache cross-origin requests (Supabase, etc.) — pass through
+  if (url.origin !== self.location.origin) return;
 
   // API calls: network-first, fall back to cache
   if (url.pathname.startsWith("/api/")) {
