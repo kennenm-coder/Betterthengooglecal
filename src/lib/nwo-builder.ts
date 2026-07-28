@@ -371,30 +371,36 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
     }
     if (!cuts.length) continue;
 
-    cuts.sort((a, b) => b.length - a.length);
-    const packed: any[] = [];
+    // Pack per-unit: group cuts by source so each board belongs to one unit
+    const bySource: Record<string, any[]> = {};
     for (const cut of cuts) {
-      const board = !cut._doors3pc && packed.find(b => b.remaining - cut.length >= MIN_BOARD_REMAINING);
-      if (board) {
-        board.cuts.push(cut);
-        board.remaining -= cut.length;
-      } else {
-        const stockLen = STOCK.find(s => s >= cut.length) || 168;
-        packed.push({ stockLength: stockLen, profile: mat.profile || catItem.profile, species: mat.species || "", color: mat.color || "", vendor: mat.vendor || "", category: catItem.category || "Casing", cuts: [cut], remaining: stockLen - cut.length });
+      if (!bySource[cut.source]) bySource[cut.source] = [];
+      bySource[cut.source].push(cut);
+    }
+    const packed: any[] = [];
+    for (const group of Object.values(bySource)) {
+      group.sort((a, b) => b.length - a.length);
+      for (const cut of group) {
+        const board = !cut._doors3pc && packed.find(b => b.cuts.length && b.cuts[0].source === cut.source && b.remaining - cut.length >= MIN_BOARD_REMAINING);
+        if (board) {
+          board.cuts.push(cut);
+          board.remaining -= cut.length;
+        } else {
+          const stockLen = STOCK.find(s => s >= cut.length) || 168;
+          packed.push({ stockLength: stockLen, profile: mat.profile || catItem.profile, species: mat.species || "", color: mat.color || "", vendor: mat.vendor || "", category: catItem.category || "Casing", cuts: [cut], remaining: stockLen - cut.length });
+        }
       }
     }
-    // Merge orphan single-cut boards
+    // Merge orphan single-cut boards (same source only, no upsizing)
     for (let i = packed.length - 1; i >= 1; i--) {
       if (packed[i].cuts.length !== 1) continue;
       if (packed[i].cuts[0]._doors3pc) continue;
+      const iSource = packed[i].cuts[0].source;
       for (let j = 0; j < i; j++) {
-        const usedJ = packed[j].stockLength - packed[j].remaining;
-        const usedI = packed[i].stockLength - packed[i].remaining;
-        const mergeStock = STOCK.find(s => s - usedJ - usedI >= MIN_BOARD_REMAINING);
-        if (mergeStock) {
-          packed[j].stockLength = mergeStock;
-          packed[j].remaining = mergeStock - usedJ - usedI;
+        if (!packed[j].cuts.some((c: any) => c.source === iSource)) continue;
+        if (packed[j].remaining - packed[i].cuts[0].length >= MIN_BOARD_REMAINING) {
           packed[j].cuts.push(...packed[i].cuts);
+          packed[j].remaining -= packed[i].cuts[0].length;
           packed.splice(i, 1);
           break;
         }
