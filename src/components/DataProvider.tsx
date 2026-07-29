@@ -69,13 +69,20 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Show cached data instantly, then refresh from Supabase in background
-    const local = loadOrdersLocal();
-    if (local.length > 0) {
-      setOrders(local);
-      setLastUpdated(getLastUpdated());
-      setLoading(false);
-      hasHydrated.current = true;
+    // Only show cached data if it's less than 5 minutes old — stale cache
+    // flashes wrong appointment times on mobile before Supabase replaces it
+    const cached = getLastUpdated();
+    const cacheAge = cached ? Date.now() - new Date(cached).getTime() : Infinity;
+    const FIVE_MINUTES = 5 * 60 * 1000;
+
+    if (cacheAge < FIVE_MINUTES) {
+      const local = loadOrdersLocal();
+      if (local.length > 0) {
+        setOrders(local);
+        setLastUpdated(cached);
+        setLoading(false);
+        hasHydrated.current = true;
+      }
     }
 
     refresh().finally(() => {

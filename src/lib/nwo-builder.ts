@@ -267,7 +267,7 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
     return DEFAULT_STOCK;
   };
 
-  const getCuts = (method: string, H: number, W: number, sillW: number, stoolW: number, isEJ: boolean, deepEJ: boolean, src: string, isDoor: boolean) => {
+  const getCuts = (method: string, H: number, W: number, sillW: number, stoolW: number, isEJ: boolean, deepEJ: boolean, src: string, isDoor: boolean, topBottomOnly?: boolean) => {
     if (method === "1w") return [{ length: W + buf, rawLength: W, source: src, cutName: "1 pc @ width" }];
     if (method === "wph" || method === "WH") {
       if (isEJ) {
@@ -278,6 +278,13 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
         ];
         if (deepEJ) c.push({ length: sillW + buf, rawLength: sillW, source: src, cutName: `EJ Sill${sillW !== W ? " (override)" : ""}` });
         return c;
+      }
+      if (topBottomOnly) {
+        if (isDoor) return [{ length: W + buf, rawLength: W, source: src, cutName: "Top" }];
+        return [
+          { length: stoolW + buf, rawLength: stoolW, source: src, cutName: `Top${stoolW !== W ? " (override)" : ""}` },
+          { length: stoolW + buf, rawLength: stoolW, source: src, cutName: `Bottom${stoolW !== W ? " (override)" : ""}` },
+        ];
       }
       if (isDoor) return [
         { length: H + buf, rawLength: H, source: src, cutName: "Left" },
@@ -343,6 +350,7 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       const isEJ = catItem.category === "EJ";
       const isCasing = catItem.category === "Casing";
       const deepEJ = (u.materialOverrides?.[mat.id]?.deepEJ) ?? mat.deepEJ;
+      const topBottomOnly = (u.materialOverrides?.[mat.id]?.topBottomOnly) ?? mat.topBottomOnly;
       const isDoor = isUnitDoor(u);
 
       const mullGk = mullGroupsByLabel[unitLabel];
@@ -365,7 +373,7 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       const src = unitLabel + (u.location ? ` (${u.location})` : "");
       const sillW = (u.sillOverrideWhole || 0) + (u.sillOverrideFrac || 0) || W;
       const stoolW = (u.stoolOverrideWhole || 0) + (u.stoolOverrideFrac || 0) || W;
-      const newCuts = getCuts(catItem.calcMethod, H, W, sillW, stoolW, isEJ, deepEJ, src, isDoor);
+      const newCuts = getCuts(catItem.calcMethod, H, W, sillW, stoolW, isEJ, deepEJ, src, isDoor, topBottomOnly);
       if (doors3pc && isDoor) newCuts.forEach((c: any) => { c._doors3pc = true; });
       cuts.push(...newCuts);
     }
@@ -508,6 +516,21 @@ function buildNWOMaterialList(globalMaterials: any[], units: any[], materialCata
         const key = [mat.profile || catItem.profile, mat.species || "", mat.color || "", "exact"].join("|");
         if (!byMat.has(key)) byMat.set(key, { profile: mat.profile || catItem.profile, species: mat.species || "", color: mat.color || "", vendor: mat.vendor || "", category: catItem.category, stockTotals: {}, exactLengths: [] });
         byMat.get(key)!.exactLengths = [...(byMat.get(key)!.exactLengths || []), sillW];
+      }
+    }
+    if (catItem.calcMethod === "archWidth") {
+      for (const u of units) {
+        if (u.isMisc) continue;
+        const lbl = String(u.label || u.id);
+        const excl = mat.excludeUnits || [];
+        const incl = mat.includeUnits || [];
+        if (excl.length && excl.includes(lbl)) continue;
+        if (incl.length && !incl.includes(lbl)) continue;
+        const unitW = (u.widthWhole || 0) + (u.widthFrac || 0);
+        if (!unitW) continue;
+        const key = [mat.profile || catItem.profile, mat.species || "", mat.color || "", "archWidth"].join("|");
+        if (!byMat.has(key)) byMat.set(key, { profile: mat.profile || catItem.profile, species: mat.species || "", color: mat.color || "", vendor: mat.vendor || "", category: catItem.category, stockTotals: {}, exactLengths: [] });
+        byMat.get(key)!.exactLengths = [...(byMat.get(key)!.exactLengths || []), unitW];
       }
     }
     if (catItem.calcMethod === "w+casing") {
