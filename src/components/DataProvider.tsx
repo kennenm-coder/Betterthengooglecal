@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { WorkOrder } from "@/lib/types";
 import {
   saveOrdersLocal,
@@ -35,46 +35,31 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const hasHydrated = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
-      // Primary: load from Supabase work_orders table
       const supaOrders = await loadOrdersFromSupabase();
 
-      if (supaOrders.length > 0) {
-        // Fetch material jobs and enrich
-        const jobByPO = await fetchMaterialJobs();
-        const enriched = enrichWithMaterials(supaOrders, jobByPO);
+      // Supabase succeeded (even if empty) — this is the source of truth
+      const jobByPO = await fetchMaterialJobs();
+      const enriched = enrichWithMaterials(supaOrders, jobByPO);
 
-        setOrders(enriched);
-        saveOrdersLocal(enriched);
-        setLastUpdated(new Date().toISOString());
-        return;
-      }
+      setOrders(enriched);
+      saveOrdersLocal(enriched);
+      setLastUpdated(new Date().toISOString());
     } catch {
-      // Supabase unreachable — fall through to fallbacks
-    }
-
-    // Fallback: try API route
-    try {
-      const res = await fetch("/api/orders");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.orders && data.orders.length > 0) {
-          setOrders(data.orders);
-          saveOrdersLocal(data.orders);
-          setLastUpdated(data.uploadedAt);
-          return;
+      // Supabase truly unreachable — only then use localStorage as read-only fallback
+      // Do NOT fall through to /api/orders (it may serve a stale SW-cached response)
+      if (!hasHydrated.current) {
+        const local = loadOrdersLocal();
+        if (local.length > 0) {
+          setOrders(local);
+          setLastUpdated(getLastUpdated());
         }
       }
-    } catch {
-      // Fall back to local
+      // If we already have data loaded, keep showing it rather than overwriting with stale data
     }
-
-    // Final fallback: localStorage
-    const local = loadOrdersLocal();
-    setOrders(local);
-    setLastUpdated(getLastUpdated());
   }, []);
 
   const setOrdersLocalFn = useCallback((newOrders: WorkOrder[]) => {
@@ -84,7 +69,19 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    refresh().finally(() => setLoading(false));
+    // Show cached data instantly, then refresh from Supabase in background
+    const local = loadOrdersLocal();
+    if (local.length > 0) {
+      setOrders(local);
+      setLastUpdated(getLastUpdated());
+      setLoading(false);
+      hasHydrated.current = true;
+    }
+
+    refresh().finally(() => {
+      hasHydrated.current = true;
+      setLoading(false);
+    });
   }, [refresh]);
 
   return (

@@ -1,0 +1,238 @@
+Salesforce Report Import Workflow
+=================================
+
+Purpose
+-------
+This document explains how the Better Than Google Calendar app receives a
+Salesforce work-order report, converts it into structured data, stores it in
+Supabase, and displays it on the calendar.
+
+This can be pasted into Claude as context when building, reviewing, or
+troubleshooting the same workflow.
+
+
+High-Level Process
+------------------
+
+1. Run the Salesforce report
+
+A work-order report is run in Salesforce and exported as either:
+
+- A CSV file; or
+- A Salesforce .xls export that is actually an HTML table, not a true binary
+  Excel workbook.
+
+The report must include the expected work-order columns in the expected order.
+
+
+2. Email the report
+
+The exported file is attached to an email and sent to a designated email
+address monitored by Microsoft Power Automate.
+
+The mailbox monitoring and email address are configured in Power Automate,
+not inside the calendar app.
+
+
+3. Power Automate sends the attachment to the app
+
+When Power Automate detects the email, it:
+
+- Gets the attachment content;
+- Base64-encodes the attachment, if it is not already supplied that way;
+- Sends an HTTP POST request to:
+
+  https://YOUR-APP-DOMAIN/api/upload
+
+- Adds this request header:
+
+  x-api-key: YOUR_UPLOAD_API_KEY
+
+- Sends a JSON body such as:
+
+  {
+    "file": "BASE64_ENCODED_FILE_CONTENT"
+  }
+
+The app also accepts the base64 value in a property named "content" or "body",
+although "file" is the clearest choice.
+
+The Content-Type header should be:
+
+  application/json
+
+
+4. The /api/upload endpoint receives the request
+
+The Next.js API endpoint is located at:
+
+  src/app/api/upload/route.ts
+
+It performs these operations:
+
+- Reads the UPLOAD_API_KEY environment variable;
+- Compares it with the request's x-api-key header;
+- Returns HTTP 401 if the configured key does not match;
+- Reads the file content from the JSON request;
+- Decodes the base64 content into UTF-8 text;
+- Detects whether the content is CSV or an HTML-based Salesforce XLS export.
+
+Important security note:
+
+The API key is enforced only when UPLOAD_API_KEY is configured in the app's
+environment. If that environment variable is missing, the current endpoint
+does not require an API key.
+
+The endpoint also supports raw text bodies and multipart browser uploads, but
+the JSON/base64 method is the intended Power Automate workflow.
+
+
+5. The app detects and parses the report format
+
+Format detection:
+
+- Content containing an HTML <table> is treated as Salesforce HTML-XLS.
+- Content containing "Order Number" and "Work Order Number" headers is treated
+  as CSV.
+- If detection is uncertain, the app tries the HTML-XLS parser first and then
+  the CSV parser.
+
+Parser files:
+
+  src/lib/parse-csv.ts
+  src/lib/parse-xls.ts
+
+The parsers translate each report row into a WorkOrder object used by the app.
+
+Expected CSV column order:
+
+  1. Status
+  2. Order Number
+  3. Work Order Number
+  4. Address
+  5. Booking Date
+  6. Bill To Contact: Full Name
+  7. Order Owner
+  8. Sales Rep
+  9. Primary Tech Measure Name
+ 10. Primary Installer: Name
+ 11. Primary Service: Name
+ 12. Primary Resource Name
+ 13. Status (appointment status)
+ 14. Scheduled Start Time
+ 15. Scheduled End Time
+ 16. Contact: Full Name
+ 17. Bill to Contact Email
+ 18. Bill to Contact Mobile Phone
+ 19. Bill to Contact Home Phone
+ 20. Bill to Contact Business Phone
+ 21. Service Request Description
+ 22. Work Order Type
+
+Important parsing limitation:
+
+The CSV parser validates a few header names, but maps most values by fixed
+column position. Rearranging, inserting, or removing Salesforce report columns
+can cause fields to be imported incorrectly. The report layout should remain
+consistent.
+
+The import supports CSV and Salesforce's HTML-table .xls format. It does not
+currently parse a genuine binary .xls file or a real .xlsx workbook.
+
+Rows without a Work Order Number are skipped by the CSV parser. The Work Order
+Number becomes the WorkOrder object's ID.
+
+
+6. Parsed work orders are stored in Supabase
+
+The endpoint converts each WorkOrder object into a row for the Supabase
+work_orders table.
+
+Rows are upserted in batches of 500 using:
+
+  onConflict: "id"
+
+The id is normally the Salesforce Work Order Number.
+
+"Upsert" means:
+
+- If the ID already exists, update that work order with the newest report data.
+- If the ID does not exist, insert a new work order.
+
+Important synchronization behavior:
+
+The upload does not delete old work orders that are missing from the newest
+report. It inserts new records and updates existing records, but it is not a
+full table replacement.
+
+The API returns a response similar to:
+
+  {
+    "success": true,
+    "format": "csv",
+    "parsed": 1250,
+    "upserted": 1250
+  }
+
+
+7. The calendar loads and enriches the data
+
+When someone opens the calendar, DataProvider loads the data.
+
+Relevant files:
+
+  src/components/DataProvider.tsx
+  src/lib/store.ts
+
+The app:
+
+- Selects all rows from the Supabase work_orders table;
+- Sorts them by scheduled_start;
+- Selects material-list records from the Supabase jobs table;
+- Uses only submitted material jobs;
+- Matches material data to work orders using:
+
+  work_orders.order_number = jobs.data.job.poNumber
+
+- Adds the matching material information to each WorkOrder as materialJob;
+- Saves a copy in browser localStorage;
+- Passes the enriched orders to the day and week calendar views.
+
+If Supabase is unavailable or returns no work orders, the app attempts these
+fallbacks:
+
+1. The legacy /api/orders route backed by a JSON file in GitHub.
+2. The last work-order data saved in the browser's localStorage.
+
+
+Short Version to Give Claude
+----------------------------
+
+The Next.js app imports a scheduled Salesforce work-order report through
+Power Automate. Power Automate watches an email inbox, retrieves the CSV or
+Salesforce HTML-based .xls attachment, and POSTs its base64 content to
+/api/upload as JSON with an x-api-key header. The endpoint validates the key,
+decodes the attachment, detects its format, and passes it to parse-csv.ts or
+parse-xls.ts. The parser maps each report row into a WorkOrder object, using
+the Work Order Number as its ID. The endpoint upserts the orders into the
+Supabase work_orders table in batches of 500. Existing IDs are updated and new
+IDs are inserted; records absent from the latest report are not deleted.
+When the calendar loads, DataProvider reads work_orders, reads submitted
+material records from jobs, joins them where the work order's Order Number
+matches the material job's PO Number, caches the enriched data locally, and
+renders the scheduled work orders on the calendar.
+
+
+Key Things to Verify During Setup
+---------------------------------
+
+- UPLOAD_API_KEY is configured in the deployed app.
+- Power Automate sends the same value in the x-api-key header.
+- The request Content-Type is application/json.
+- The JSON body contains the attachment base64 value in "file".
+- The Salesforce report contains the expected 22 columns in the expected order.
+- The exported .xls is Salesforce's HTML-table format, not a real Excel file.
+- The Supabase work_orders table has a unique or primary key on id.
+- Supabase permissions allow the deployed app to select and upsert work_orders.
+- The latest report should not be expected to delete database records that are
+  no longer present in Salesforce.

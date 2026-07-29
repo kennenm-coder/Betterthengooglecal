@@ -381,26 +381,35 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
     for (const group of Object.values(bySource)) {
       group.sort((a, b) => b.length - a.length);
       for (const cut of group) {
-        const board = !cut._doors3pc && packed.find(b => b.cuts.length && b.cuts[0].source === cut.source && b.remaining - cut.length >= MIN_BOARD_REMAINING);
+        // When adding to an existing board, use raw length — the board's first cut
+        // already reserved the waste buffer for the bad end.
+        const fitLen = cut.rawLength || (cut.length - buf);
+        const board = !cut._doors3pc && packed.find(b => b.cuts.length && b.cuts[0].source === cut.source && b.remaining - fitLen >= MIN_BOARD_REMAINING);
         if (board) {
           board.cuts.push(cut);
-          board.remaining -= cut.length;
+          board.remaining -= fitLen;
         } else {
           const stockLen = STOCK.find(s => s >= cut.length) || 168;
           packed.push({ stockLength: stockLen, profile: mat.profile || catItem.profile, species: mat.species || "", color: mat.color || "", vendor: mat.vendor || "", category: catItem.category || "Casing", cuts: [cut], remaining: stockLen - cut.length });
         }
       }
     }
-    // Merge orphan single-cut boards (same source only, no upsizing)
+    // Merge orphan single-cut boards (same source only, may upsize)
     for (let i = packed.length - 1; i >= 1; i--) {
       if (packed[i].cuts.length !== 1) continue;
       if (packed[i].cuts[0]._doors3pc) continue;
       const iSource = packed[i].cuts[0].source;
       for (let j = 0; j < i; j++) {
         if (!packed[j].cuts.some((c: any) => c.source === iSource)) continue;
-        if (packed[j].remaining - packed[i].cuts[0].length >= MIN_BOARD_REMAINING) {
+        const usedJ = packed[j].stockLength - packed[j].remaining;
+        // Use raw length for the absorbed cut — target board already has a waste buffer
+        const iCut = packed[i].cuts[0];
+        const usedI = iCut.rawLength || (iCut.length - buf);
+        const mergeStock = STOCK.find(s => s - usedJ - usedI >= MIN_BOARD_REMAINING);
+        if (mergeStock) {
+          packed[j].stockLength = mergeStock;
+          packed[j].remaining = mergeStock - usedJ - usedI;
           packed[j].cuts.push(...packed[i].cuts);
-          packed[j].remaining -= packed[i].cuts[0].length;
           packed.splice(i, 1);
           break;
         }
