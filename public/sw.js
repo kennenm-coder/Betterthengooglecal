@@ -1,4 +1,4 @@
-const CACHE_NAME = "rba-field-cal-v5";
+const CACHE_NAME = "rba-field-cal-v6";
 const PRECACHE_URLS = ["/", "/search", "/admin", "/time-off"];
 
 self.addEventListener("install", (event) => {
@@ -30,31 +30,28 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(event.request.url);
 
-  // Never cache cross-origin requests (Supabase, etc.) — pass through
+  // Never cache cross-origin requests (Supabase, etc.)
   if (url.origin !== self.location.origin) return;
 
-  // API calls: network-first, fall back to cache
-  if (url.pathname.startsWith("/api/")) {
-    event.respondWith(
-      fetch(event.request)
+  // Never cache API calls — data must always come fresh from Supabase.
+  // Caching these caused stale appointment times and missing data on mobile.
+  if (url.pathname.startsWith("/api/")) return;
+
+  // App shell & static assets: cache-first for instant loads, network updates cache in background
+  event.respondWith(
+    caches.match(event.request).then((cached) => {
+      const networkFetch = fetch(event.request)
         .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
           return response;
         })
-        .catch(() => caches.match(event.request))
-    );
-    return;
-  }
+        .catch(() => cached);
 
-  // App shell & static assets: network-first, fall back to cache
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        return response;
-      })
-      .catch(() => caches.match(event.request))
+      // Serve cache immediately if available (instant app shell), update in background
+      return cached || networkFetch;
+    })
   );
 });
