@@ -17,6 +17,13 @@ export const metadata: Metadata = {
   title: "Duck Force",
   description: "Renewal by Andersen field operations calendar",
   manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/icon-192.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -39,9 +46,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
-      <head>
-        <link rel="apple-touch-icon" href="/icon-192.png" />
-      </head>
+      <head />
       <body className="h-full flex flex-col">
         <DataProvider>{children}</DataProvider>
         <script
