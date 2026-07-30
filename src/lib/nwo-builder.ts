@@ -209,36 +209,110 @@ function resolveProfileNickname(typed: string, catalogItems: CatalogItem[] | und
 
 // ─── MULL CUTS ──────────────────────────────────────────────────────────────
 
+const MULL_GAP = 0.75;
+
 function computeMullCuts(layout: any[], unitsByLabel: Record<string, { W: number; H: number }>, buf: number, isEJ: boolean, deepEJ: boolean, isDoor: boolean) {
   if (!layout || !layout.length) return null;
-  const grid: Record<string, any> = {};
-  layout.forEach((t: any) => {
+
+  const positioned = layout.map((t: any) => {
     const u = unitsByLabel[t.label];
-    if (!u) return;
-    grid[`${t.gridX},${t.gridY}`] = { ...t, W: u.W, H: u.H };
-  });
+    if (!u) return null;
+    return { ...t, W: u.W, H: u.H };
+  }).filter(Boolean) as any[];
+  if (!positioned.length) return null;
 
-  const cuts: any[] = [];
   const groupLabel = layout.map((t: any) => t.label).join("+");
+  const cuts: any[] = [];
 
-  layout.forEach((t: any) => {
-    const cell = grid[`${t.gridX},${t.gridY}`];
-    if (!cell) return;
-    if (!grid[`${t.gridX - 1},${t.gridY}`])
-      cuts.push({ length: cell.H + buf, rawLength: cell.H, source: groupLabel, cutName: `Left side (${cell.label})` });
-    if (!grid[`${t.gridX + 1},${t.gridY}`])
-      cuts.push({ length: cell.H + buf, rawLength: cell.H, source: groupLabel, cutName: `Right side (${cell.label})` });
-    if (!grid[`${t.gridX},${t.gridY - 1}`])
-      cuts.push({ length: cell.W + buf, rawLength: cell.W, source: groupLabel, cutName: `Top (${cell.label})` });
-    if (!grid[`${t.gridX},${t.gridY + 1}`] && !isDoor)
-      cuts.push({ length: cell.W + buf, rawLength: cell.W, source: groupLabel, cutName: `Bottom (${cell.label})` });
-  });
+  const uniqueY = [...new Set(positioned.map((p: any) => p.gridY))];
+  const uniqueX = [...new Set(positioned.map((p: any) => p.gridX))];
+
+  if (uniqueY.length === 1) {
+    const sorted = [...positioned].sort((a, b) => a.gridX - b.gridX);
+    const mullJoints = sorted.length - 1;
+    const totalW = sorted.reduce((s: number, u: any) => s + u.W, 0) + MULL_GAP * mullJoints;
+    const leftH = sorted[0].H;
+    const rightH = sorted[sorted.length - 1].H;
+
+    cuts.push({ length: leftH + buf, rawLength: leftH, source: groupLabel, cutName: `Left side (${sorted[0].label})` });
+    cuts.push({ length: rightH + buf, rawLength: rightH, source: groupLabel, cutName: `Right side (${sorted[sorted.length - 1].label})` });
+    cuts.push({ length: totalW + buf, rawLength: totalW, source: groupLabel, cutName: `Top (${sorted.map((u: any) => u.label).join("+")})` });
+    if (!isDoor) {
+      cuts.push({ length: totalW + buf, rawLength: totalW, source: groupLabel, cutName: `Bottom (${sorted.map((u: any) => u.label).join("+")})` });
+    }
+  } else if (uniqueX.length === 1) {
+    const sorted = [...positioned].sort((a, b) => a.gridY - b.gridY);
+    const mullJoints = sorted.length - 1;
+    const totalH = sorted.reduce((s: number, u: any) => s + u.H, 0) + MULL_GAP * mullJoints;
+    const topW = sorted[0].W;
+    const bottomW = sorted[sorted.length - 1].W;
+
+    cuts.push({ length: topW + buf, rawLength: topW, source: groupLabel, cutName: `Top (${sorted[0].label})` });
+    if (!isDoor) {
+      cuts.push({ length: bottomW + buf, rawLength: bottomW, source: groupLabel, cutName: `Bottom (${sorted[sorted.length - 1].label})` });
+    }
+    cuts.push({ length: totalH + buf, rawLength: totalH, source: groupLabel, cutName: `Left side (${sorted.map((u: any) => u.label).join("+")})` });
+    cuts.push({ length: totalH + buf, rawLength: totalH, source: groupLabel, cutName: `Right side (${sorted.map((u: any) => u.label).join("+")})` });
+  } else {
+    // COMPLEX SHAPE (L, T, etc.) — find exposed edges, then merge collinear adjacent ones
+    const near = (a: number, b: number) => Math.abs(a - b) < 1;
+    const leftEdges: any[] = [], rightEdges: any[] = [], topEdges: any[] = [], bottomEdges: any[] = [];
+    positioned.forEach((p: any) => {
+      const hasLeft = positioned.some((q: any) => q.label !== p.label &&
+        near(q.gridX + q.W, p.gridX) &&
+        Math.max(q.gridY, p.gridY) < Math.min(q.gridY + q.H, p.gridY + p.H));
+      const hasRight = positioned.some((q: any) => q.label !== p.label &&
+        near(p.gridX + p.W, q.gridX) &&
+        Math.max(q.gridY, p.gridY) < Math.min(q.gridY + q.H, p.gridY + p.H));
+      const hasAbove = positioned.some((q: any) => q.label !== p.label &&
+        near(q.gridY + q.H, p.gridY) &&
+        Math.max(q.gridX, p.gridX) < Math.min(q.gridX + q.W, p.gridX + p.W));
+      const hasBelow = positioned.some((q: any) => q.label !== p.label &&
+        near(p.gridY + p.H, q.gridY) &&
+        Math.max(q.gridX, p.gridX) < Math.min(q.gridX + q.W, p.gridX + p.W));
+      if (!hasLeft)  leftEdges.push({ pos: p.gridX, start: p.gridY, len: p.H, label: p.label });
+      if (!hasRight) rightEdges.push({ pos: p.gridX + p.W, start: p.gridY, len: p.H, label: p.label });
+      if (!hasAbove) topEdges.push({ pos: p.gridY, start: p.gridX, len: p.W, label: p.label });
+      if (!hasBelow) bottomEdges.push({ pos: p.gridY + p.H, start: p.gridX, len: p.W, label: p.label });
+    });
+    const mergeEdges = (edges: any[]) => {
+      const groups: any[][] = [];
+      for (const e of edges) {
+        const g = groups.find(gr => near(gr[0].pos, e.pos));
+        if (g) g.push(e); else groups.push([e]);
+      }
+      const merged: any[] = [];
+      for (const g of groups) {
+        g.sort((a: any, b: any) => a.start - b.start);
+        let cur = { len: g[0].len, labels: [g[0].label], start: g[0].start };
+        for (let i = 1; i < g.length; i++) {
+          if (near(cur.start + cur.len, g[i].start)) {
+            cur.len += g[i].len + MULL_GAP;
+            cur.labels.push(g[i].label);
+          } else {
+            merged.push(cur);
+            cur = { len: g[i].len, labels: [g[i].label], start: g[i].start };
+          }
+        }
+        merged.push(cur);
+      }
+      return merged;
+    };
+    mergeEdges(leftEdges).forEach(e =>
+      cuts.push({ length: e.len + buf, rawLength: e.len, source: groupLabel, cutName: `Left side (${e.labels.join("+")})` }));
+    mergeEdges(rightEdges).forEach(e =>
+      cuts.push({ length: e.len + buf, rawLength: e.len, source: groupLabel, cutName: `Right side (${e.labels.join("+")})` }));
+    mergeEdges(topEdges).forEach(e =>
+      cuts.push({ length: e.len + buf, rawLength: e.len, source: groupLabel, cutName: `Top (${e.labels.join("+")})` }));
+    if (!isDoor) mergeEdges(bottomEdges).forEach(e =>
+      cuts.push({ length: e.len + buf, rawLength: e.len, source: groupLabel, cutName: `Bottom (${e.labels.join("+")})` }));
+  }
 
   if (isEJ && !deepEJ) {
     const halfCount = Math.ceil(cuts.length / 2);
-    const maxLen = Math.max(...cuts.map(c => c.length));
+    const maxLen = Math.max(...cuts.map((c: any) => c.length));
     return Array.from({ length: halfCount }, (_, i) => ({
-      length: maxLen, rawLength: maxLen - buf, source: groupLabel, cutName: `EJ piece ${i + 1}`
+      length: maxLen, rawLength: maxLen - buf, source: groupLabel, cutName: `EJ piece ${i + 1}`, _ejRip: true
     }));
   }
   return cuts;
