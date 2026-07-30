@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef, useMemo, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { TimeOffRequest, Employee } from "@/lib/types";
 import {
   fetchTimeOffRequests,
@@ -47,7 +47,17 @@ interface NewEmployee {
 const emptyEmployee: NewEmployee = { firstName: "", lastName: "", department: "" };
 
 export default function TimeOffPage() {
+  return (
+    <Suspense>
+      <TimeOffContent />
+    </Suspense>
+  );
+}
+
+function TimeOffContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromScheduler = searchParams.get("from") === "scheduler";
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -216,7 +226,13 @@ export default function TimeOffPage() {
     <div className="flex flex-col h-full bg-background">
       <header className="bg-background border-b border-border px-3 py-2.5 flex items-center gap-2 z-20">
         <button
-          onClick={() => router.push("/")}
+          onClick={() => {
+            if (fromScheduler) {
+              window.close();
+            } else {
+              router.push("/");
+            }
+          }}
           className="p-1.5 rounded-full hover:bg-surface"
         >
           <ArrowLeft className="w-5 h-5" />
