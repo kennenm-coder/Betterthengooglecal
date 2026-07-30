@@ -22,6 +22,7 @@ import {
   UserPlus,
   Filter,
 } from "lucide-react";
+import PinModal from "@/components/PinModal";
 import { format } from "date-fns";
 
 interface DraftRow {
@@ -58,6 +59,12 @@ function TimeOffContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const fromScheduler = searchParams.get("from") === "scheduler";
+  const [unlocked, setUnlocked] = useState(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("timeoff_unlocked") === "1";
+    }
+    return false;
+  });
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -220,6 +227,26 @@ function TimeOffContent() {
     } catch {
       return dateStr;
     }
+  }
+
+  if (!unlocked) {
+    return (
+      <div className="flex flex-col h-full bg-background items-center justify-center">
+        <PinModal
+          onSuccess={() => {
+            sessionStorage.setItem("timeoff_unlocked", "1");
+            setUnlocked(true);
+          }}
+          onClose={() => {
+            if (fromScheduler) {
+              window.close();
+            } else {
+              router.push("/");
+            }
+          }}
+        />
+      </div>
+    );
   }
 
   return (
