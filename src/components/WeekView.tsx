@@ -1,15 +1,17 @@
 "use client";
 
-import { WorkOrder } from "@/lib/types";
+import { WorkOrder, TimeOffRequest } from "@/lib/types";
 import { getOrdersForWeek, typeColor, formatTime } from "@/lib/calendar-utils";
 import { lastFirst, crewName, sortByStartTime, extractCity } from "@/lib/format-utils";
 import { format, startOfWeek, addDays, isToday } from "date-fns";
 import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
+import WeekBarOverview from "./WeekBarOverview";
 
 export default function WeekView({
   orders,
   date,
+  timeOffRequests = [],
   onSelectOrder,
   onSelectDay,
   onSwipeLeft,
@@ -17,6 +19,7 @@ export default function WeekView({
 }: {
   orders: WorkOrder[];
   date: Date;
+  timeOffRequests?: TimeOffRequest[];
   onSelectOrder: (order: WorkOrder) => void;
   onSelectDay: (date: Date) => void;
   onSwipeLeft?: () => void;
@@ -24,7 +27,10 @@ export default function WeekView({
 }) {
   const swipeRef = useSwipe({ onSwipeLeft, onSwipeRight });
   const weekStart = startOfWeek(date, { weekStartsOn: 0 });
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const days = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
+    [weekStart]
+  );
 
   const ordersByDay = useMemo(() => {
     const byDay = getOrdersForWeek(orders, date);
@@ -67,6 +73,14 @@ export default function WeekView({
           })}
         </div>
       </div>
+
+      <WeekBarOverview
+        days={days}
+        ordersByDay={ordersByDay}
+        timeOffRequests={timeOffRequests}
+        onSelectOrder={onSelectOrder}
+        onSelectDay={onSelectDay}
+      />
 
       <div ref={swipeRef} className="flex-1 overflow-y-auto overscroll-contain">
         <div className="divide-y divide-border">

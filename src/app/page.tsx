@@ -223,6 +223,7 @@ function CalendarPage() {
           <WeekView
             orders={filteredOrders}
             date={currentDate}
+            timeOffRequests={timeOffRequests}
             onSelectOrder={setSelectedOrder}
             onSelectDay={(d) => {
               setCurrentDate(d);
