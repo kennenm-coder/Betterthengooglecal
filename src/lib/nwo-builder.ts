@@ -209,39 +209,137 @@ function resolveProfileNickname(typed: string, catalogItems: CatalogItem[] | und
 
 // ─── MULL CUTS ──────────────────────────────────────────────────────────────
 
+const MULL_GAP = 0.75;
+
 function computeMullCuts(layout: any[], unitsByLabel: Record<string, { W: number; H: number }>, buf: number, isEJ: boolean, deepEJ: boolean, isDoor: boolean) {
   if (!layout || !layout.length) return null;
-  const grid: Record<string, any> = {};
-  layout.forEach((t: any) => {
+
+  const positioned = layout.map((t: any) => {
     const u = unitsByLabel[t.label];
-    if (!u) return;
-    grid[`${t.gridX},${t.gridY}`] = { ...t, W: u.W, H: u.H };
-  });
+    if (!u) return null;
+    return { ...t, W: u.W, H: u.H };
+  }).filter(Boolean) as any[];
+  if (!positioned.length) return null;
 
-  const cuts: any[] = [];
   const groupLabel = layout.map((t: any) => t.label).join("+");
+  const cuts: any[] = [];
 
-  layout.forEach((t: any) => {
-    const cell = grid[`${t.gridX},${t.gridY}`];
-    if (!cell) return;
-    if (!grid[`${t.gridX - 1},${t.gridY}`])
-      cuts.push({ length: cell.H + buf, rawLength: cell.H, source: groupLabel, cutName: `Left side (${cell.label})` });
-    if (!grid[`${t.gridX + 1},${t.gridY}`])
-      cuts.push({ length: cell.H + buf, rawLength: cell.H, source: groupLabel, cutName: `Right side (${cell.label})` });
-    if (!grid[`${t.gridX},${t.gridY - 1}`])
-      cuts.push({ length: cell.W + buf, rawLength: cell.W, source: groupLabel, cutName: `Top (${cell.label})` });
-    if (!grid[`${t.gridX},${t.gridY + 1}`] && !isDoor)
-      cuts.push({ length: cell.W + buf, rawLength: cell.W, source: groupLabel, cutName: `Bottom (${cell.label})` });
-  });
+  const uniqueY = [...new Set(positioned.map((p: any) => p.gridY))];
+  const uniqueX = [...new Set(positioned.map((p: any) => p.gridX))];
 
-  if (isEJ && !deepEJ) {
-    const halfCount = Math.ceil(cuts.length / 2);
-    const maxLen = Math.max(...cuts.map(c => c.length));
-    return Array.from({ length: halfCount }, (_, i) => ({
-      length: maxLen, rawLength: maxLen - buf, source: groupLabel, cutName: `EJ piece ${i + 1}`
-    }));
+  if (uniqueY.length === 1) {
+    const sorted = [...positioned].sort((a, b) => a.gridX - b.gridX);
+    const mullJoints = sorted.length - 1;
+    const totalW = sorted.reduce((s: number, u: any) => s + u.W, 0) + MULL_GAP * mullJoints;
+    const leftH = sorted[0].H;
+    const rightH = sorted[sorted.length - 1].H;
+
+    cuts.push({ length: leftH + buf, rawLength: leftH, source: groupLabel, cutName: `Left side (${sorted[0].label})` });
+    cuts.push({ length: rightH + buf, rawLength: rightH, source: groupLabel, cutName: `Right side (${sorted[sorted.length - 1].label})` });
+    cuts.push({ length: totalW + buf, rawLength: totalW, source: groupLabel, cutName: `Top (${sorted.map((u: any) => u.label).join("+")})` });
+    if (!isDoor) {
+      cuts.push({ length: totalW + buf, rawLength: totalW, source: groupLabel, cutName: `Bottom (${sorted.map((u: any) => u.label).join("+")})` });
+    }
+  } else if (uniqueX.length === 1) {
+    const sorted = [...positioned].sort((a, b) => a.gridY - b.gridY);
+    const mullJoints = sorted.length - 1;
+    const totalH = sorted.reduce((s: number, u: any) => s + u.H, 0) + MULL_GAP * mullJoints;
+    const topW = sorted[0].W;
+    const bottomW = sorted[sorted.length - 1].W;
+
+    cuts.push({ length: topW + buf, rawLength: topW, source: groupLabel, cutName: `Top (${sorted[0].label})` });
+    if (!isDoor) {
+      cuts.push({ length: bottomW + buf, rawLength: bottomW, source: groupLabel, cutName: `Bottom (${sorted[sorted.length - 1].label})` });
+    }
+    cuts.push({ length: totalH + buf, rawLength: totalH, source: groupLabel, cutName: `Left side (${sorted.map((u: any) => u.label).join("+")})` });
+    cuts.push({ length: totalH + buf, rawLength: totalH, source: groupLabel, cutName: `Right side (${sorted.map((u: any) => u.label).join("+")})` });
+  } else {
+    // COMPLEX SHAPE (L, T, etc.) — find exposed edges, then merge collinear adjacent ones
+    const near = (a: number, b: number) => Math.abs(a - b) < 1;
+    const leftEdges: any[] = [], rightEdges: any[] = [], topEdges: any[] = [], bottomEdges: any[] = [];
+    positioned.forEach((p: any) => {
+      const hasLeft = positioned.some((q: any) => q.label !== p.label &&
+        near(q.gridX + q.W, p.gridX) &&
+        Math.max(q.gridY, p.gridY) < Math.min(q.gridY + q.H, p.gridY + p.H));
+      const hasRight = positioned.some((q: any) => q.label !== p.label &&
+        near(p.gridX + p.W, q.gridX) &&
+        Math.max(q.gridY, p.gridY) < Math.min(q.gridY + q.H, p.gridY + p.H));
+      const hasAbove = positioned.some((q: any) => q.label !== p.label &&
+        near(q.gridY + q.H, p.gridY) &&
+        Math.max(q.gridX, p.gridX) < Math.min(q.gridX + q.W, p.gridX + p.W));
+      const hasBelow = positioned.some((q: any) => q.label !== p.label &&
+        near(p.gridY + p.H, q.gridY) &&
+        Math.max(q.gridX, p.gridX) < Math.min(q.gridX + q.W, p.gridX + p.W));
+      if (!hasLeft)  leftEdges.push({ pos: p.gridX, start: p.gridY, len: p.H, label: p.label });
+      if (!hasRight) rightEdges.push({ pos: p.gridX + p.W, start: p.gridY, len: p.H, label: p.label });
+      if (!hasAbove) topEdges.push({ pos: p.gridY, start: p.gridX, len: p.W, label: p.label });
+      if (!hasBelow) bottomEdges.push({ pos: p.gridY + p.H, start: p.gridX, len: p.W, label: p.label });
+    });
+    const mergeEdges = (edges: any[]) => {
+      const groups: any[][] = [];
+      for (const e of edges) {
+        const g = groups.find(gr => near(gr[0].pos, e.pos));
+        if (g) g.push(e); else groups.push([e]);
+      }
+      const merged: any[] = [];
+      for (const g of groups) {
+        g.sort((a: any, b: any) => a.start - b.start);
+        let cur = { len: g[0].len, labels: [g[0].label], start: g[0].start };
+        for (let i = 1; i < g.length; i++) {
+          if (near(cur.start + cur.len, g[i].start)) {
+            cur.len += g[i].len + MULL_GAP;
+            cur.labels.push(g[i].label);
+          } else {
+            merged.push(cur);
+            cur = { len: g[i].len, labels: [g[i].label], start: g[i].start };
+          }
+        }
+        merged.push(cur);
+      }
+      return merged;
+    };
+    mergeEdges(leftEdges).forEach(e =>
+      cuts.push({ length: e.len + buf, rawLength: e.len, source: groupLabel, cutName: `Left side (${e.labels.join("+")})` }));
+    mergeEdges(rightEdges).forEach(e =>
+      cuts.push({ length: e.len + buf, rawLength: e.len, source: groupLabel, cutName: `Right side (${e.labels.join("+")})` }));
+    mergeEdges(topEdges).forEach(e =>
+      cuts.push({ length: e.len + buf, rawLength: e.len, source: groupLabel, cutName: `Top (${e.labels.join("+")})` }));
+    if (!isDoor) mergeEdges(bottomEdges).forEach(e =>
+      cuts.push({ length: e.len + buf, rawLength: e.len, source: groupLabel, cutName: `Bottom (${e.labels.join("+")})` }));
   }
+
   return cuts;
+}
+
+function computeMullLatticeCuts(layout: any[], unitsByLabel: Record<string, { W: number; H: number }>, buf: number) {
+  if (!layout || !layout.length) return null;
+  const positioned = layout.map((t: any) => {
+    const u = unitsByLabel[t.label];
+    if (!u) return null;
+    return { ...t, W: u.W, H: u.H };
+  }).filter(Boolean) as any[];
+  if (positioned.length < 2) return null;
+  const near = (a: number, b: number) => Math.abs(a - b) < 1;
+  const groupLabel = layout.map((t: any) => t.label).join("+");
+  const cuts: any[] = [];
+  for (let i = 0; i < positioned.length; i++) {
+    for (let j = i + 1; j < positioned.length; j++) {
+      const a = positioned[i], b = positioned[j];
+      if (near(a.gridX + a.W, b.gridX) || near(b.gridX + b.W, a.gridX)) {
+        const overlapV = Math.min(a.gridY + a.H, b.gridY + b.H) - Math.max(a.gridY, b.gridY);
+        if (overlapV > 0) {
+          cuts.push({ length: overlapV + buf, rawLength: overlapV, source: groupLabel, cutName: `Mull lattice (${a.label}|${b.label})` });
+        }
+      }
+      if (near(a.gridY + a.H, b.gridY) || near(b.gridY + b.H, a.gridY)) {
+        const overlapH = Math.min(a.gridX + a.W, b.gridX + b.W) - Math.max(a.gridX, b.gridX);
+        if (overlapH > 0) {
+          cuts.push({ length: overlapH + buf, rawLength: overlapH, source: groupLabel, cutName: `Mull lattice (${a.label}|${b.label})` });
+        }
+      }
+    }
+  }
+  return cuts.length ? cuts : null;
 }
 
 // ─── BOARD PACKING (buildGlobalMaterialBoards) ──────────────────────────────
@@ -267,17 +365,23 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
     return DEFAULT_STOCK;
   };
 
-  const getCuts = (method: string, H: number, W: number, sillW: number, stoolW: number, isEJ: boolean, deepEJ: boolean, src: string, isDoor: boolean) => {
+  const getCuts = (method: string, H: number, W: number, sillW: number, stoolW: number, isEJ: boolean, deepEJ: boolean, src: string, isDoor: boolean, topBottomOnly?: boolean) => {
     if (method === "1w") return [{ length: W + buf, rawLength: W, source: src, cutName: "1 pc @ width" }];
     if (method === "wph" || method === "WH") {
       if (isEJ) {
-        const c = [
+        return [
           { length: H + buf, rawLength: H, source: src, cutName: "EJ Left" },
           { length: H + buf, rawLength: H, source: src, cutName: "EJ Right" },
           { length: W + buf, rawLength: W, source: src, cutName: "EJ Head" },
+          { length: sillW + buf, rawLength: sillW, source: src, cutName: `EJ Sill${sillW !== W ? " (override)" : ""}` },
         ];
-        if (deepEJ) c.push({ length: sillW + buf, rawLength: sillW, source: src, cutName: `EJ Sill${sillW !== W ? " (override)" : ""}` });
-        return c;
+      }
+      if (topBottomOnly) {
+        if (isDoor) return [{ length: W + buf, rawLength: W, source: src, cutName: "Top" }];
+        return [
+          { length: stoolW + buf, rawLength: stoolW, source: src, cutName: `Top${stoolW !== W ? " (override)" : ""}` },
+          { length: stoolW + buf, rawLength: stoolW, source: src, cutName: `Bottom${stoolW !== W ? " (override)" : ""}` },
+        ];
       }
       if (isDoor) return [
         { length: H + buf, rawLength: H, source: src, cutName: "Left" },
@@ -342,11 +446,13 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       if (incl.length && !incl.includes(unitLabel)) continue;
       const isEJ = catItem.category === "EJ";
       const isCasing = catItem.category === "Casing";
+      const isLattice = catItem.profile === '1/4x1-3/4 Lattice';
       const deepEJ = (u.materialOverrides?.[mat.id]?.deepEJ) ?? mat.deepEJ;
+      const topBottomOnly = (u.materialOverrides?.[mat.id]?.topBottomOnly) ?? mat.topBottomOnly;
       const isDoor = isUnitDoor(u);
 
       const mullGk = mullGroupsByLabel[unitLabel];
-      if (mullGk && (isCasing || isEJ) && !isDoor) {
+      if (mullGk && (isCasing || isEJ || isLattice) && !isDoor) {
         if (mullGroupsProcessed.has(mullGk)) continue;
         mullGroupsProcessed.add(mullGk);
         const layout = mullLayouts[mullGk];
@@ -357,15 +463,24 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
             unitsByLabel[gl] = { W: (gu.widthWhole || 0) + (gu.widthFrac || 0), H: (gu.heightWhole || 0) + (gu.heightFrac || 0) };
           }
         });
-        const mullCuts = computeMullCuts(layout, unitsByLabel, buf, isEJ, deepEJ, isDoor);
-        if (mullCuts && mullCuts.length) cuts.push(...mullCuts);
+        if (isLattice) {
+          const latticeCuts = computeMullLatticeCuts(layout, unitsByLabel, buf);
+          if (latticeCuts && latticeCuts.length) cuts.push(...latticeCuts);
+        } else {
+          const mullCuts = computeMullCuts(layout, unitsByLabel, buf, isEJ, deepEJ, isDoor);
+          if (mullCuts && mullCuts.length) {
+            if (isEJ && !deepEJ) mullCuts.forEach((c: any) => { c._nonDeepEJ = true; });
+            cuts.push(...mullCuts);
+          }
+        }
         continue;
       }
 
       const src = unitLabel + (u.location ? ` (${u.location})` : "");
       const sillW = (u.sillOverrideWhole || 0) + (u.sillOverrideFrac || 0) || W;
       const stoolW = (u.stoolOverrideWhole || 0) + (u.stoolOverrideFrac || 0) || W;
-      const newCuts = getCuts(catItem.calcMethod, H, W, sillW, stoolW, isEJ, deepEJ, src, isDoor);
+      const newCuts = getCuts(catItem.calcMethod, H, W, sillW, stoolW, isEJ, deepEJ, src, isDoor, topBottomOnly);
+      if (isEJ && !deepEJ) newCuts.forEach((c: any) => { c._nonDeepEJ = true; });
       if (doors3pc && isDoor) newCuts.forEach((c: any) => { c._doors3pc = true; });
       cuts.push(...newCuts);
     }
@@ -462,6 +577,33 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       }
     }
 
+    // Non-deep EJ rip: merge pairs of boards (ripping gives 2 halves per board)
+    const ejRipBoards = packed.filter((b: any) => b.cuts.some((c: any) => c._nonDeepEJ));
+    if (ejRipBoards.length > 0) {
+      const otherBoards = packed.filter((b: any) => !b.cuts.some((c: any) => c._nonDeepEJ));
+      const byKey: Record<string, any[]> = {};
+      ejRipBoards.forEach((b: any) => {
+        const src = b.cuts[0]?.source || '';
+        const key = src + '|' + b.stockLength;
+        if (!byKey[key]) byKey[key] = [];
+        byKey[key].push(b);
+      });
+      Object.values(byKey).forEach(group => {
+        for (let i = 0; i < group.length; i += 2) {
+          const a = group[i];
+          const b = group[i + 1];
+          if (b) {
+            a.cuts.push(...b.cuts);
+            a.remaining = Math.min(a.remaining, b.remaining);
+          }
+          a._ejRip = true;
+          otherBoards.push(a);
+        }
+      });
+      packed.length = 0;
+      packed.push(...otherBoards);
+    }
+
     allBoards.push(...packed);
   }
 
@@ -508,6 +650,21 @@ function buildNWOMaterialList(globalMaterials: any[], units: any[], materialCata
         const key = [mat.profile || catItem.profile, mat.species || "", mat.color || "", "exact"].join("|");
         if (!byMat.has(key)) byMat.set(key, { profile: mat.profile || catItem.profile, species: mat.species || "", color: mat.color || "", vendor: mat.vendor || "", category: catItem.category, stockTotals: {}, exactLengths: [] });
         byMat.get(key)!.exactLengths = [...(byMat.get(key)!.exactLengths || []), sillW];
+      }
+    }
+    if (catItem.calcMethod === "archWidth") {
+      for (const u of units) {
+        if (u.isMisc) continue;
+        const lbl = String(u.label || u.id);
+        const excl = mat.excludeUnits || [];
+        const incl = mat.includeUnits || [];
+        if (excl.length && excl.includes(lbl)) continue;
+        if (incl.length && !incl.includes(lbl)) continue;
+        const unitW = (u.widthWhole || 0) + (u.widthFrac || 0);
+        if (!unitW) continue;
+        const key = [mat.profile || catItem.profile, mat.species || "", mat.color || "", "archWidth"].join("|");
+        if (!byMat.has(key)) byMat.set(key, { profile: mat.profile || catItem.profile, species: mat.species || "", color: mat.color || "", vendor: mat.vendor || "", category: catItem.category, stockTotals: {}, exactLengths: [] });
+        byMat.get(key)!.exactLengths = [...(byMat.get(key)!.exactLengths || []), unitW];
       }
     }
     if (catItem.calcMethod === "w+casing") {
