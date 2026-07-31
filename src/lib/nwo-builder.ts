@@ -308,14 +308,38 @@ function computeMullCuts(layout: any[], unitsByLabel: Record<string, { W: number
       cuts.push({ length: e.len + buf, rawLength: e.len, source: groupLabel, cutName: `Bottom (${e.labels.join("+")})` }));
   }
 
-  if (isEJ && !deepEJ) {
-    const halfCount = Math.ceil(cuts.length / 2);
-    const maxLen = Math.max(...cuts.map((c: any) => c.length));
-    return Array.from({ length: halfCount }, (_, i) => ({
-      length: maxLen, rawLength: maxLen - buf, source: groupLabel, cutName: `EJ piece ${i + 1}`, _ejRip: true
-    }));
-  }
   return cuts;
+}
+
+function computeMullLatticeCuts(layout: any[], unitsByLabel: Record<string, { W: number; H: number }>, buf: number) {
+  if (!layout || !layout.length) return null;
+  const positioned = layout.map((t: any) => {
+    const u = unitsByLabel[t.label];
+    if (!u) return null;
+    return { ...t, W: u.W, H: u.H };
+  }).filter(Boolean) as any[];
+  if (positioned.length < 2) return null;
+  const near = (a: number, b: number) => Math.abs(a - b) < 1;
+  const groupLabel = layout.map((t: any) => t.label).join("+");
+  const cuts: any[] = [];
+  for (let i = 0; i < positioned.length; i++) {
+    for (let j = i + 1; j < positioned.length; j++) {
+      const a = positioned[i], b = positioned[j];
+      if (near(a.gridX + a.W, b.gridX) || near(b.gridX + b.W, a.gridX)) {
+        const overlapV = Math.min(a.gridY + a.H, b.gridY + b.H) - Math.max(a.gridY, b.gridY);
+        if (overlapV > 0) {
+          cuts.push({ length: overlapV + buf, rawLength: overlapV, source: groupLabel, cutName: `Mull lattice (${a.label}|${b.label})` });
+        }
+      }
+      if (near(a.gridY + a.H, b.gridY) || near(b.gridY + b.H, a.gridY)) {
+        const overlapH = Math.min(a.gridX + a.W, b.gridX + b.W) - Math.max(a.gridX, b.gridX);
+        if (overlapH > 0) {
+          cuts.push({ length: overlapH + buf, rawLength: overlapH, source: groupLabel, cutName: `Mull lattice (${a.label}|${b.label})` });
+        }
+      }
+    }
+  }
+  return cuts.length ? cuts : null;
 }
 
 // ─── BOARD PACKING (buildGlobalMaterialBoards) ──────────────────────────────
@@ -345,13 +369,12 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
     if (method === "1w") return [{ length: W + buf, rawLength: W, source: src, cutName: "1 pc @ width" }];
     if (method === "wph" || method === "WH") {
       if (isEJ) {
-        const c = [
+        return [
           { length: H + buf, rawLength: H, source: src, cutName: "EJ Left" },
           { length: H + buf, rawLength: H, source: src, cutName: "EJ Right" },
           { length: W + buf, rawLength: W, source: src, cutName: "EJ Head" },
+          { length: sillW + buf, rawLength: sillW, source: src, cutName: `EJ Sill${sillW !== W ? " (override)" : ""}` },
         ];
-        if (deepEJ) c.push({ length: sillW + buf, rawLength: sillW, source: src, cutName: `EJ Sill${sillW !== W ? " (override)" : ""}` });
-        return c;
       }
       if (topBottomOnly) {
         if (isDoor) return [{ length: W + buf, rawLength: W, source: src, cutName: "Top" }];
@@ -423,12 +446,13 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       if (incl.length && !incl.includes(unitLabel)) continue;
       const isEJ = catItem.category === "EJ";
       const isCasing = catItem.category === "Casing";
+      const isLattice = catItem.profile === '1/4x1-3/4 Lattice';
       const deepEJ = (u.materialOverrides?.[mat.id]?.deepEJ) ?? mat.deepEJ;
       const topBottomOnly = (u.materialOverrides?.[mat.id]?.topBottomOnly) ?? mat.topBottomOnly;
       const isDoor = isUnitDoor(u);
 
       const mullGk = mullGroupsByLabel[unitLabel];
-      if (mullGk && (isCasing || isEJ) && !isDoor) {
+      if (mullGk && (isCasing || isEJ || isLattice) && !isDoor) {
         if (mullGroupsProcessed.has(mullGk)) continue;
         mullGroupsProcessed.add(mullGk);
         const layout = mullLayouts[mullGk];
@@ -439,8 +463,16 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
             unitsByLabel[gl] = { W: (gu.widthWhole || 0) + (gu.widthFrac || 0), H: (gu.heightWhole || 0) + (gu.heightFrac || 0) };
           }
         });
-        const mullCuts = computeMullCuts(layout, unitsByLabel, buf, isEJ, deepEJ, isDoor);
-        if (mullCuts && mullCuts.length) cuts.push(...mullCuts);
+        if (isLattice) {
+          const latticeCuts = computeMullLatticeCuts(layout, unitsByLabel, buf);
+          if (latticeCuts && latticeCuts.length) cuts.push(...latticeCuts);
+        } else {
+          const mullCuts = computeMullCuts(layout, unitsByLabel, buf, isEJ, deepEJ, isDoor);
+          if (mullCuts && mullCuts.length) {
+            if (isEJ && !deepEJ) mullCuts.forEach((c: any) => { c._nonDeepEJ = true; });
+            cuts.push(...mullCuts);
+          }
+        }
         continue;
       }
 
@@ -448,6 +480,7 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       const sillW = (u.sillOverrideWhole || 0) + (u.sillOverrideFrac || 0) || W;
       const stoolW = (u.stoolOverrideWhole || 0) + (u.stoolOverrideFrac || 0) || W;
       const newCuts = getCuts(catItem.calcMethod, H, W, sillW, stoolW, isEJ, deepEJ, src, isDoor, topBottomOnly);
+      if (isEJ && !deepEJ) newCuts.forEach((c: any) => { c._nonDeepEJ = true; });
       if (doors3pc && isDoor) newCuts.forEach((c: any) => { c._doors3pc = true; });
       cuts.push(...newCuts);
     }
@@ -542,6 +575,33 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
           }
         }
       }
+    }
+
+    // Non-deep EJ rip: merge pairs of boards (ripping gives 2 halves per board)
+    const ejRipBoards = packed.filter((b: any) => b.cuts.some((c: any) => c._nonDeepEJ));
+    if (ejRipBoards.length > 0) {
+      const otherBoards = packed.filter((b: any) => !b.cuts.some((c: any) => c._nonDeepEJ));
+      const byKey: Record<string, any[]> = {};
+      ejRipBoards.forEach((b: any) => {
+        const src = b.cuts[0]?.source || '';
+        const key = src + '|' + b.stockLength;
+        if (!byKey[key]) byKey[key] = [];
+        byKey[key].push(b);
+      });
+      Object.values(byKey).forEach(group => {
+        for (let i = 0; i < group.length; i += 2) {
+          const a = group[i];
+          const b = group[i + 1];
+          if (b) {
+            a.cuts.push(...b.cuts);
+            a.remaining = Math.min(a.remaining, b.remaining);
+          }
+          a._ejRip = true;
+          otherBoards.push(a);
+        }
+      });
+      packed.length = 0;
+      packed.push(...otherBoards);
     }
 
     allBoards.push(...packed);
