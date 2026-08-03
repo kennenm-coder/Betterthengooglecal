@@ -205,6 +205,7 @@ async function upsertAccountsToSupabase(accounts: AccountRow[]) {
       account_name: a.account_name,
       address: a.address,
       job_close_date: a.job_close_date || "",
+      work_order_type: "Account",
       updated_at: now,
     }));
 

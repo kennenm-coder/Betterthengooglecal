@@ -422,6 +422,7 @@ export async function insertNewAccounts(
       account_name: a.account_name,
       address: a.address,
       job_close_date: a.job_close_date || "",
+      work_order_type: "Account",
       updated_at: now,
     }));
     const { error } = await supabase
