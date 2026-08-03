@@ -321,7 +321,7 @@ function LogTab() {
 
 /* ── Upload Tab ── */
 function UploadTab() {
-  const { orders, lastUpdated, refresh, setOrdersLocal } = useData();
+  const { orders, lastUpdated, refresh } = useData();
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -344,7 +344,6 @@ function UploadTab() {
         return;
       }
 
-      setOrdersLocal(parsed);
       const supaOk = await upsertWorkOrders(parsed);
 
       if (supaOk) {
@@ -354,28 +353,15 @@ function UploadTab() {
           message: `Uploaded ${parsed.length} orders to cloud. Material data will link automatically.`,
         });
       } else {
+        await refresh();
         setResult({
-          success: true,
-          message: `Loaded ${parsed.length} orders locally. (Cloud sync unavailable — data is on this device only.)`,
+          success: false,
+          message: `Cloud sync failed for ${parsed.length} orders. Calendar restored from cloud data.`,
         });
       }
     } catch {
-      try {
-        const text = await file.text();
-        let parsed = parseXlsHtml(text);
-        if (parsed.length === 0) parsed = parseCsv(text);
-        if (parsed.length > 0) {
-          setOrdersLocal(parsed);
-          setResult({
-            success: true,
-            message: `Loaded ${parsed.length} orders locally. (Offline mode — data is on this device only.)`,
-          });
-        } else {
-          setResult({ success: false, message: "Could not parse the file." });
-        }
-      } catch {
-        setResult({ success: false, message: "Failed to read file." });
-      }
+      await refresh();
+      setResult({ success: false, message: "Upload failed. Calendar restored from cloud data." });
     } finally {
       setUploading(false);
     }
