@@ -6,7 +6,10 @@ import {
   saveOrdersLocal,
   loadOrdersLocal,
   getLastUpdated,
-  loadOrdersFromSupabase,
+  loadCurrentAndFuture,
+  loadUnscheduled,
+  loadHistorical,
+  mergeOrders,
   fetchMaterialJobs,
   enrichWithMaterials,
 } from "@/lib/store";
@@ -16,6 +19,7 @@ const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"])
 interface DataContextType {
   orders: WorkOrder[];
   loading: boolean;
+  loadingHistory: boolean;
   lastUpdated: string | null;
   refresh: () => Promise<void>;
   setOrdersLocal: (orders: WorkOrder[]) => void;
@@ -24,6 +28,7 @@ interface DataContextType {
 const DataContext = createContext<DataContextType>({
   orders: [],
   loading: true,
+  loadingHistory: false,
   lastUpdated: null,
   refresh: async () => {},
   setOrdersLocal: () => {},
@@ -36,24 +41,75 @@ export function useData() {
 export default function DataProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const hasHydrated = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const genRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    // Cancel any in-flight refresh
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    const gen = ++genRef.current;
+
+    const stale = () => gen !== genRef.current || ac.signal.aborted;
+
     try {
-      const supaOrders = await loadOrdersFromSupabase();
+      // Phase 1: Current month + future
+      const current = await loadCurrentAndFuture(ac.signal);
+      if (stale()) return;
 
-      // Supabase succeeded (even if empty) — this is the source of truth
-      const visible = supaOrders.filter((o) => CALENDAR_VISIBLE_TYPES.has(o.workOrderType));
       const jobByPO = await fetchMaterialJobs();
-      const enriched = enrichWithMaterials(visible, jobByPO);
+      if (stale()) return;
 
+      const enriched = enrichWithMaterials(current, jobByPO);
       setOrders(enriched);
       saveOrdersLocal(enriched);
       setLastUpdated(new Date().toISOString());
+      setLoading(false);
+      hasHydrated.current = true;
+
+      // Phase 2: Unscheduled work orders
+      try {
+        const unscheduled = await loadUnscheduled(ac.signal);
+        if (stale()) return;
+
+        const enrichedUnsched = enrichWithMaterials(unscheduled, jobByPO);
+        setOrders((prev) => mergeOrders(prev, enrichedUnsched));
+      } catch {
+        // Unscheduled load failed — keep current+future showing
+      }
+
+      // Phase 3: Historical backlog
+      try {
+        setLoadingHistory(true);
+        const historicalBatch: WorkOrder[] = [];
+        await loadHistorical((page) => {
+          if (stale()) return;
+          const enrichedPage = enrichWithMaterials(page, jobByPO);
+          historicalBatch.push(...enrichedPage);
+        }, ac.signal);
+
+        if (!stale() && historicalBatch.length > 0) {
+          setOrders((prev) => mergeOrders(prev, historicalBatch));
+        }
+      } catch {
+        // Historical load failed — keep current+future+unscheduled showing
+      } finally {
+        if (!stale()) {
+          setLoadingHistory(false);
+          // Save complete dataset to localStorage once
+          setOrders((prev) => {
+            saveOrdersLocal(prev);
+            return prev;
+          });
+        }
+      }
     } catch {
-      // Supabase truly unreachable — only then use localStorage as read-only fallback
-      // Do NOT fall through to /api/orders (it may serve a stale SW-cached response)
+      if (stale()) return;
+      // Phase 1 failed — fall back to localStorage
       if (!hasHydrated.current) {
         const local = loadOrdersLocal();
         if (local.length > 0) {
@@ -61,7 +117,11 @@ export default function DataProvider({ children }: { children: ReactNode }) {
           setLastUpdated(getLastUpdated());
         }
       }
-      // If we already have data loaded, keep showing it rather than overwriting with stale data
+    } finally {
+      if (!stale()) {
+        setLoading(false);
+        hasHydrated.current = true;
+      }
     }
   }, []);
 
@@ -73,8 +133,6 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Only show cached data if it's less than 5 minutes old — stale cache
-    // flashes wrong appointment times on mobile before Supabase replaces it
     const cached = getLastUpdated();
     const cacheAge = cached ? Date.now() - new Date(cached).getTime() : Infinity;
     const FIVE_MINUTES = 5 * 60 * 1000;
@@ -89,14 +147,15 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    refresh().finally(() => {
-      hasHydrated.current = true;
-      setLoading(false);
-    });
+    refresh();
+
+    return () => {
+      abortRef.current?.abort();
+    };
   }, [refresh]);
 
   return (
-    <DataContext.Provider value={{ orders, loading, lastUpdated, refresh, setOrdersLocal: setOrdersLocalFn }}>
+    <DataContext.Provider value={{ orders, loading, loadingHistory, lastUpdated, refresh, setOrdersLocal: setOrdersLocalFn }}>
       {children}
     </DataContext.Provider>
   );
