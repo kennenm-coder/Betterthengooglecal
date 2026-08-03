@@ -19,7 +19,14 @@ export interface WorkOrder {
   phones: PhoneEntry[];
   serviceDescription: string;
   primaryResource: string;
-  workOrderType: "Install" | "Service" | "Job Site Visit";
+  workOrderType: string;
+  description: string;
+  combinedRetailTotal: number;
+  productCount: number;
+  totalUnits: number;
+  windows: number;
+  patioDoors: number;
+  doors: number;
   materialJob?: MaterialJobData | null;
 }
 

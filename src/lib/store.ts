@@ -50,6 +50,13 @@ interface WorkOrderRow {
   phones: any;
   service_description: string;
   primary_resource: string;
+  description: string;
+  combined_retail_total: number;
+  product_count: number;
+  total_units: number;
+  windows: number;
+  patio_doors: number;
+  doors: number;
   uploaded_at: string;
   updated_at: string;
 }
@@ -71,7 +78,7 @@ function rowToWorkOrder(row: WorkOrderRow): WorkOrder {
     bookingDate: row.booking_date,
     scheduledStart: stripUtcSuffix(row.scheduled_start),
     scheduledEnd: stripUtcSuffix(row.scheduled_end),
-    workOrderType: (row.work_order_type as WorkOrder["workOrderType"]) || "Install",
+    workOrderType: row.work_order_type || "Install",
     orderOwner: row.order_owner || "",
     salesRep: row.sales_rep || "",
     techMeasure: row.tech_measure || "",
@@ -82,6 +89,13 @@ function rowToWorkOrder(row: WorkOrderRow): WorkOrder {
     phones: row.phones || [],
     serviceDescription: row.service_description || "",
     primaryResource: row.primary_resource || "",
+    description: row.description || "",
+    combinedRetailTotal: row.combined_retail_total || 0,
+    productCount: row.product_count || 0,
+    totalUnits: row.total_units || 0,
+    windows: row.windows || 0,
+    patioDoors: row.patio_doors || 0,
+    doors: row.doors || 0,
   };
 }
 
@@ -108,6 +122,13 @@ function workOrderToRow(wo: WorkOrder) {
     phones: wo.phones,
     service_description: wo.serviceDescription || "",
     primary_resource: wo.primaryResource || "",
+    description: wo.description || "",
+    combined_retail_total: wo.combinedRetailTotal || 0,
+    product_count: wo.productCount || 0,
+    total_units: wo.totalUnits || 0,
+    windows: wo.windows || 0,
+    patio_doors: wo.patioDoors || 0,
+    doors: wo.doors || 0,
     updated_at: new Date().toISOString(),
   };
 }
