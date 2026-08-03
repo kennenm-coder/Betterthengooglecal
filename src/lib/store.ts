@@ -398,6 +398,42 @@ export async function upsertAccountNames(
   return { updated, skipped };
 }
 
+// --- Account-name-only insert (client-side, skips existing) ---
+
+export async function insertNewAccounts(
+  accounts: { account_name: string; address: string; job_close_date: string }[],
+  onProgress?: (done: number, total: number) => void
+): Promise<{ inserted: number; total: number }> {
+  const supabase = getSupabase();
+  if (!supabase) return { inserted: 0, total: 0 };
+
+  const deduped = new Map<string, (typeof accounts)[0]>();
+  for (const a of accounts) {
+    if (a.account_name) deduped.set(a.account_name, a);
+  }
+  const unique = Array.from(deduped.values());
+  const now = new Date().toISOString();
+
+  let inserted = 0;
+  const BATCH = 500;
+  for (let i = 0; i < unique.length; i += BATCH) {
+    const chunk = unique.slice(i, i + BATCH).map((a) => ({
+      id: a.account_name,
+      account_name: a.account_name,
+      address: a.address,
+      job_close_date: a.job_close_date || "",
+      updated_at: now,
+    }));
+    const { error } = await supabase
+      .from("work_orders")
+      .upsert(chunk, { onConflict: "id", ignoreDuplicates: true });
+    if (!error) inserted += chunk.length;
+    onProgress?.(Math.min(i + BATCH, unique.length), unique.length);
+  }
+
+  return { inserted, total: unique.length };
+}
+
 // --- Upload / upsert ---
 
 export async function upsertWorkOrders(orders: WorkOrder[]): Promise<boolean> {

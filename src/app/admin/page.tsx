@@ -4,7 +4,8 @@ import { useState, useRef, useEffect } from "react";
 import { useData } from "@/components/DataProvider";
 import { parseXlsHtml } from "@/lib/parse-xls";
 import { parseCsv } from "@/lib/parse-csv";
-import { upsertWorkOrders } from "@/lib/store";
+import { upsertWorkOrders, insertNewAccounts } from "@/lib/store";
+import { parseAccountsCsv, isAccountsCsv } from "@/lib/parse-accounts-csv";
 import {
   getActionTypes,
   setActionTypes,
@@ -380,32 +381,27 @@ function UploadTab() {
     setAcctResult(null);
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-      const json = await res.json();
-
-      if (!res.ok || !json.success) {
-        setAcctResult({ success: false, message: json.error || "Upload failed." });
+      const text = await file.text();
+      if (!isAccountsCsv(text)) {
+        setAcctResult({ success: false, message: "Not an accounts CSV. Needs 'Account Name' column." });
+        return;
+      }
+      const accounts = parseAccountsCsv(text);
+      if (accounts.length === 0) {
+        setAcctResult({ success: false, message: "No account names found in file." });
         return;
       }
 
-      await refresh();
-      if (json.format === "accounts_csv") {
-        setAcctResult({
-          success: true,
-          message: `Updated ${json.updated} account names, inserted ${json.inserted} new records (${json.parsed} total in file).`,
-        });
-      } else {
-        setAcctResult({
-          success: true,
-          message: `Uploaded ${json.upserted} work orders to cloud.`,
-        });
-      }
+      setAcctResult({ success: true, message: `Parsing ${accounts.length} accounts...` });
+
+      const { inserted, total } = await insertNewAccounts(accounts, (done, all) => {
+        setAcctResult({ success: true, message: `Processing ${done} / ${all} accounts...` });
+      });
+
+      setAcctResult({
+        success: true,
+        message: `Done — ${total} unique accounts processed, new ones added, existing skipped.`,
+      });
     } catch {
       setAcctResult({ success: false, message: "Account name upload failed." });
     } finally {
