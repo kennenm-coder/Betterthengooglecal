@@ -1,43 +1,45 @@
 import { WorkOrder, MaterialJobData } from "./types";
 import { getSupabase } from "./supabase";
 
+// --- Constants ---
+
 const STORAGE_KEY = "rba-field-cal-data";
+const STORAGE_TMP_KEY = "rba-field-cal-data-tmp";
 const TIMESTAMP_KEY = "rba-field-cal-updated";
+const CACHE_META_KEY = "rba-field-cal-meta";
+const VISIBLE_TYPES = ["Install", "Service", "Job Site Visit"];
+const PAGE_SIZE = 1000;
+const WINDOW_DAYS = 90;
 
-export function saveOrdersLocal(orders: WorkOrder[]): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
-    localStorage.setItem(TIMESTAMP_KEY, new Date().toISOString());
-  } catch {
-    // localStorage quota exceeded — clear stale data and retry once
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
-      localStorage.setItem(TIMESTAMP_KEY, new Date().toISOString());
-    } catch {
-      // Still too large — skip local caching
+// --- Date utilities ---
+
+function toISODate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+export function getInitialWindow(): { start: string; end: string } {
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(start.getDate() - WINDOW_DAYS);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(today);
+  end.setDate(end.getDate() + WINDOW_DAYS);
+  end.setHours(23, 59, 59, 999);
+  return { start: toISODate(start), end: toISODate(end) };
+}
+
+export function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(() => resolve());
+    } else {
+      setTimeout(resolve, 16);
     }
-  }
+  });
 }
 
-export function loadOrdersLocal(): WorkOrder[] {
-  if (typeof window === "undefined") return [];
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-export function getLastUpdated(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(TIMESTAMP_KEY);
-}
-
-// --- Supabase: work_orders table ---
+// --- Row mapping ---
 
 interface WorkOrderRow {
   id: string;
@@ -150,23 +152,64 @@ function workOrderToRow(wo: WorkOrder) {
   };
 }
 
-const VISIBLE_TYPES = ["Install", "Service", "Job Site Visit"];
-const PAGE_SIZE = 1000;
+// --- Bounded offline cache ---
 
-function startOfCurrentMonth(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01T00:00:00`;
+export function saveBoundedCache(allOrders: WorkOrder[]): void {
+  if (typeof window === "undefined") return;
+  const { start, end } = getInitialWindow();
+  const bounded = allOrders.filter((o) => {
+    if (!o.scheduledStart) return true;
+    return o.scheduledStart >= start && o.scheduledStart <= end;
+  });
+
+  const json = JSON.stringify(bounded);
+  try {
+    localStorage.setItem(STORAGE_TMP_KEY, json);
+    const check = localStorage.getItem(STORAGE_TMP_KEY);
+    if (!check || check.length !== json.length) {
+      localStorage.removeItem(STORAGE_TMP_KEY);
+      return;
+    }
+    localStorage.setItem(STORAGE_KEY, json);
+    localStorage.removeItem(STORAGE_TMP_KEY);
+    localStorage.setItem(TIMESTAMP_KEY, new Date().toISOString());
+    localStorage.setItem(CACHE_META_KEY, JSON.stringify({ start, end }));
+  } catch {
+    try { localStorage.removeItem(STORAGE_TMP_KEY); } catch { /* noop */ }
+  }
 }
 
+export function loadBoundedCache(): WorkOrder[] {
+  if (typeof window === "undefined") return [];
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+export function getLastUpdated(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(TIMESTAMP_KEY);
+}
+
+// Keep old names for backward compatibility
+export const saveOrdersLocal = saveBoundedCache;
+export const loadOrdersLocal = loadBoundedCache;
+
+// --- Paginated Supabase helpers ---
+
 async function paginatedQuery(
-  query: any,
+  baseBuilder: () => any,
   signal?: AbortSignal
 ): Promise<WorkOrderRow[]> {
   const rows: WorkOrderRow[] = [];
   let offset = 0;
   while (true) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const { data, error } = await query.range(offset, offset + PAGE_SIZE - 1);
+    const { data, error } = await baseBuilder().range(offset, offset + PAGE_SIZE - 1);
     if (error || !data) break;
     rows.push(...data);
     if (data.length < PAGE_SIZE) break;
@@ -175,37 +218,79 @@ async function paginatedQuery(
   return rows;
 }
 
-export async function loadCurrentAndFuture(signal?: AbortSignal): Promise<WorkOrder[]> {
+// --- Phase 1: Initial ±90-day window ---
+
+export async function loadInitialWindow(signal?: AbortSignal): Promise<WorkOrder[]> {
   const supabase = getSupabase();
   if (!supabase) return [];
 
-  const boundary = startOfCurrentMonth();
-  const query = supabase
-    .from("work_orders")
-    .select("*")
-    .gte("scheduled_start", boundary)
-    .in("work_order_type", VISIBLE_TYPES)
-    .order("scheduled_start", { ascending: true })
-    .order("id", { ascending: true });
-
-  const rows = await paginatedQuery(query, signal);
+  const { start, end } = getInitialWindow();
+  const rows = await paginatedQuery(
+    () =>
+      supabase
+        .from("work_orders")
+        .select("*")
+        .gte("scheduled_start", start)
+        .lte("scheduled_start", end)
+        .in("work_order_type", VISIBLE_TYPES)
+        .order("scheduled_start", { ascending: true })
+        .order("id", { ascending: true }),
+    signal
+  );
   return rows.map(rowToWorkOrder);
 }
+
+// --- Phase A: Unscheduled work orders ---
 
 export async function loadUnscheduled(signal?: AbortSignal): Promise<WorkOrder[]> {
   const supabase = getSupabase();
   if (!supabase) return [];
 
-  const query = supabase
-    .from("work_orders")
-    .select("*")
-    .is("scheduled_start", null)
-    .in("work_order_type", VISIBLE_TYPES)
-    .order("id", { ascending: true });
-
-  const rows = await paginatedQuery(query, signal);
+  const rows = await paginatedQuery(
+    () =>
+      supabase
+        .from("work_orders")
+        .select("*")
+        .is("scheduled_start", null)
+        .in("work_order_type", VISIBLE_TYPES)
+        .order("id", { ascending: true }),
+    signal
+  );
   return rows.map(rowToWorkOrder);
 }
+
+// --- Phase B: Future beyond initial window ---
+
+export async function loadFutureExtended(
+  onPage: (orders: WorkOrder[]) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) return;
+
+  const { end } = getInitialWindow();
+  let offset = 0;
+  while (true) {
+    if (signal?.aborted) return;
+    await yieldToMain();
+    if (signal?.aborted) return;
+    const { data, error } = await supabase
+      .from("work_orders")
+      .select("*")
+      .gt("scheduled_start", end)
+      .in("work_order_type", VISIBLE_TYPES)
+      .order("scheduled_start", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (error || !data || data.length === 0) break;
+    onPage(data.map(rowToWorkOrder));
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+}
+
+// --- Phase C: Historical backlog ---
 
 export async function loadHistorical(
   onPage: (orders: WorkOrder[]) => void,
@@ -214,14 +299,16 @@ export async function loadHistorical(
   const supabase = getSupabase();
   if (!supabase) return;
 
-  const boundary = startOfCurrentMonth();
+  const { start } = getInitialWindow();
   let offset = 0;
   while (true) {
+    if (signal?.aborted) return;
+    await yieldToMain();
     if (signal?.aborted) return;
     const { data, error } = await supabase
       .from("work_orders")
       .select("*")
-      .lt("scheduled_start", boundary)
+      .lt("scheduled_start", start)
       .in("work_order_type", VISIBLE_TYPES)
       .order("scheduled_start", { ascending: false })
       .order("id", { ascending: true })
@@ -234,6 +321,39 @@ export async function loadHistorical(
   }
 }
 
+// --- On-demand month loading ---
+
+export async function loadMonth(
+  year: number,
+  month: number,
+  signal?: AbortSignal
+): Promise<WorkOrder[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const start = `${year}-${pad(month)}-01T00:00:00`;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  const end = `${nextYear}-${pad(nextMonth)}-01T00:00:00`;
+
+  const rows = await paginatedQuery(
+    () =>
+      supabase
+        .from("work_orders")
+        .select("*")
+        .gte("scheduled_start", start)
+        .lt("scheduled_start", end)
+        .in("work_order_type", VISIBLE_TYPES)
+        .order("scheduled_start", { ascending: true })
+        .order("id", { ascending: true }),
+    signal
+  );
+  return rows.map(rowToWorkOrder);
+}
+
+// --- Merge utility ---
+
 export function mergeOrders(existing: WorkOrder[], incoming: WorkOrder[]): WorkOrder[] {
   const map = new Map<string, WorkOrder>();
   for (const o of existing) map.set(o.id, o);
@@ -241,19 +361,7 @@ export function mergeOrders(existing: WorkOrder[], incoming: WorkOrder[]): WorkO
   return Array.from(map.values());
 }
 
-export async function loadOrdersFromSupabase(): Promise<WorkOrder[]> {
-  const supabase = getSupabase();
-  if (!supabase) return [];
-
-  const { data, error } = await supabase
-    .from("work_orders")
-    .select("*")
-    .order("scheduled_start", { ascending: true })
-    .range(0, 49999);
-
-  if (error || !data) return [];
-  return data.map(rowToWorkOrder);
-}
+// --- Upload / upsert ---
 
 export async function upsertWorkOrders(orders: WorkOrder[]): Promise<boolean> {
   const supabase = getSupabase();
@@ -271,15 +379,14 @@ export async function upsertWorkOrders(orders: WorkOrder[]): Promise<boolean> {
   return true;
 }
 
+// --- Material jobs ---
+
 export async function fetchMaterialJobs(): Promise<Map<string, any>> {
   const jobByPO = new Map<string, any>();
   const supabase = getSupabase();
   if (!supabase) return jobByPO;
 
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("id, data");
-
+  const { data, error } = await supabase.from("jobs").select("id, data");
   if (error || !data) return jobByPO;
 
   for (const row of data) {
@@ -331,7 +438,6 @@ export async function fetchAllMaterialJobs(): Promise<MaterialJobData[]> {
   if (!supabase) return [];
 
   const { data, error } = await supabase.from("jobs").select("id, data");
-
   if (error || !data) return [];
 
   const jobs: MaterialJobData[] = [];
@@ -369,5 +475,5 @@ export async function fetchAllMaterialJobs(): Promise<MaterialJobData[]> {
   return jobs;
 }
 
-export const saveOrders = saveOrdersLocal;
-export const loadOrders = loadOrdersLocal;
+export const saveOrders = saveBoundedCache;
+export const loadOrders = loadBoundedCache;

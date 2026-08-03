@@ -25,7 +25,7 @@ export default function CalendarPageWrapper() {
 }
 
 function CalendarPage() {
-  const { orders, loading, refresh } = useData();
+  const { orders, loading, loadingBackground, refresh, ensureDateLoaded } = useData();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
@@ -82,6 +82,10 @@ function CalendarPage() {
       window.history.replaceState(null, "", "/");
     }
   }, [searchParams, orders]);
+
+  useEffect(() => {
+    ensureDateLoaded(currentDate);
+  }, [currentDate, ensureDateLoaded]);
 
   const filteredOrders = useMemo(() => applyFilters(orders, filters), [orders, filters]);
 
@@ -194,6 +198,12 @@ function CalendarPage() {
       </header>
 
       <TimeOffBanner requests={timeOffRequests} date={currentDate} />
+
+      {loadingBackground && (
+        <div className="bg-surface/80 text-muted text-xs text-center py-1 border-b border-border">
+          Updating additional appointments…
+        </div>
+      )}
 
       {showPinModal && (
         <PinModal
