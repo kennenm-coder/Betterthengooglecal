@@ -3,15 +3,18 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { WorkOrder } from "@/lib/types";
 import {
-  saveOrdersLocal,
-  loadOrdersLocal,
+  saveBoundedCache,
+  loadBoundedCache,
   getLastUpdated,
-  loadCurrentAndFuture,
+  loadInitialWindow,
   loadUnscheduled,
+  loadFutureExtended,
   loadHistorical,
+  loadMonth,
   mergeOrders,
   fetchMaterialJobs,
   enrichWithMaterials,
+  yieldToMain,
 } from "@/lib/store";
 
 const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"]);
@@ -19,132 +22,213 @@ const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"])
 interface DataContextType {
   orders: WorkOrder[];
   loading: boolean;
-  loadingHistory: boolean;
+  loadingBackground: boolean;
   lastUpdated: string | null;
   refresh: () => Promise<void>;
   setOrdersLocal: (orders: WorkOrder[]) => void;
+  ensureDateLoaded: (date: Date) => void;
 }
 
 const DataContext = createContext<DataContextType>({
   orders: [],
   loading: true,
-  loadingHistory: false,
+  loadingBackground: false,
   lastUpdated: null,
   refresh: async () => {},
   setOrdersLocal: () => {},
+  ensureDateLoaded: () => {},
 });
 
 export function useData() {
   return useContext(DataContext);
 }
 
+function monthKey(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+function getMonthsInRange(start: string, end: string): Set<string> {
+  const months = new Set<string>();
+  const s = new Date(start);
+  const e = new Date(end);
+  const cur = new Date(s.getFullYear(), s.getMonth(), 1);
+  while (cur <= e) {
+    months.add(monthKey(cur.getFullYear(), cur.getMonth() + 1));
+    cur.setMonth(cur.getMonth() + 1);
+  }
+  return months;
+}
+
 export default function DataProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingBackground, setLoadingBackground] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
-  const hasHydrated = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const genRef = useRef(0);
+  const loadedMonthsRef = useRef<Set<string>>(new Set());
+  const monthLoadingRef = useRef<Set<string>>(new Set());
+  const jobByPORef = useRef<Map<string, any>>(new Map());
 
   const refresh = useCallback(async () => {
-    // Cancel any in-flight refresh
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
     const gen = ++genRef.current;
-
     const stale = () => gen !== genRef.current || ac.signal.aborted;
 
     try {
-      // Phase 1: Current month + future
-      const current = await loadCurrentAndFuture(ac.signal);
+      // Phase 1: Load ±90-day window
+      const initial = await loadInitialWindow(ac.signal);
       if (stale()) return;
 
-      const jobByPO = await fetchMaterialJobs();
-      if (stale()) return;
-
-      const enriched = enrichWithMaterials(current, jobByPO);
-      setOrders(enriched);
-      saveOrdersLocal(enriched);
-      setLastUpdated(new Date().toISOString());
+      setOrders(initial);
       setLoading(false);
-      hasHydrated.current = true;
+      setLastUpdated(new Date().toISOString());
 
-      // Phase 2: Unscheduled work orders
+      // Mark initial months as loaded
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(start.getDate() - 90);
+      const end = new Date(today);
+      end.setDate(end.getDate() + 90);
+      const initialMonths = getMonthsInRange(start.toISOString(), end.toISOString());
+      loadedMonthsRef.current = initialMonths;
+
+      // Save bounded cache immediately
+      saveBoundedCache(initial);
+
+      // Fetch material jobs (don't block initial render)
       try {
+        const jobByPO = await fetchMaterialJobs();
+        if (stale()) return;
+        jobByPORef.current = jobByPO;
+        const enriched = enrichWithMaterials(initial, jobByPO);
+        setOrders(enriched);
+        saveBoundedCache(enriched);
+      } catch {
+        // Material enrichment failed — calendar still works without it
+      }
+
+      // Background phases
+      setLoadingBackground(true);
+
+      // Phase A: Unscheduled
+      try {
+        await yieldToMain();
+        if (stale()) return;
         const unscheduled = await loadUnscheduled(ac.signal);
         if (stale()) return;
-
-        const enrichedUnsched = enrichWithMaterials(unscheduled, jobByPO);
+        const enrichedUnsched = jobByPORef.current.size > 0
+          ? enrichWithMaterials(unscheduled, jobByPORef.current)
+          : unscheduled;
         setOrders((prev) => mergeOrders(prev, enrichedUnsched));
+        // Update cache with unscheduled included
+        setOrders((prev) => {
+          saveBoundedCache(prev);
+          return prev;
+        });
       } catch {
-        // Unscheduled load failed — keep current+future showing
+        // Keep showing what we have
       }
 
-      // Phase 3: Historical backlog
+      // Phase B: Future beyond +90 days
       try {
-        setLoadingHistory(true);
-        const historicalBatch: WorkOrder[] = [];
+        await loadFutureExtended((page) => {
+          if (stale()) return;
+          const enrichedPage = jobByPORef.current.size > 0
+            ? enrichWithMaterials(page, jobByPORef.current)
+            : page;
+          setOrders((prev) => mergeOrders(prev, enrichedPage));
+          // Mark months as loaded
+          for (const o of page) {
+            if (o.scheduledStart) {
+              const d = new Date(o.scheduledStart);
+              loadedMonthsRef.current.add(monthKey(d.getFullYear(), d.getMonth() + 1));
+            }
+          }
+        }, ac.signal);
+      } catch {
+        // Keep showing what we have
+      }
+
+      // Phase C: Historical
+      try {
         await loadHistorical((page) => {
           if (stale()) return;
-          const enrichedPage = enrichWithMaterials(page, jobByPO);
-          historicalBatch.push(...enrichedPage);
+          const enrichedPage = jobByPORef.current.size > 0
+            ? enrichWithMaterials(page, jobByPORef.current)
+            : page;
+          setOrders((prev) => mergeOrders(prev, enrichedPage));
+          for (const o of page) {
+            if (o.scheduledStart) {
+              const d = new Date(o.scheduledStart);
+              loadedMonthsRef.current.add(monthKey(d.getFullYear(), d.getMonth() + 1));
+            }
+          }
         }, ac.signal);
-
-        if (!stale() && historicalBatch.length > 0) {
-          setOrders((prev) => mergeOrders(prev, historicalBatch));
-        }
       } catch {
-        // Historical load failed — keep current+future+unscheduled showing
-      } finally {
-        if (!stale()) {
-          setLoadingHistory(false);
-          // Save complete dataset to localStorage once
-          setOrders((prev) => {
-            saveOrdersLocal(prev);
-            return prev;
-          });
-        }
+        // Keep showing what we have
       }
-    } catch {
+
+      if (!stale()) {
+        setLoadingBackground(false);
+      }
+    } catch (err) {
       if (stale()) return;
-      // Phase 1 failed — fall back to localStorage
-      if (!hasHydrated.current) {
-        const local = loadOrdersLocal();
-        if (local.length > 0) {
-          setOrders(local);
-          setLastUpdated(getLastUpdated());
-        }
+      // Phase 1 failed — use cache
+      const cached = loadBoundedCache();
+      if (cached.length > 0) {
+        setOrders(cached);
+        setLastUpdated(getLastUpdated());
       }
     } finally {
       if (!stale()) {
         setLoading(false);
-        hasHydrated.current = true;
       }
     }
+  }, []);
+
+  const ensureDateLoaded = useCallback((date: Date) => {
+    const key = monthKey(date.getFullYear(), date.getMonth() + 1);
+    if (loadedMonthsRef.current.has(key)) return;
+    if (monthLoadingRef.current.has(key)) return;
+
+    monthLoadingRef.current.add(key);
+    const ac = abortRef.current;
+
+    loadMonth(date.getFullYear(), date.getMonth() + 1, ac?.signal)
+      .then((monthOrders) => {
+        if (ac?.signal.aborted) return;
+        const enriched = jobByPORef.current.size > 0
+          ? enrichWithMaterials(monthOrders, jobByPORef.current)
+          : monthOrders;
+        setOrders((prev) => mergeOrders(prev, enriched));
+        loadedMonthsRef.current.add(key);
+      })
+      .catch(() => {
+        // Failed to load month — will retry on next navigation
+      })
+      .finally(() => {
+        monthLoadingRef.current.delete(key);
+      });
   }, []);
 
   const setOrdersLocalFn = useCallback((newOrders: WorkOrder[]) => {
     const visible = newOrders.filter((o) => CALENDAR_VISIBLE_TYPES.has(o.workOrderType));
     setOrders(visible);
-    saveOrdersLocal(visible);
+    saveBoundedCache(visible);
     setLastUpdated(new Date().toISOString());
   }, []);
 
   useEffect(() => {
-    const cached = getLastUpdated();
-    const cacheAge = cached ? Date.now() - new Date(cached).getTime() : Infinity;
-    const FIVE_MINUTES = 5 * 60 * 1000;
-
-    if (cacheAge < FIVE_MINUTES) {
-      const local = loadOrdersLocal();
-      if (local.length > 0) {
-        setOrders(local);
-        setLastUpdated(cached);
-        setLoading(false);
-        hasHydrated.current = true;
-      }
+    // Hydrate from cache immediately
+    const cached = loadBoundedCache();
+    const cachedTs = getLastUpdated();
+    if (cached.length > 0) {
+      setOrders(cached);
+      setLastUpdated(cachedTs);
+      setLoading(false);
     }
 
     refresh();
@@ -155,7 +239,17 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   return (
-    <DataContext.Provider value={{ orders, loading, loadingHistory, lastUpdated, refresh, setOrdersLocal: setOrdersLocalFn }}>
+    <DataContext.Provider
+      value={{
+        orders,
+        loading,
+        loadingBackground,
+        lastUpdated,
+        refresh,
+        setOrdersLocal: setOrdersLocalFn,
+        ensureDateLoaded,
+      }}
+    >
       {children}
     </DataContext.Provider>
   );
