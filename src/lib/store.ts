@@ -157,7 +157,8 @@ export async function loadOrdersFromSupabase(): Promise<WorkOrder[]> {
   const { data, error } = await supabase
     .from("work_orders")
     .select("*")
-    .order("scheduled_start", { ascending: true });
+    .order("scheduled_start", { ascending: true })
+    .range(0, 49999);
 
   if (error || !data) return [];
   return data.map(rowToWorkOrder);
