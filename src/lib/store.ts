@@ -6,8 +6,19 @@ const TIMESTAMP_KEY = "rba-field-cal-updated";
 
 export function saveOrdersLocal(orders: WorkOrder[]): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
-  localStorage.setItem(TIMESTAMP_KEY, new Date().toISOString());
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+    localStorage.setItem(TIMESTAMP_KEY, new Date().toISOString());
+  } catch {
+    // localStorage quota exceeded — clear stale data and retry once
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
+      localStorage.setItem(TIMESTAMP_KEY, new Date().toISOString());
+    } catch {
+      // Still too large — skip local caching
+    }
+  }
 }
 
 export function loadOrdersLocal(): WorkOrder[] {
@@ -157,10 +168,15 @@ export async function upsertWorkOrders(orders: WorkOrder[]): Promise<boolean> {
   if (!supabase) return false;
 
   const rows = orders.map(workOrderToRow);
-  const { error } = await supabase
-    .from("work_orders")
-    .upsert(rows, { onConflict: "id" });
-  return !error;
+  const BATCH = 500;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const chunk = rows.slice(i, i + BATCH);
+    const { error } = await supabase
+      .from("work_orders")
+      .upsert(chunk, { onConflict: "id" });
+    if (error) return false;
+  }
+  return true;
 }
 
 export async function fetchMaterialJobs(): Promise<Map<string, any>> {

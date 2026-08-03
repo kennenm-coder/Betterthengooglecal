@@ -66,8 +66,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setOrdersLocalFn = useCallback((newOrders: WorkOrder[]) => {
-    setOrders(newOrders);
-    saveOrdersLocal(newOrders);
+    const visible = newOrders.filter((o) => CALENDAR_VISIBLE_TYPES.has(o.workOrderType));
+    setOrders(visible);
+    saveOrdersLocal(visible);
     setLastUpdated(new Date().toISOString());
   }, []);
 
