@@ -164,95 +164,43 @@ async function upsertAccountsToSupabase(accounts: AccountRow[]) {
   const supabase = createClient(SUPA_URL, SUPA_KEY);
   const now = new Date().toISOString();
 
-  // Split into accounts WITH order numbers (may match existing rows) and WITHOUT
-  const withOrder = accounts.filter((a) => a.order_number);
-  const withoutOrder = accounts.filter((a) => !a.order_number);
+  // Deduplicate input by account_name — last occurrence wins
+  const deduped = new Map<string, AccountRow>();
+  for (const a of accounts) {
+    if (a.account_name) deduped.set(a.account_name, a);
+  }
+  const unique = Array.from(deduped.values());
 
   let updated = 0;
   let inserted = 0;
 
-  // For accounts WITH order numbers: update account_name on existing rows (only if empty)
+  // Accounts WITH order numbers: update account_name on matching existing work orders
+  const withOrder = unique.filter((a) => a.order_number);
   if (withOrder.length > 0) {
-    const BATCH = 200;
-    for (let i = 0; i < withOrder.length; i += BATCH) {
-      const chunk = withOrder.slice(i, i + BATCH);
-      const orderNums = chunk.map((a) => a.order_number);
-
-      // Find existing rows with these order numbers
+    for (const acct of withOrder) {
       const { data: existing } = await supabase
         .from("work_orders")
-        .select("id, order_number, account_name, job_close_date")
-        .in("order_number", orderNums);
+        .select("id, account_name")
+        .eq("order_number", acct.order_number);
 
-      const existingByOrder = new Map<string, any[]>();
-      for (const row of existing || []) {
-        const list = existingByOrder.get(row.order_number) || [];
-        list.push(row);
-        existingByOrder.set(row.order_number, list);
-      }
-
-      // Update existing rows where account_name is empty
-      const updates: { id: string; account_name: string; job_close_date: string }[] = [];
-      const newRows: any[] = [];
-
-      for (const acct of chunk) {
-        const matches = existingByOrder.get(acct.order_number);
-        if (matches && matches.length > 0) {
-          for (const match of matches) {
-            if (!match.account_name && acct.account_name) {
-              updates.push({
-                id: match.id,
-                account_name: acct.account_name,
-                job_close_date: match.job_close_date || acct.job_close_date || "",
-              });
-            } else if (!match.job_close_date && acct.job_close_date) {
-              updates.push({
-                id: match.id,
-                account_name: match.account_name || acct.account_name,
-                job_close_date: acct.job_close_date,
-              });
-            }
+      if (existing && existing.length > 0) {
+        for (const row of existing) {
+          if (!row.account_name) {
+            await supabase
+              .from("work_orders")
+              .update({ account_name: acct.account_name, updated_at: now })
+              .eq("id", row.id);
+            updated++;
           }
-        } else {
-          // No existing row for this order — insert as new
-          newRows.push({
-            id: acct.account_name || `acct-${acct.order_number}`,
-            order_number: acct.order_number,
-            account_name: acct.account_name,
-            address: acct.address,
-            job_close_date: acct.job_close_date || "",
-            updated_at: now,
-          });
         }
-      }
-
-      // Apply updates
-      for (const upd of updates) {
-        await supabase
-          .from("work_orders")
-          .update({ account_name: upd.account_name, job_close_date: upd.job_close_date })
-          .eq("id", upd.id);
-        updated++;
-      }
-
-      // Insert new rows
-      if (newRows.length > 0) {
-        const { error } = await supabase
-          .from("work_orders")
-          .upsert(newRows, { onConflict: "id" });
-        if (error) {
-          throw new Error(`Accounts upsert failed: ${error.message}`);
-        }
-        inserted += newRows.length;
       }
     }
   }
 
-  // For accounts WITHOUT order numbers: insert with account_name as id
+  // Accounts WITHOUT order numbers: insert as new rows, skip if already exists
+  const withoutOrder = unique.filter((a) => !a.order_number);
   if (withoutOrder.length > 0) {
-    const deduped = new Map<string, typeof withoutOrder[0]>();
-    for (const a of withoutOrder) deduped.set(a.account_name, a);
-    const rows = Array.from(deduped.values()).map((a) => ({
+    const rows = withoutOrder.map((a) => ({
       id: a.account_name,
       account_name: a.account_name,
       address: a.address,
@@ -263,11 +211,9 @@ async function upsertAccountsToSupabase(accounts: AccountRow[]) {
     const BATCH = 500;
     for (let i = 0; i < rows.length; i += BATCH) {
       const chunk = rows.slice(i, i + BATCH);
-      // Use upsert so re-imports don't fail on duplicate account_names
-      // ignoreDuplicates would skip, but upsert lets us update job_close_date
       const { error } = await supabase
         .from("work_orders")
-        .upsert(chunk, { onConflict: "id" });
+        .upsert(chunk, { onConflict: "id", ignoreDuplicates: true });
 
       if (error) {
         throw new Error(`Accounts insert failed at batch ${Math.floor(i / BATCH) + 1}: ${error.message}`);
