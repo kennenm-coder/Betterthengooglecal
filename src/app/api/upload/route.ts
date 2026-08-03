@@ -250,7 +250,9 @@ async function upsertAccountsToSupabase(accounts: AccountRow[]) {
 
   // For accounts WITHOUT order numbers: insert with account_name as id
   if (withoutOrder.length > 0) {
-    const rows = withoutOrder.map((a) => ({
+    const deduped = new Map<string, typeof withoutOrder[0]>();
+    for (const a of withoutOrder) deduped.set(a.account_name, a);
+    const rows = Array.from(deduped.values()).map((a) => ({
       id: a.account_name,
       account_name: a.account_name,
       address: a.address,
