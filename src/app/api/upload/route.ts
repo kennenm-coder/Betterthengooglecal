@@ -280,7 +280,9 @@ async function upsertAccountsToSupabase(accounts: AccountRow[]) {
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.UPLOAD_API_KEY;
-    if (apiKey) {
+    const contentType = request.headers.get("content-type") || "";
+    const isBrowserUpload = contentType.includes("multipart/form-data");
+    if (apiKey && !isBrowserUpload) {
       const provided = request.headers.get("x-api-key");
       if (provided !== apiKey) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
