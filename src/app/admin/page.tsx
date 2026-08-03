@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useData } from "@/components/DataProvider";
 import { parseXlsHtml } from "@/lib/parse-xls";
 import { parseCsv } from "@/lib/parse-csv";
-import { upsertWorkOrders, upsertAccountNames } from "@/lib/store";
+import { upsertWorkOrders } from "@/lib/store";
 import {
   getActionTypes,
   setActionTypes,
@@ -380,25 +380,32 @@ function UploadTab() {
     setAcctResult(null);
 
     try {
-      const text = await file.text();
-      let parsed = parseXlsHtml(text);
-      if (parsed.length === 0) {
-        parsed = parseCsv(text);
-      }
+      const formData = new FormData();
+      formData.append("file", file);
 
-      const withAcct = parsed.filter((o) => o.accountName);
-      if (withAcct.length === 0) {
-        setAcctResult({ success: false, message: "No account names found in file." });
-        setAcctUploading(false);
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const json = await res.json();
+
+      if (!res.ok || !json.success) {
+        setAcctResult({ success: false, message: json.error || "Upload failed." });
         return;
       }
 
-      const { updated, skipped } = await upsertAccountNames(withAcct);
       await refresh();
-      setAcctResult({
-        success: updated > 0,
-        message: `Updated account names on ${updated} work orders.${skipped > 0 ? ` ${skipped} skipped (not found in database).` : ""}`,
-      });
+      if (json.format === "accounts_csv") {
+        setAcctResult({
+          success: true,
+          message: `Updated ${json.updated} account names, inserted ${json.inserted} new records (${json.parsed} total in file).`,
+        });
+      } else {
+        setAcctResult({
+          success: true,
+          message: `Uploaded ${json.upserted} work orders to cloud.`,
+        });
+      }
     } catch {
       setAcctResult({ success: false, message: "Account name upload failed." });
     } finally {
