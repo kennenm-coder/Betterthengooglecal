@@ -133,6 +133,8 @@ export function parseXlsHtml(html: string): WorkOrder[] {
       windows: parseInt(cell(row, "Windows"), 10) || 0,
       patioDoors: parseInt(cell(row, "Patio Doors"), 10) || 0,
       doors: parseInt(cell(row, "# Doors"), 10) || 0,
+      orderAlerts: cell(row, "Order Alerts") || "",
+      accountName: cell(row, "Account Name: Account Name") || "",
     };
   });
 }

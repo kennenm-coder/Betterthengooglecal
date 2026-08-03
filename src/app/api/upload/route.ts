@@ -134,6 +134,8 @@ async function upsertToSupabase(orders: WorkOrder[]) {
     windows: wo.windows || 0,
     patio_doors: wo.patioDoors || 0,
     doors: wo.doors || 0,
+    order_alerts: wo.orderAlerts || "",
+    account_name: wo.accountName || "",
     updated_at: new Date().toISOString(),
   }));
 

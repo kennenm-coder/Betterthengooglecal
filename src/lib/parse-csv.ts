@@ -56,6 +56,8 @@ const COL = {
   WINDOWS: 27,
   PATIO_DOORS: 28,
   DOORS: 29,
+  ORDER_ALERTS: 30,
+  ACCOUNT_NAME: 31,
 } as const;
 
 function val(row: string[], col: number): string {
@@ -180,6 +182,8 @@ export function parseCsv(csvText: string): WorkOrder[] {
       windows: parseIntVal(val(row, COL.WINDOWS)),
       patioDoors: parseIntVal(val(row, COL.PATIO_DOORS)),
       doors: parseIntVal(val(row, COL.DOORS)),
+      orderAlerts: val(row, COL.ORDER_ALERTS),
+      accountName: val(row, COL.ACCOUNT_NAME),
     });
   }
 

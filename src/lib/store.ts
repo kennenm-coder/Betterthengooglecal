@@ -57,6 +57,8 @@ interface WorkOrderRow {
   windows: number;
   patio_doors: number;
   doors: number;
+  order_alerts: string;
+  account_name: string;
   uploaded_at: string;
   updated_at: string;
 }
@@ -96,6 +98,8 @@ function rowToWorkOrder(row: WorkOrderRow): WorkOrder {
     windows: row.windows || 0,
     patioDoors: row.patio_doors || 0,
     doors: row.doors || 0,
+    orderAlerts: row.order_alerts || "",
+    accountName: row.account_name || "",
   };
 }
 
@@ -129,6 +133,8 @@ function workOrderToRow(wo: WorkOrder) {
     windows: wo.windows || 0,
     patio_doors: wo.patioDoors || 0,
     doors: wo.doors || 0,
+    order_alerts: wo.orderAlerts || "",
+    account_name: wo.accountName || "",
     updated_at: new Date().toISOString(),
   };
 }

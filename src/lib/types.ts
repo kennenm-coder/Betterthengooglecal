@@ -27,6 +27,8 @@ export interface WorkOrder {
   windows: number;
   patioDoors: number;
   doors: number;
+  orderAlerts: string;
+  accountName: string;
   materialJob?: MaterialJobData | null;
 }
 
