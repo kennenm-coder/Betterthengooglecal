@@ -361,6 +361,43 @@ export function mergeOrders(existing: WorkOrder[], incoming: WorkOrder[]): WorkO
   return Array.from(map.values());
 }
 
+// --- Account-name-only update ---
+
+export async function upsertAccountNames(
+  orders: WorkOrder[]
+): Promise<{ updated: number; skipped: number }> {
+  const supabase = getSupabase();
+  if (!supabase) return { updated: 0, skipped: 0 };
+
+  const pairs = orders
+    .filter((o) => o.id && o.accountName)
+    .map((o) => ({ id: o.id, account_name: o.accountName }));
+
+  let updated = 0;
+  let skipped = 0;
+  const BATCH = 50;
+
+  for (let i = 0; i < pairs.length; i += BATCH) {
+    const chunk = pairs.slice(i, i + BATCH);
+    const results = await Promise.allSettled(
+      chunk.map((p) =>
+        supabase
+          .from("work_orders")
+          .update({ account_name: p.account_name })
+          .eq("id", p.id)
+      )
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && !r.value.error) {
+        updated++;
+      } else {
+        skipped++;
+      }
+    }
+  }
+  return { updated, skipped };
+}
+
 // --- Upload / upsert ---
 
 export async function upsertWorkOrders(orders: WorkOrder[]): Promise<boolean> {
