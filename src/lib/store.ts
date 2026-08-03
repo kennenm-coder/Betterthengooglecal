@@ -150,6 +150,97 @@ function workOrderToRow(wo: WorkOrder) {
   };
 }
 
+const VISIBLE_TYPES = ["Install", "Service", "Job Site Visit"];
+const PAGE_SIZE = 1000;
+
+function startOfCurrentMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01T00:00:00`;
+}
+
+async function paginatedQuery(
+  query: any,
+  signal?: AbortSignal
+): Promise<WorkOrderRow[]> {
+  const rows: WorkOrderRow[] = [];
+  let offset = 0;
+  while (true) {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    const { data, error } = await query.range(offset, offset + PAGE_SIZE - 1);
+    if (error || !data) break;
+    rows.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+  return rows;
+}
+
+export async function loadCurrentAndFuture(signal?: AbortSignal): Promise<WorkOrder[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+
+  const boundary = startOfCurrentMonth();
+  const query = supabase
+    .from("work_orders")
+    .select("*")
+    .gte("scheduled_start", boundary)
+    .in("work_order_type", VISIBLE_TYPES)
+    .order("scheduled_start", { ascending: true })
+    .order("id", { ascending: true });
+
+  const rows = await paginatedQuery(query, signal);
+  return rows.map(rowToWorkOrder);
+}
+
+export async function loadUnscheduled(signal?: AbortSignal): Promise<WorkOrder[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+
+  const query = supabase
+    .from("work_orders")
+    .select("*")
+    .is("scheduled_start", null)
+    .in("work_order_type", VISIBLE_TYPES)
+    .order("id", { ascending: true });
+
+  const rows = await paginatedQuery(query, signal);
+  return rows.map(rowToWorkOrder);
+}
+
+export async function loadHistorical(
+  onPage: (orders: WorkOrder[]) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) return;
+
+  const boundary = startOfCurrentMonth();
+  let offset = 0;
+  while (true) {
+    if (signal?.aborted) return;
+    const { data, error } = await supabase
+      .from("work_orders")
+      .select("*")
+      .lt("scheduled_start", boundary)
+      .in("work_order_type", VISIBLE_TYPES)
+      .order("scheduled_start", { ascending: false })
+      .order("id", { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (error || !data || data.length === 0) break;
+    onPage(data.map(rowToWorkOrder));
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+}
+
+export function mergeOrders(existing: WorkOrder[], incoming: WorkOrder[]): WorkOrder[] {
+  const map = new Map<string, WorkOrder>();
+  for (const o of existing) map.set(o.id, o);
+  for (const o of incoming) map.set(o.id, o);
+  return Array.from(map.values());
+}
+
 export async function loadOrdersFromSupabase(): Promise<WorkOrder[]> {
   const supabase = getSupabase();
   if (!supabase) return [];
