@@ -125,7 +125,16 @@ export function parseXlsHtml(html: string): WorkOrder[] {
         cell(row, "Bill to Contact Business Phone")
       ),
       serviceDescription: cell(row, "Service Request Description"),
-      workOrderType: (cell(row, "Work Order Type") || "Install") as WorkOrder["workOrderType"],
+      workOrderType: cell(row, "Work Order Type") || "Install",
+      description: cell(row, "Description") || "",
+      combinedRetailTotal: parseFloat(cell(row, "Combined Retail Total").replace(/,/g, "")) || 0,
+      productCount: parseInt(cell(row, "# of Products"), 10) || 0,
+      totalUnits: parseInt(cell(row, "Total Units"), 10) || 0,
+      windows: parseInt(cell(row, "Windows"), 10) || 0,
+      patioDoors: parseInt(cell(row, "Patio Doors"), 10) || 0,
+      doors: parseInt(cell(row, "# Doors"), 10) || 0,
+      orderAlerts: cell(row, "Order Alerts") || "",
+      accountName: cell(row, "Account Name: Account Name") || "",
     };
   });
 }

@@ -48,10 +48,32 @@ const COL = {
   BUSINESS_PHONE: 19,
   SERVICE_DESCRIPTION: 20,
   WORK_ORDER_TYPE: 21,
+  DESCRIPTION_1: 22,
+  DESCRIPTION_2: 23,
+  COMBINED_RETAIL_TOTAL: 24,
+  PRODUCT_COUNT: 25,
+  TOTAL_UNITS: 26,
+  WINDOWS: 27,
+  PATIO_DOORS: 28,
+  DOORS: 29,
+  ORDER_ALERTS: 30,
+  ACCOUNT_NAME: 31,
 } as const;
 
 function val(row: string[], col: number): string {
   return (row[col] ?? "").trim();
+}
+
+function parseNum(raw: string): number {
+  if (!raw) return 0;
+  const n = parseFloat(raw.replace(/,/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+
+function parseIntVal(raw: string): number {
+  if (!raw) return 0;
+  const n = parseInt(raw, 10);
+  return isNaN(n) ? 0 : n;
 }
 
 function parseDate(raw: string): string | null {
@@ -152,7 +174,16 @@ export function parseCsv(csvText: string): WorkOrder[] {
       ),
       serviceDescription: val(row, COL.SERVICE_DESCRIPTION),
       primaryResource: val(row, COL.PRIMARY_RESOURCE),
-      workOrderType: (val(row, COL.WORK_ORDER_TYPE) || "Install") as WorkOrder["workOrderType"],
+      workOrderType: val(row, COL.WORK_ORDER_TYPE) || "Install",
+      description: val(row, COL.DESCRIPTION_2) || val(row, COL.DESCRIPTION_1),
+      combinedRetailTotal: parseNum(val(row, COL.COMBINED_RETAIL_TOTAL)),
+      productCount: parseIntVal(val(row, COL.PRODUCT_COUNT)),
+      totalUnits: parseIntVal(val(row, COL.TOTAL_UNITS)),
+      windows: parseIntVal(val(row, COL.WINDOWS)),
+      patioDoors: parseIntVal(val(row, COL.PATIO_DOORS)),
+      doors: parseIntVal(val(row, COL.DOORS)),
+      orderAlerts: val(row, COL.ORDER_ALERTS),
+      accountName: val(row, COL.ACCOUNT_NAME),
     });
   }
 

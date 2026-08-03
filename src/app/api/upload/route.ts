@@ -127,6 +127,15 @@ async function upsertToSupabase(orders: WorkOrder[]) {
     phones: wo.phones,
     service_description: wo.serviceDescription || "",
     primary_resource: wo.primaryResource || "",
+    description: wo.description || "",
+    combined_retail_total: wo.combinedRetailTotal || 0,
+    product_count: wo.productCount || 0,
+    total_units: wo.totalUnits || 0,
+    windows: wo.windows || 0,
+    patio_doors: wo.patioDoors || 0,
+    doors: wo.doors || 0,
+    order_alerts: wo.orderAlerts || "",
+    account_name: wo.accountName || "",
     updated_at: new Date().toISOString(),
   }));
 

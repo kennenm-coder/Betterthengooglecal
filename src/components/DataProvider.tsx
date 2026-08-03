@@ -11,6 +11,8 @@ import {
   enrichWithMaterials,
 } from "@/lib/store";
 
+const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"]);
+
 interface DataContextType {
   orders: WorkOrder[];
   loading: boolean;
@@ -42,8 +44,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       const supaOrders = await loadOrdersFromSupabase();
 
       // Supabase succeeded (even if empty) — this is the source of truth
+      const visible = supaOrders.filter((o) => CALENDAR_VISIBLE_TYPES.has(o.workOrderType));
       const jobByPO = await fetchMaterialJobs();
-      const enriched = enrichWithMaterials(supaOrders, jobByPO);
+      const enriched = enrichWithMaterials(visible, jobByPO);
 
       setOrders(enriched);
       saveOrdersLocal(enriched);

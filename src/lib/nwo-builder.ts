@@ -499,7 +499,8 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
         // When adding to an existing board, use raw length — the board's first cut
         // already reserved the waste buffer for the bad end.
         const fitLen = cut.rawLength || (cut.length - buf);
-        const board = !cut._doors3pc && packed.find(b => b.cuts.length && b.cuts[0].source === cut.source && b.remaining - fitLen >= MIN_BOARD_REMAINING);
+        const minRem = cut._nonDeepEJ ? 0 : MIN_BOARD_REMAINING;
+        const board = !cut._doors3pc && packed.find(b => b.cuts.length && b.cuts[0].source === cut.source && b.remaining - fitLen >= minRem);
         if (board) {
           board.cuts.push(cut);
           board.remaining -= fitLen;
@@ -513,6 +514,7 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
     for (let i = packed.length - 1; i >= 1; i--) {
       if (packed[i].cuts.length !== 1) continue;
       if (packed[i].cuts[0]._doors3pc) continue;
+      if (packed[i].cuts[0]._nonDeepEJ) continue;
       const iSource = packed[i].cuts[0].source;
       for (let j = 0; j < i; j++) {
         if (!packed[j].cuts.some((c: any) => c.source === iSource)) continue;
@@ -533,6 +535,7 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
     // Bump boards with too little remaining
     for (let i = packed.length - 1; i >= 0; i--) {
       const board = packed[i];
+      if (board.cuts.some((c: any) => c._nonDeepEJ)) continue;
       if (board.remaining > 0 && board.remaining < MIN_BOARD_REMAINING) {
         const nextStock = STOCK.find(s => s > board.stockLength);
         if (nextStock) {
