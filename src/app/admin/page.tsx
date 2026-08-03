@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useData } from "@/components/DataProvider";
 import { parseXlsHtml } from "@/lib/parse-xls";
 import { parseCsv } from "@/lib/parse-csv";
-import { upsertWorkOrders } from "@/lib/store";
+import { upsertWorkOrders, upsertAccountNames } from "@/lib/store";
 import {
   getActionTypes,
   setActionTypes,
@@ -322,10 +322,18 @@ function LogTab() {
 /* ── Upload Tab ── */
 function UploadTab() {
   const { orders, lastUpdated, refresh } = useData();
+
+  // Full work order upload state
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Account name upload state
+  const [acctUploading, setAcctUploading] = useState(false);
+  const [acctResult, setAcctResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [acctDragOver, setAcctDragOver] = useState(false);
+  const acctFileRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(file: File) {
     setUploading(true);
@@ -367,21 +375,39 @@ function UploadTab() {
     }
   }
 
-  function onDrop(e: React.DragEvent) {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  }
+  async function handleAccountFile(file: File) {
+    setAcctUploading(true);
+    setAcctResult(null);
 
-  function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) handleFile(file);
-    e.target.value = "";
+    try {
+      const text = await file.text();
+      let parsed = parseXlsHtml(text);
+      if (parsed.length === 0) {
+        parsed = parseCsv(text);
+      }
+
+      const withAcct = parsed.filter((o) => o.accountName);
+      if (withAcct.length === 0) {
+        setAcctResult({ success: false, message: "No account names found in file." });
+        setAcctUploading(false);
+        return;
+      }
+
+      const { updated, skipped } = await upsertAccountNames(withAcct);
+      await refresh();
+      setAcctResult({
+        success: updated > 0,
+        message: `Updated account names on ${updated} work orders.${skipped > 0 ? ` ${skipped} skipped (not found in database).` : ""}`,
+      });
+    } catch {
+      setAcctResult({ success: false, message: "Account name upload failed." });
+    } finally {
+      setAcctUploading(false);
+    }
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Status */}
       <div className="rounded-lg border border-border p-4 bg-surface">
         <div className="flex items-center gap-3">
@@ -401,59 +427,111 @@ function UploadTab() {
         </div>
       </div>
 
-      {/* Upload zone */}
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={onDrop}
-        onClick={() => fileRef.current?.click()}
-        className={`rounded-lg border-2 border-dashed p-8 text-center cursor-pointer transition-colors ${
-          dragOver
-            ? "border-primary bg-primary-light"
-            : "border-border hover:border-primary/50 hover:bg-surface"
-        }`}
-      >
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".xls,.xlsx,.html,.csv"
-          onChange={onFileChange}
-          className="hidden"
-        />
-        {uploading ? (
-          <div className="flex flex-col items-center gap-2">
-            <Loader2 className="w-10 h-10 text-primary animate-spin" />
-            <p className="text-sm text-muted">Processing file...</p>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center gap-2">
-            <Upload className="w-10 h-10 text-muted" />
-            <p className="font-medium">Drag & drop your .xls file here</p>
-            <p className="text-sm text-muted">or tap to browse files</p>
-          </div>
-        )}
-      </div>
-
-      {/* Result message */}
-      {result && (
+      {/* Full Work Order Upload */}
+      <section>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-2">
+          Full Work Order Upload
+        </h2>
+        <p className="text-xs text-muted mb-3">
+          Uploads or updates all work order fields. Used for the main Salesforce report.
+        </p>
         <div
-          className={`rounded-lg border p-4 flex items-start gap-3 ${
-            result.success
-              ? "border-success/30 bg-success/5"
-              : "border-danger/30 bg-danger/5"
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+          onClick={() => fileRef.current?.click()}
+          className={`rounded-lg border-2 border-dashed p-6 text-center cursor-pointer transition-colors ${
+            dragOver
+              ? "border-primary bg-primary-light"
+              : "border-border hover:border-primary/50 hover:bg-surface"
           }`}
         >
-          {result.success ? (
-            <CheckCircle className="w-5 h-5 text-success shrink-0 mt-0.5" />
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xls,.xlsx,.html,.csv"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }}
+            className="hidden"
+          />
+          {uploading ? (
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="w-8 h-8 text-primary animate-spin" />
+              <p className="text-sm text-muted">Processing file...</p>
+            </div>
           ) : (
-            <AlertCircle className="w-5 h-5 text-danger shrink-0 mt-0.5" />
+            <div className="flex flex-col items-center gap-2">
+              <Upload className="w-8 h-8 text-muted" />
+              <p className="font-medium text-sm">Drag & drop work order file</p>
+              <p className="text-xs text-muted">or tap to browse</p>
+            </div>
           )}
-          <p className="text-sm">{result.message}</p>
         </div>
-      )}
+        {result && (
+          <div className={`rounded-lg border p-3 flex items-start gap-3 mt-2 ${
+            result.success ? "border-success/30 bg-success/5" : "border-danger/30 bg-danger/5"
+          }`}>
+            {result.success ? (
+              <CheckCircle className="w-5 h-5 text-success shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-danger shrink-0 mt-0.5" />
+            )}
+            <p className="text-sm">{result.message}</p>
+          </div>
+        )}
+      </section>
+
+      {/* Account Name Upload */}
+      <section>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-2">
+          Account Name Upload
+        </h2>
+        <p className="text-xs text-muted mb-3">
+          Updates only the account name on existing work orders. Does not delete or overwrite other data.
+        </p>
+        <div
+          onDragOver={(e) => { e.preventDefault(); setAcctDragOver(true); }}
+          onDragLeave={() => setAcctDragOver(false)}
+          onDrop={(e) => { e.preventDefault(); setAcctDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleAccountFile(f); }}
+          onClick={() => acctFileRef.current?.click()}
+          className={`rounded-lg border-2 border-dashed p-6 text-center cursor-pointer transition-colors ${
+            acctDragOver
+              ? "border-rba-green bg-rba-green/10"
+              : "border-border hover:border-rba-green/50 hover:bg-surface"
+          }`}
+        >
+          <input
+            ref={acctFileRef}
+            type="file"
+            accept=".xls,.xlsx,.html,.csv"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleAccountFile(f); e.target.value = ""; }}
+            className="hidden"
+          />
+          {acctUploading ? (
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="w-8 h-8 text-rba-green animate-spin" />
+              <p className="text-sm text-muted">Updating account names...</p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2">
+              <Upload className="w-8 h-8 text-rba-green" />
+              <p className="font-medium text-sm">Drag & drop account name file</p>
+              <p className="text-xs text-muted">or tap to browse</p>
+            </div>
+          )}
+        </div>
+        {acctResult && (
+          <div className={`rounded-lg border p-3 flex items-start gap-3 mt-2 ${
+            acctResult.success ? "border-success/30 bg-success/5" : "border-danger/30 bg-danger/5"
+          }`}>
+            {acctResult.success ? (
+              <CheckCircle className="w-5 h-5 text-success shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-danger shrink-0 mt-0.5" />
+            )}
+            <p className="text-sm">{acctResult.message}</p>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
