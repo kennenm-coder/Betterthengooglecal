@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { createAuthClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 
-export type UserRole = "admin" | "member";
+export type UserRole = "admin" | "payroll-admin" | "member";
 
 interface AuthState {
   user: User | null;

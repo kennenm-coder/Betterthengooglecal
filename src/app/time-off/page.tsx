@@ -233,7 +233,7 @@ function TimeOffContent() {
     );
   }
 
-  if (role !== "admin") {
+  if (role !== "admin" && role !== "payroll-admin") {
     return (
       <div className="flex flex-col h-full bg-background items-center justify-center p-4">
         <div className="text-center space-y-3">

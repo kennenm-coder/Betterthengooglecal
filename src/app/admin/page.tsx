@@ -136,15 +136,31 @@ interface AccessRequest {
   created_at: string;
 }
 
+const ROLE_OPTIONS = [
+  { value: "member", label: "Member" },
+  { value: "payroll-admin", label: "Payroll Admin" },
+  { value: "admin", label: "Admin" },
+] as const;
+
+const ROLE_STYLES: Record<string, string> = {
+  admin: "bg-primary/15 text-primary",
+  "payroll-admin": "bg-rba-green/15 text-rba-green",
+  member: "bg-surface border border-border text-muted",
+};
+
 function TeamTab() {
   const [emails, setEmails] = useState<AllowedEmail[]>([]);
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [newEmail, setNewEmail] = useState("");
   const [newName, setNewName] = useState("");
-  const [newRole, setNewRole] = useState<"member" | "admin">("member");
+  const [newRole, setNewRole] = useState<string>("member");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editRole, setEditRole] = useState("");
 
   useEffect(() => {
     loadData();
@@ -215,13 +231,44 @@ function TeamTab() {
     setAdding(false);
   }
 
-  async function toggleRole(id: string, currentRole: string) {
-    const next = currentRole === "admin" ? "member" : "admin";
+  function startEdit(entry: AllowedEmail) {
+    setEditingId(entry.id);
+    setEditName(entry.name || "");
+    setEditEmail(entry.email);
+    setEditRole(entry.role);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+  }
+
+  async function saveEdit(id: string) {
+    const trimmedEmail = editEmail.trim().toLowerCase();
+    const trimmedName = editName.trim();
+    if (!trimmedEmail) return;
+
     const supabase = createAuthClient();
-    await supabase.from("allowed_emails").update({ role: next }).eq("id", id);
-    setEmails((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, role: next } : e))
-    );
+    const { error: updateError } = await supabase
+      .from("allowed_emails")
+      .update({
+        email: trimmedEmail,
+        name: trimmedName || null,
+        role: editRole,
+      })
+      .eq("id", id);
+
+    if (updateError) {
+      setError(updateError.message);
+    } else {
+      setEmails((prev) =>
+        prev.map((e) =>
+          e.id === id
+            ? { ...e, email: trimmedEmail, name: trimmedName || null, role: editRole }
+            : e
+        )
+      );
+      setEditingId(null);
+    }
   }
 
   async function removeEmail(id: string) {
@@ -305,41 +352,92 @@ function TeamTab() {
         </p>
 
         <div className="space-y-2">
-          {emails.map((entry) => (
-            <div
-              key={entry.id}
-              className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-border bg-surface"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  {entry.name && (
-                    <span className="text-sm font-medium truncate">
-                      {entry.name}
-                    </span>
-                  )}
+          {emails.map((entry) =>
+            editingId === entry.id ? (
+              <div
+                key={entry.id}
+                className="rounded-lg border border-primary bg-surface p-3 space-y-2"
+              >
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Name"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  placeholder="Email"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <select
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  {ROLE_OPTIONS.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex gap-2">
                   <button
-                    onClick={() => toggleRole(entry.id, entry.role)}
-                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${
-                      entry.role === "admin"
-                        ? "bg-primary/15 text-primary"
-                        : "bg-surface border border-border text-muted"
-                    }`}
+                    onClick={() => saveEdit(entry.id)}
+                    className="flex-1 py-2 rounded-lg bg-primary text-white text-sm font-medium flex items-center justify-center gap-1"
                   >
-                    {entry.role === "admin" ? "Admin" : "Member"}
+                    <Check className="w-3.5 h-3.5" />
+                    Save
+                  </button>
+                  <button
+                    onClick={cancelEdit}
+                    className="flex-1 py-2 rounded-lg border border-border text-sm font-medium flex items-center justify-center gap-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    Cancel
                   </button>
                 </div>
-                <span className="text-xs text-muted block truncate">
-                  {entry.email}
-                </span>
               </div>
-              <button
-                onClick={() => removeEmail(entry.id)}
-                className="p-1.5 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors shrink-0 ml-2"
+            ) : (
+              <div
+                key={entry.id}
+                onClick={() => startEdit(entry)}
+                className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-border bg-surface cursor-pointer hover:border-primary/30 transition-colors"
               >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    {entry.name && (
+                      <span className="text-sm font-medium truncate">
+                        {entry.name}
+                      </span>
+                    )}
+                    <span
+                      className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${
+                        ROLE_STYLES[entry.role] || ROLE_STYLES.member
+                      }`}
+                    >
+                      {ROLE_OPTIONS.find((r) => r.value === entry.role)?.label ||
+                        "Member"}
+                    </span>
+                  </div>
+                  <span className="text-xs text-muted block truncate">
+                    {entry.email}
+                  </span>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeEmail(entry.id);
+                  }}
+                  className="p-1.5 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors shrink-0 ml-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            )
+          )}
 
           {emails.length === 0 && (
             <div className="text-center py-6 text-muted">
@@ -379,11 +477,14 @@ function TeamTab() {
             />
             <select
               value={newRole}
-              onChange={(e) => setNewRole(e.target.value as "member" | "admin")}
+              onChange={(e) => setNewRole(e.target.value)}
               className="rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
             >
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
+              {ROLE_OPTIONS.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
             </select>
             <button
               onClick={addEmail}
