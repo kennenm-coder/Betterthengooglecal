@@ -21,66 +21,48 @@ import {
   AlertCircle,
   FileSpreadsheet,
   Loader2,
-  Lock,
+  ShieldX,
   Plus,
   Trash2,
   ClipboardList,
   Settings,
   X,
+  Users,
+  LogOut,
 } from "lucide-react";
+import { createAuthClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { format, parseISO } from "date-fns";
 
-type DevTab = "settings" | "log" | "upload";
+type DevTab = "settings" | "log" | "upload" | "team";
 
 export default function AdminPage() {
-  const [unlocked, setUnlocked] = useState(false);
-  const [password, setPassword] = useState("");
-  const [pwError, setPwError] = useState(false);
+  const { role, loading } = useAuth();
 
-  function tryUnlock() {
-    const correct = process.env.NEXT_PUBLIC_DEV_PASSWORD || "duckforce";
-    if (password === correct) {
-      setUnlocked(true);
-      setPwError(false);
-    } else {
-      setPwError(true);
-    }
+  if (loading) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        </div>
+        <BottomNav />
+      </div>
+    );
   }
 
-  if (!unlocked) {
+  if (role !== "admin") {
     return (
       <div className="flex flex-col h-full">
         <header className="bg-background border-b border-border px-4 py-3">
           <h1 className="text-lg font-semibold">Dev Settings</h1>
-          <p className="text-sm text-muted">Enter password to access</p>
         </header>
         <div className="flex-1 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm space-y-4">
-            <div className="flex items-center justify-center">
-              <Lock className="w-12 h-12 text-muted" />
-            </div>
-            <div>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  setPwError(false);
-                }}
-                onKeyDown={(e) => e.key === "Enter" && tryUnlock()}
-                placeholder="Password"
-                className="w-full rounded-lg border border-border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-              {pwError && (
-                <p className="text-xs text-danger mt-1">Incorrect password</p>
-              )}
-            </div>
-            <button
-              onClick={tryUnlock}
-              className="w-full py-3 rounded-lg bg-primary text-white font-medium text-sm"
-            >
-              Unlock
-            </button>
+          <div className="text-center space-y-3">
+            <ShieldX className="w-12 h-12 text-muted mx-auto" />
+            <p className="font-medium">Admin access required</p>
+            <p className="text-sm text-muted">
+              Your account doesn&apos;t have permission to view this page.
+            </p>
           </div>
         </div>
         <BottomNav />
@@ -103,9 +85,10 @@ function UnlockedContent() {
     <>
       <header className="bg-background border-b border-border px-4 py-3">
         <h1 className="text-lg font-semibold">Dev Settings</h1>
-        <div className="flex gap-1 mt-2">
+        <div className="flex gap-1 mt-2 overflow-x-auto">
           {([
             { id: "settings" as const, label: "Config", icon: Settings },
+            { id: "team" as const, label: "Team", icon: Users },
             { id: "log" as const, label: "Action Log", icon: ClipboardList },
             { id: "upload" as const, label: "Upload", icon: Upload },
           ]).map(({ id, label, icon: Icon }) => (
@@ -127,10 +110,227 @@ function UnlockedContent() {
 
       <div className="flex-1 overflow-y-auto p-4">
         {tab === "settings" && <SettingsTab />}
+        {tab === "team" && <TeamTab />}
         {tab === "log" && <LogTab />}
         {tab === "upload" && <UploadTab />}
       </div>
     </>
+  );
+}
+
+/* ── Team Tab ── */
+interface AllowedEmail {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  created_at: string;
+}
+
+function TeamTab() {
+  const [emails, setEmails] = useState<AllowedEmail[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newEmail, setNewEmail] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newRole, setNewRole] = useState<"member" | "admin">("member");
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    loadEmails();
+  }, []);
+
+  async function loadEmails() {
+    setLoading(true);
+    const supabase = createAuthClient();
+    const { data } = await supabase
+      .from("allowed_emails")
+      .select("*")
+      .order("created_at", { ascending: true });
+    setEmails(data || []);
+    setLoading(false);
+  }
+
+  async function addEmail() {
+    const trimmedEmail = newEmail.trim().toLowerCase();
+    const trimmedName = newName.trim();
+    if (!trimmedEmail) return;
+
+    setAdding(true);
+    setError("");
+
+    const supabase = createAuthClient();
+    const { error: insertError } = await supabase
+      .from("allowed_emails")
+      .insert({ email: trimmedEmail, name: trimmedName || null, role: newRole });
+
+    if (insertError) {
+      if (insertError.code === "23505") {
+        setError("This email is already on the list.");
+      } else {
+        setError(insertError.message);
+      }
+    } else {
+      setNewEmail("");
+      setNewName("");
+      setNewRole("member");
+      await loadEmails();
+    }
+    setAdding(false);
+  }
+
+  async function toggleRole(id: string, currentRole: string) {
+    const next = currentRole === "admin" ? "member" : "admin";
+    const supabase = createAuthClient();
+    await supabase.from("allowed_emails").update({ role: next }).eq("id", id);
+    setEmails((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, role: next } : e))
+    );
+  }
+
+  async function removeEmail(id: string) {
+    const supabase = createAuthClient();
+    await supabase.from("allowed_emails").delete().eq("id", id);
+    setEmails((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  async function handleSignOut() {
+    const supabase = createAuthClient();
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-6 h-6 text-primary animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <section>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-1">
+          Allowed Emails
+        </h2>
+        <p className="text-xs text-muted mb-3">
+          Only people on this list can sign in. Add their email, then they can
+          open the app and request a magic link.
+        </p>
+
+        <div className="space-y-2">
+          {emails.map((entry) => (
+            <div
+              key={entry.id}
+              className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-border bg-surface"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  {entry.name && (
+                    <span className="text-sm font-medium truncate">
+                      {entry.name}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => toggleRole(entry.id, entry.role)}
+                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${
+                      entry.role === "admin"
+                        ? "bg-primary/15 text-primary"
+                        : "bg-surface border border-border text-muted"
+                    }`}
+                  >
+                    {entry.role === "admin" ? "Admin" : "Member"}
+                  </button>
+                </div>
+                <span className="text-xs text-muted block truncate">
+                  {entry.email}
+                </span>
+              </div>
+              <button
+                onClick={() => removeEmail(entry.id)}
+                className="p-1.5 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors shrink-0 ml-2"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+
+          {emails.length === 0 && (
+            <div className="text-center py-6 text-muted">
+              <Users className="w-8 h-8 mx-auto mb-2" />
+              <p className="text-sm">No emails added yet</p>
+              <p className="text-xs mt-1">
+                Add team member emails below to grant access
+              </p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-3">
+          Add Team Member
+        </h2>
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="Name (optional)"
+            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+          />
+          <div className="flex gap-2">
+            <input
+              type="email"
+              value={newEmail}
+              onChange={(e) => {
+                setNewEmail(e.target.value);
+                setError("");
+              }}
+              onKeyDown={(e) => e.key === "Enter" && addEmail()}
+              placeholder="email@company.com"
+              className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            <select
+              value={newRole}
+              onChange={(e) => setNewRole(e.target.value as "member" | "admin")}
+              className="rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            >
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button
+              onClick={addEmail}
+              disabled={adding || !newEmail.trim()}
+              className="px-3 py-2 rounded-lg bg-primary text-white text-sm font-medium disabled:opacity-50"
+            >
+              {adding ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Plus className="w-4 h-4" />
+              )}
+            </button>
+          </div>
+          {error && (
+            <p className="text-xs text-danger flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" />
+              {error}
+            </p>
+          )}
+        </div>
+      </section>
+
+      <section className="pt-4 border-t border-border">
+        <button
+          onClick={handleSignOut}
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border border-border text-danger text-sm font-medium hover:bg-danger/5 transition-colors"
+        >
+          <LogOut className="w-4 h-4" />
+          Sign Out
+        </button>
+      </section>
+    </div>
   );
 }
 
