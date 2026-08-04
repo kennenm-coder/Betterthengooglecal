@@ -29,6 +29,8 @@ import {
   X,
   Users,
   LogOut,
+  Check,
+  UserPlus,
 } from "lucide-react";
 import { createAuthClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -127,8 +129,16 @@ interface AllowedEmail {
   created_at: string;
 }
 
+interface AccessRequest {
+  id: string;
+  email: string;
+  name: string | null;
+  created_at: string;
+}
+
 function TeamTab() {
   const [emails, setEmails] = useState<AllowedEmail[]>([]);
+  const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [newEmail, setNewEmail] = useState("");
   const [newName, setNewName] = useState("");
@@ -137,18 +147,44 @@ function TeamTab() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    loadEmails();
+    loadData();
   }, []);
 
-  async function loadEmails() {
+  async function loadData() {
     setLoading(true);
     const supabase = createAuthClient();
-    const { data } = await supabase
-      .from("allowed_emails")
-      .select("*")
-      .order("created_at", { ascending: true });
-    setEmails(data || []);
+    const [emailsRes, requestsRes] = await Promise.all([
+      supabase
+        .from("allowed_emails")
+        .select("*")
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("access_requests")
+        .select("*")
+        .order("created_at", { ascending: true }),
+    ]);
+    setEmails(emailsRes.data || []);
+    setRequests(requestsRes.data || []);
     setLoading(false);
+  }
+
+  async function approveRequest(req: AccessRequest) {
+    const supabase = createAuthClient();
+    const { error: insertError } = await supabase
+      .from("allowed_emails")
+      .insert({ email: req.email, name: req.name, role: "member" });
+
+    if (insertError && insertError.code !== "23505") return;
+
+    await supabase.from("access_requests").delete().eq("id", req.id);
+    setRequests((prev) => prev.filter((r) => r.id !== req.id));
+    await loadData();
+  }
+
+  async function denyRequest(id: string) {
+    const supabase = createAuthClient();
+    await supabase.from("access_requests").delete().eq("id", id);
+    setRequests((prev) => prev.filter((r) => r.id !== id));
   }
 
   async function addEmail() {
@@ -174,7 +210,7 @@ function TeamTab() {
       setNewEmail("");
       setNewName("");
       setNewRole("member");
-      await loadEmails();
+      await loadData();
     }
     setAdding(false);
   }
@@ -210,13 +246,62 @@ function TeamTab() {
 
   return (
     <div className="space-y-6">
+      {requests.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-warning mb-1">
+            Pending Requests
+          </h2>
+          <p className="text-xs text-muted mb-3">
+            These people requested access. Approve to add them to the team.
+          </p>
+          <div className="space-y-2">
+            {requests.map((req) => (
+              <div
+                key={req.id}
+                className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-warning/30 bg-warning/5"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <UserPlus className="w-4 h-4 text-warning shrink-0" />
+                    {req.name && (
+                      <span className="text-sm font-medium truncate">
+                        {req.name}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs text-muted block truncate">
+                    {req.email}
+                  </span>
+                </div>
+                <div className="flex gap-1 shrink-0 ml-2">
+                  <button
+                    onClick={() => approveRequest(req)}
+                    className="p-1.5 rounded hover:bg-success/10 text-success transition-colors"
+                    title="Approve"
+                  >
+                    <Check className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => denyRequest(req.id)}
+                    className="p-1.5 rounded hover:bg-danger/10 text-danger transition-colors"
+                    title="Deny"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section>
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-1">
           Allowed Emails
         </h2>
         <p className="text-xs text-muted mb-3">
           Only people on this list can sign in. Add their email, then they can
-          open the app and request a magic link.
+          create an account.
         </p>
 
         <div className="space-y-2">
