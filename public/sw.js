@@ -1,5 +1,5 @@
-const CACHE_NAME = "rba-field-cal-v6";
-const PRECACHE_URLS = ["/", "/search", "/admin", "/time-off"];
+const CACHE_NAME = "rba-field-cal-v7";
+const PRECACHE_URLS = ["/", "/search", "/admin", "/time-off", "/login"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
