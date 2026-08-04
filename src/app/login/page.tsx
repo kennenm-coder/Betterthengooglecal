@@ -70,9 +70,9 @@ export default function LoginPage() {
             <div className="flex items-center justify-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src="/duck-icon.svg"
+                src="/icon-192.png"
                 alt="Duck Force"
-                className="w-16 h-16"
+                className="w-16 h-16 rounded-2xl"
               />
             </div>
             <h1 className="text-xl font-semibold">Sign in to Duck Force</h1>
