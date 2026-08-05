@@ -486,7 +486,7 @@ export async function fetchMaterialJobs(): Promise<Map<string, any>> {
           units: d.units || [],
           globalTrim: d.globalTrim || {},
           submitted: d.submitted,
-          status: d.status || "submitted",
+          status: d.status || "awaiting_trim",
           savedAt: d.savedAt || "",
         });
       }
