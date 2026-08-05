@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { WorkOrder, ActionPerson } from "@/lib/types";
-import { getActionTypes, getActionPeople, addActionLog } from "@/lib/action-settings";
+import { getActionTypes, addActionLog } from "@/lib/action-settings";
+import { useAuth } from "@/hooks/useAuth";
 import { X, ChevronRight, Phone, FileText, AlertTriangle, Mic, MicOff } from "lucide-react";
 import { format } from "date-fns";
 
@@ -17,18 +18,20 @@ export default function ActionModal({
   order: WorkOrder;
   onClose: () => void;
 }) {
-  const [step, setStep] = useState<"type" | "person" | "notes">("type");
+  const [step, setStep] = useState<"type" | "notes">("type");
   const [actionType, setActionType] = useState("");
-  const [person, setPerson] = useState<ActionPerson | null>(null);
   const [notes, setNotes] = useState("");
   const [actionTypes, setActionTypes] = useState<string[]>([]);
-  const [people, setPeople] = useState<ActionPerson[]>([]);
   const [listening, setListening] = useState(false);
   const [recognition, setRecognition] = useState<any>(null);
+  const { user } = useAuth();
+
+  const person: ActionPerson | null = user
+    ? { name: (user.user_metadata?.full_name as string) || user.email || "Unknown", email: user.email || "" }
+    : null;
 
   useEffect(() => {
     getActionTypes().then(setActionTypes);
-    getActionPeople().then(setPeople);
   }, []);
 
   useEffect(() => {
@@ -65,11 +68,6 @@ export default function ActionModal({
 
   function selectType(type: string) {
     setActionType(type);
-    setStep("person");
-  }
-
-  function selectPerson(p: ActionPerson) {
-    setPerson(p);
     setStep("notes");
   }
 
@@ -139,8 +137,6 @@ export default function ActionModal({
         <div className="flex items-center gap-2 px-4 py-2 text-xs text-muted border-b border-border shrink-0">
           <span className={step === "type" ? "text-primary font-semibold" : ""}>Type</span>
           <ChevronRight className="w-3 h-3" />
-          <span className={step === "person" ? "text-primary font-semibold" : ""}>Person</span>
-          <ChevronRight className="w-3 h-3" />
           <span className={step === "notes" ? "text-primary font-semibold" : ""}>Notes</span>
         </div>
 
@@ -165,45 +161,12 @@ export default function ActionModal({
             </div>
           )}
 
-          {step === "person" && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-sm text-muted">Who is logging this?</p>
-                <button
-                  onClick={() => setStep("type")}
-                  className="text-xs text-primary font-medium"
-                >
-                  Back
-                </button>
-              </div>
-              {people.length === 0 && (
-                <div className="text-center py-8 text-muted">
-                  <p className="text-sm">No people configured yet.</p>
-                  <p className="text-xs mt-1">Add people in the Dev page.</p>
-                </div>
-              )}
-              {people.map((p, i) => (
-                <button
-                  key={i}
-                  onClick={() => selectPerson(p)}
-                  className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-border hover:bg-surface transition-colors text-left"
-                >
-                  <div>
-                    <span className="font-medium">{p.name}</span>
-                    <span className="text-xs text-muted ml-2">{p.email}</span>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-muted" />
-                </button>
-              ))}
-            </div>
-          )}
-
           {step === "notes" && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-muted">Add notes for this {actionType.toLowerCase()}</p>
                 <button
-                  onClick={() => setStep("person")}
+                  onClick={() => setStep("type")}
                   className="text-xs text-primary font-medium"
                 >
                   Back

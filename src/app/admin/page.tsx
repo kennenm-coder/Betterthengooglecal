@@ -9,11 +9,9 @@ import { parseAccountsCsv, isAccountsCsv } from "@/lib/parse-accounts-csv";
 import {
   getActionTypes,
   setActionTypes,
-  getActionPeople,
-  setActionPeople,
   getActionLog,
 } from "@/lib/action-settings";
-import { ActionPerson, ActionLogEntry } from "@/lib/types";
+import { ActionLogEntry } from "@/lib/types";
 import BottomNav from "@/components/BottomNav";
 import {
   Upload,
@@ -523,14 +521,10 @@ function TeamTab() {
 /* ── Settings Tab ── */
 function SettingsTab() {
   const [actionTypes, setTypes] = useState<string[]>([]);
-  const [people, setPeople] = useState<ActionPerson[]>([]);
   const [newType, setNewType] = useState("");
-  const [newName, setNewName] = useState("");
-  const [newEmail, setNewEmail] = useState("");
 
   useEffect(() => {
     getActionTypes().then(setTypes);
-    getActionPeople().then(setPeople);
   }, []);
 
   function addType() {
@@ -545,21 +539,6 @@ function SettingsTab() {
     const updated = actionTypes.filter((_, i) => i !== idx);
     setTypes(updated);
     setActionTypes(updated);
-  }
-
-  function addPerson() {
-    if (!newName.trim() || !newEmail.trim()) return;
-    const updated = [...people, { name: newName.trim(), email: newEmail.trim() }];
-    setPeople(updated);
-    setActionPeople(updated);
-    setNewName("");
-    setNewEmail("");
-  }
-
-  function removePerson(idx: number) {
-    const updated = people.filter((_, i) => i !== idx);
-    setPeople(updated);
-    setActionPeople(updated);
   }
 
   return (
@@ -603,56 +582,6 @@ function SettingsTab() {
         </div>
       </section>
 
-      {/* People */}
-      <section>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-3">
-          People
-        </h2>
-        <div className="space-y-2">
-          {people.map((p, i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-surface"
-            >
-              <div>
-                <span className="text-sm font-medium">{p.name}</span>
-                <span className="text-xs text-muted ml-2">{p.email}</span>
-              </div>
-              <button
-                onClick={() => removePerson(i)}
-                className="p-1 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
-          <div className="space-y-2">
-            <input
-              type="text"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="Name"
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            />
-            <div className="flex gap-2">
-              <input
-                type="email"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addPerson()}
-                placeholder="Email"
-                className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-              <button
-                onClick={addPerson}
-                className="px-3 py-2 rounded-lg bg-primary text-white text-sm font-medium"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }
