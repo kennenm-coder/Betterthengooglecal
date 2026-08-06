@@ -73,7 +73,8 @@ function CalendarPage() {
   const [selectedOrder, setSelectedOrder] = useState<WorkOrder | null>(null);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
 
-  // Restore OrderSheet when returning from install instructions page
+  // Restore OrderSheet when returning from install instructions page.
+  // The setState here is intentional — we sync URL state into React on mount.
   useEffect(() => {
     const orderId = searchParams.get("order");
     if (orderId && orders.length > 0) {

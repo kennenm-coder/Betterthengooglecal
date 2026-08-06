@@ -1,39 +1,40 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { requireAuth, getAdminClient, isLastAdmin } from "@/lib/auth";
 
 export async function DELETE() {
-  const supabase = await createClient();
+  const { user, error: authError } = await requireAuth();
+  if (authError) return authError;
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  // Prevent the last admin from deleting themselves
+  if (user!.role === "admin") {
+    const last = await isLastAdmin(user!.email);
+    if (last) {
+      return NextResponse.json(
+        { error: "Cannot delete the last admin account. Promote another admin first." },
+        { status: 400 }
+      );
+    }
   }
 
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!serviceRoleKey) {
+  try {
+    const admin = getAdminClient();
+
+    // Remove from allowlist
+    await admin.from("allowed_emails").delete().eq("email", user!.email);
+
+    // Delete the auth user
+    const { error } = await admin.auth.admin.deleteUser(user!.id);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Server configuration error";
     return NextResponse.json(
-      { error: "Server configuration error" },
+      { error: message },
       { status: 500 }
     );
   }
-
-  const admin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    serviceRoleKey,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-
-  await admin.from("allowed_emails").delete().eq("email", user.email);
-
-  const { error } = await admin.auth.admin.deleteUser(user.id);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json({ success: true });
 }

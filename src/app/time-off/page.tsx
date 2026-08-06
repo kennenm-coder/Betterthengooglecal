@@ -84,10 +84,6 @@ function TimeOffContent() {
   const [filterStart, setFilterStart] = useState("");
   const [filterEnd, setFilterEnd] = useState("");
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
   async function loadData() {
     setLoading(true);
     const [reqData, empData] = await Promise.all([
@@ -98,6 +94,8 @@ function TimeOffContent() {
     setEmployees(empData);
     setLoading(false);
   }
+
+  useEffect(() => { loadData(); }, []);
 
   const filteredRequests = useMemo(() => {
     if (!filterStart && !filterEnd) return requests;

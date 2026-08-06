@@ -240,10 +240,25 @@ function TeamTab() {
     setEditingId(null);
   }
 
+  function isLastAdminEntry(entry: AllowedEmail): boolean {
+    if (entry.role !== "admin") return false;
+    const adminCount = emails.filter((e) => e.role === "admin").length;
+    return adminCount <= 1;
+  }
+
   async function saveEdit(id: string) {
     const trimmedEmail = editEmail.trim().toLowerCase();
     const trimmedName = editName.trim();
     if (!trimmedEmail) return;
+
+    // Prevent demoting the last admin
+    const original = emails.find((e) => e.id === id);
+    if (original && original.role === "admin" && editRole !== "admin") {
+      if (isLastAdminEntry(original)) {
+        setError("Cannot demote the last admin. Promote another admin first.");
+        return;
+      }
+    }
 
     const supabase = createAuthClient();
     const { error: updateError } = await supabase
@@ -270,6 +285,13 @@ function TeamTab() {
   }
 
   async function removeEmail(id: string) {
+    // Prevent removing the last admin
+    const entry = emails.find((e) => e.id === id);
+    if (entry && isLastAdminEntry(entry)) {
+      setError("Cannot remove the last admin. Promote another admin first.");
+      return;
+    }
+
     const supabase = createAuthClient();
     await supabase.from("allowed_emails").delete().eq("id", id);
     setEmails((prev) => prev.filter((e) => e.id !== id));
@@ -588,11 +610,7 @@ function SettingsTab() {
 
 /* ── Action Log Tab ── */
 function LogTab() {
-  const [log, setLog] = useState<ActionLogEntry[]>([]);
-
-  useEffect(() => {
-    setLog(getActionLog());
-  }, []);
+  const [log] = useState<ActionLogEntry[]>(() => getActionLog());
 
   if (log.length === 0) {
     return (

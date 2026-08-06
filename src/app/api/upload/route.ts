@@ -4,9 +4,7 @@ import { parseCsv } from "@/lib/parse-csv";
 import { isAccountsCsv, parseAccountsCsv, AccountRow } from "@/lib/parse-accounts-csv";
 import { createClient } from "@supabase/supabase-js";
 import { WorkOrder } from "@/lib/types";
-
-const SUPA_URL = "https://xusqjotoyntnfysquvlv.supabase.co";
-const SUPA_KEY = "sb_publishable_HQigRx1Q8I6OpPffXMxRZQ_iqegVCka";
+import { requireRole } from "@/lib/auth";
 
 type FileResult = {
   text: string;
@@ -108,7 +106,10 @@ function detectFormat(text: string): "xls" | "csv" | "accounts_csv" | "unknown" 
 }
 
 async function upsertToSupabase(orders: WorkOrder[]) {
-  const supabase = createClient(SUPA_URL, SUPA_KEY);
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
   const rows = orders.map((wo) => ({
     id: wo.id,
@@ -161,7 +162,10 @@ async function upsertToSupabase(orders: WorkOrder[]) {
 }
 
 async function upsertAccountsToSupabase(accounts: AccountRow[]) {
-  const supabase = createClient(SUPA_URL, SUPA_KEY);
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
   const now = new Date().toISOString();
 
   // Deduplicate input by account_name — last occurrence wins
@@ -228,13 +232,21 @@ async function upsertAccountsToSupabase(accounts: AccountRow[]) {
 
 export async function POST(request: NextRequest) {
   try {
-    const apiKey = process.env.UPLOAD_API_KEY;
     const contentType = request.headers.get("content-type") || "";
     const isBrowserUpload = contentType.includes("multipart/form-data");
-    if (apiKey && !isBrowserUpload) {
-      const provided = request.headers.get("x-api-key");
-      if (provided !== apiKey) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    if (isBrowserUpload) {
+      // Browser uploads require an authenticated admin session
+      const { error: authError } = await requireRole("admin");
+      if (authError) return authError;
+    } else {
+      // Power Automate / external uploads use API key
+      const apiKey = process.env.UPLOAD_API_KEY;
+      if (apiKey) {
+        const provided = request.headers.get("x-api-key");
+        if (provided !== apiKey) {
+          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
       }
     }
 
@@ -306,9 +318,9 @@ export async function POST(request: NextRequest) {
       parsed: orders.length,
       upserted,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Upload error:", err);
-    const message = err?.message || "Failed to process file";
+    const message = err instanceof Error ? err.message : "Failed to process file";
     return NextResponse.json(
       { error: message },
       { status: 500 }

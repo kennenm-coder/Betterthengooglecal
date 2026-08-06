@@ -32,7 +32,7 @@ const COLOR_FIELDS: { key: keyof WorkOrderColors; label: string }[] = [
 
 export default function SettingsPage() {
   const router = useRouter();
-  const [colors, setColors] = useState<WorkOrderColors>(DEFAULT_COLORS);
+  const [colors, setColors] = useState<WorkOrderColors>(() => getStoredColors());
   const [showDelete, setShowDelete] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -41,8 +41,6 @@ export default function SettingsPage() {
   const { role } = useAuth();
 
   useEffect(() => {
-    setColors(getStoredColors());
-
     const supabase = createAuthClient();
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user?.email) setUserEmail(user.email);
