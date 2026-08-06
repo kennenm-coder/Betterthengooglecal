@@ -40,14 +40,24 @@ export async function requireRole(
     };
   }
 
-  // Look up role from the allowlist
+  // Look up role from the allowlist — users not on the list are fully rejected
   const { data: row } = await supabase
     .from("allowed_emails")
     .select("role")
     .eq("email", user.email.toLowerCase())
     .maybeSingle();
 
-  const role: UserRole = (row?.role as UserRole) || "member";
+  if (!row) {
+    return {
+      user: null,
+      error: NextResponse.json(
+        { error: "Access denied — not on the allowlist" },
+        { status: 403 }
+      ),
+    };
+  }
+
+  const role: UserRole = (row.role as UserRole) || "member";
 
   if (allowed.length > 0 && !allowed.includes(role)) {
     return {

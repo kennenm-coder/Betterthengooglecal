@@ -1,14 +1,16 @@
 -- ============================================================
 -- Row Level Security policies for Duck Force / RbA Field Calendar
 --
--- Run this in the Supabase SQL Editor to apply.
--- These policies assume:
---   1. Tables already exist
---   2. Email-based allowlist stored in `allowed_emails`
---   3. Roles: admin, payroll-admin, member
+-- CANONICAL REFERENCE — this is the desired end-state.
+-- For incremental application, run the numbered migration files.
+--
+-- Key principle: "authenticated" ≠ "allowlisted".
+-- get_user_role() returns NULL for users not on the allowlist,
+-- so all data policies reject non-allowlisted Supabase accounts.
 -- ============================================================
 
 -- ── Helper: get current user's role from allowed_emails ──
+-- Returns NULL if the user is not on the allowlist.
 
 CREATE OR REPLACE FUNCTION public.get_user_role()
 RETURNS text
@@ -16,35 +18,48 @@ LANGUAGE sql
 STABLE
 SECURITY DEFINER
 AS $$
-  SELECT COALESCE(
-    (SELECT role FROM public.allowed_emails
-     WHERE email = lower(auth.jwt() ->> 'email')
-     LIMIT 1),
-    'member'
+  SELECT role FROM public.allowed_emails
+  WHERE email = lower(auth.jwt() ->> 'email')
+  LIMIT 1;
+$$;
+
+-- ── Helper: pre-signup allowlist check ──
+-- Returns true/false only — does NOT expose emails, names, or roles.
+-- Callable by anon users (before they have an account).
+
+CREATE OR REPLACE FUNCTION public.is_email_allowed(check_email text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.allowed_emails
+    WHERE email = lower(check_email)
   );
 $$;
 
 -- ============================================================
 -- allowed_emails
--- Anon can SELECT (needed for pre-signup allowlist check).
--- Admins can insert/update/delete.
--- This table contains only emails and roles — no secrets.
+-- Admins can read/write. Authenticated allowlisted users can
+-- read their own row (for role lookup). No public SELECT.
+-- Pre-signup check uses the is_email_allowed() RPC instead.
 -- ============================================================
 
 ALTER TABLE public.allowed_emails ENABLE ROW LEVEL SECURITY;
 
--- Anyone (including anon/pre-signup) can read the allowlist for existence checks
-CREATE POLICY "anyone_read_allowed_emails"
-  ON public.allowed_emails
-  FOR SELECT
-  USING (true);
-
--- Admins: full write access
-CREATE POLICY "admins_write_allowed_emails"
+-- Admins: full access
+CREATE POLICY "admins_full_access_allowed_emails"
   ON public.allowed_emails
   FOR ALL
   USING (public.get_user_role() = 'admin')
   WITH CHECK (public.get_user_role() = 'admin');
+
+-- Allowlisted users: read their own row
+CREATE POLICY "users_read_own_allowed_email"
+  ON public.allowed_emails
+  FOR SELECT
+  USING (email = lower(auth.jwt() ->> 'email'));
 
 -- ============================================================
 -- access_requests
@@ -54,13 +69,11 @@ CREATE POLICY "admins_write_allowed_emails"
 
 ALTER TABLE public.access_requests ENABLE ROW LEVEL SECURITY;
 
--- Anyone (including anon) can insert a request
 CREATE POLICY "anon_insert_access_requests"
   ON public.access_requests
   FOR INSERT
   WITH CHECK (true);
 
--- Admins: full read/delete
 CREATE POLICY "admins_manage_access_requests"
   ON public.access_requests
   FOR ALL
@@ -69,18 +82,16 @@ CREATE POLICY "admins_manage_access_requests"
 
 -- ============================================================
 -- work_orders
--- Authenticated users can read. Only admins can write.
+-- Allowlisted users can read. Only admins can write.
 -- ============================================================
 
 ALTER TABLE public.work_orders ENABLE ROW LEVEL SECURITY;
 
--- Any authenticated user can read
-CREATE POLICY "authenticated_read_work_orders"
+CREATE POLICY "allowlisted_read_work_orders"
   ON public.work_orders
   FOR SELECT
-  USING (auth.role() = 'authenticated');
+  USING (public.get_user_role() IS NOT NULL);
 
--- Admins can insert/update/delete
 CREATE POLICY "admins_write_work_orders"
   ON public.work_orders
   FOR ALL
@@ -89,15 +100,15 @@ CREATE POLICY "admins_write_work_orders"
 
 -- ============================================================
 -- action_settings
--- Admins can read/write. Members can read.
+-- Allowlisted users can read. Admins can write.
 -- ============================================================
 
 ALTER TABLE public.action_settings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "authenticated_read_action_settings"
+CREATE POLICY "allowlisted_read_action_settings"
   ON public.action_settings
   FOR SELECT
-  USING (auth.role() = 'authenticated');
+  USING (public.get_user_role() IS NOT NULL);
 
 CREATE POLICY "admins_write_action_settings"
   ON public.action_settings
@@ -107,7 +118,7 @@ CREATE POLICY "admins_write_action_settings"
 
 -- ============================================================
 -- time_off_requests
--- Admins and payroll-admins can read/write. Members cannot access.
+-- Admins and payroll-admins only.
 -- ============================================================
 
 ALTER TABLE public.time_off_requests ENABLE ROW LEVEL SECURITY;
@@ -120,7 +131,7 @@ CREATE POLICY "admin_payroll_manage_time_off"
 
 -- ============================================================
 -- employees
--- Admins and payroll-admins can read/write. Members cannot access.
+-- Admins and payroll-admins only.
 -- ============================================================
 
 ALTER TABLE public.employees ENABLE ROW LEVEL SECURITY;
@@ -133,13 +144,74 @@ CREATE POLICY "admin_payroll_manage_employees"
 
 -- ============================================================
 -- jobs (material ordering)
--- Authenticated users can read/write their own jobs.
+-- Allowlisted users can read/write.
 -- ============================================================
 
 ALTER TABLE public.jobs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "authenticated_access_jobs"
+CREATE POLICY "allowlisted_access_jobs"
   ON public.jobs
   FOR ALL
-  USING (auth.role() = 'authenticated')
-  WITH CHECK (auth.role() = 'authenticated');
+  USING (public.get_user_role() IS NOT NULL)
+  WITH CHECK (public.get_user_role() IS NOT NULL);
+
+-- ============================================================
+-- app_settings (if exists)
+-- Allowlisted users can read. Admins can write.
+-- ============================================================
+
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'app_settings') THEN
+    ALTER TABLE public.app_settings ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $$;
+
+CREATE POLICY "allowlisted_read_app_settings"
+  ON public.app_settings
+  FOR SELECT
+  USING (public.get_user_role() IS NOT NULL);
+
+CREATE POLICY "admins_write_app_settings"
+  ON public.app_settings
+  FOR ALL
+  USING (public.get_user_role() = 'admin')
+  WITH CHECK (public.get_user_role() = 'admin');
+
+-- ============================================================
+-- catalog_items (if exists)
+-- Allowlisted users can read. Admins can write.
+-- ============================================================
+
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'catalog_items') THEN
+    ALTER TABLE public.catalog_items ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $$;
+
+CREATE POLICY "allowlisted_read_catalog_items"
+  ON public.catalog_items
+  FOR SELECT
+  USING (public.get_user_role() IS NOT NULL);
+
+CREATE POLICY "admins_write_catalog_items"
+  ON public.catalog_items
+  FOR ALL
+  USING (public.get_user_role() = 'admin')
+  WITH CHECK (public.get_user_role() = 'admin');
+
+-- ============================================================
+-- trim_purchase_orders (if exists)
+-- Allowlisted users can read/write.
+-- ============================================================
+
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'trim_purchase_orders') THEN
+    ALTER TABLE public.trim_purchase_orders ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $$;
+
+CREATE POLICY "allowlisted_access_trim_purchase_orders"
+  ON public.trim_purchase_orders
+  FOR ALL
+  USING (public.get_user_role() IS NOT NULL)
+  WITH CHECK (public.get_user_role() IS NOT NULL);

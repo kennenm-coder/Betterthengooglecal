@@ -76,11 +76,9 @@ export default function LoginPage() {
     try {
       const supabase = createAuthClient();
 
-      const { data: allowed, error: lookupError } = await supabase
-        .from("allowed_emails")
-        .select("email")
-        .eq("email", trimmedEmail)
-        .maybeSingle();
+      // Use RPC function — returns boolean only, no table exposure
+      const { data: isAllowed, error: lookupError } = await supabase
+        .rpc("is_email_allowed", { check_email: trimmedEmail });
 
       if (lookupError) {
         setStatus("error");
@@ -88,7 +86,7 @@ export default function LoginPage() {
         return;
       }
 
-      if (!allowed) {
+      if (!isAllowed) {
         setStatus("not-allowed");
         return;
       }

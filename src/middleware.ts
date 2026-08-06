@@ -56,15 +56,17 @@ export async function middleware(request: NextRequest) {
 
   // Authenticated user on a protected page — verify they're still on the allowlist.
   // If their email was removed from allowed_emails, sign them out and redirect to login.
-  if (user?.email) {
-    const { data: allowed } = await supabase
-      .from("allowed_emails")
-      .select("email")
-      .eq("email", user.email.toLowerCase())
-      .maybeSingle();
+  if (
+    user?.email &&
+    !pathname.startsWith("/login") &&
+    !pathname.startsWith("/auth") &&
+    !pathname.startsWith("/forgot-password") &&
+    !pathname.startsWith("/reset-password")
+  ) {
+    const { data: isAllowed } = await supabase
+      .rpc("is_email_allowed", { check_email: user.email.toLowerCase() });
 
-    if (!allowed) {
-      // Not on allowlist — clear their session and redirect to login
+    if (!isAllowed) {
       await supabase.auth.signOut();
       const url = request.nextUrl.clone();
       url.pathname = "/login";
