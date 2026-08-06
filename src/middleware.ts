@@ -54,6 +54,24 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // Authenticated user on a protected page — verify they're still on the allowlist.
+  // If their email was removed from allowed_emails, sign them out and redirect to login.
+  if (user?.email) {
+    const { data: allowed } = await supabase
+      .from("allowed_emails")
+      .select("email")
+      .eq("email", user.email.toLowerCase())
+      .maybeSingle();
+
+    if (!allowed) {
+      // Not on allowlist — clear their session and redirect to login
+      await supabase.auth.signOut();
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      return NextResponse.redirect(url);
+    }
+  }
+
   return supabaseResponse;
 }
 

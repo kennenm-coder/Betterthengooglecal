@@ -242,11 +242,16 @@ export async function POST(request: NextRequest) {
     } else {
       // Power Automate / external uploads use API key
       const apiKey = process.env.UPLOAD_API_KEY;
-      if (apiKey) {
-        const provided = request.headers.get("x-api-key");
-        if (provided !== apiKey) {
-          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+      if (!apiKey) {
+        console.error("UPLOAD_API_KEY is not configured — rejecting external upload");
+        return NextResponse.json(
+          { error: "Server configuration error" },
+          { status: 500 }
+        );
+      }
+      const provided = request.headers.get("x-api-key");
+      if (provided !== apiKey) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
     }
 

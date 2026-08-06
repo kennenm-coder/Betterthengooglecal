@@ -26,23 +26,25 @@ $$;
 
 -- ============================================================
 -- allowed_emails
--- Only admins can read/write. Members can read their own row.
+-- Anon can SELECT (needed for pre-signup allowlist check).
+-- Admins can insert/update/delete.
+-- This table contains only emails and roles — no secrets.
 -- ============================================================
 
 ALTER TABLE public.allowed_emails ENABLE ROW LEVEL SECURITY;
 
--- Admins: full access
-CREATE POLICY "admins_full_access_allowed_emails"
+-- Anyone (including anon/pre-signup) can read the allowlist for existence checks
+CREATE POLICY "anyone_read_allowed_emails"
+  ON public.allowed_emails
+  FOR SELECT
+  USING (true);
+
+-- Admins: full write access
+CREATE POLICY "admins_write_allowed_emails"
   ON public.allowed_emails
   FOR ALL
   USING (public.get_user_role() = 'admin')
   WITH CHECK (public.get_user_role() = 'admin');
-
--- Any authenticated user: can read their own row (for role lookup at login)
-CREATE POLICY "users_read_own_allowed_email"
-  ON public.allowed_emails
-  FOR SELECT
-  USING (email = lower(auth.jwt() ->> 'email'));
 
 -- ============================================================
 -- access_requests
