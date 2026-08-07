@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Calendar, Search, UserCog } from "lucide-react";
+import { Calendar, Search, ScrollText, UserCog } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: Calendar },
   { href: "/search", label: "Search", icon: Search },
+  { href: "/log", label: "Changes", icon: ScrollText },
   { href: "/settings", label: "Settings", icon: UserCog },
 ];
 

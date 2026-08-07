@@ -24,7 +24,7 @@ export default function ActionModal({
   const [actionTypes, setActionTypes] = useState<string[]>([]);
   const [listening, setListening] = useState(false);
   const [recognition, setRecognition] = useState<any>(null);
-  const { user } = useAuth();
+  const { user, autoCc } = useAuth();
 
   const person: ActionPerson | null = user
     ? { name: (user.user_metadata?.full_name as string) || user.email || "Unknown", email: user.email || "" }
@@ -91,7 +91,8 @@ export default function ActionModal({
     ].join("\n");
 
     const toEmails = [person.email, "fieldnotes@rbanwo.com"].join(",");
-    const mailto = `mailto:${toEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    const ccPart = autoCc.length > 0 ? `&cc=${encodeURIComponent(autoCc.join(","))}` : "";
+    const mailto = `mailto:${toEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}${ccPart}`;
 
     addActionLog({
       id: crypto.randomUUID(),
