@@ -9,11 +9,9 @@ import { parseAccountsCsv, isAccountsCsv } from "@/lib/parse-accounts-csv";
 import {
   getActionTypes,
   setActionTypes,
-  getActionPeople,
-  setActionPeople,
   getActionLog,
 } from "@/lib/action-settings";
-import { ActionPerson, ActionLogEntry } from "@/lib/types";
+import { ActionLogEntry } from "@/lib/types";
 import BottomNav from "@/components/BottomNav";
 import {
   Upload,
@@ -21,66 +19,50 @@ import {
   AlertCircle,
   FileSpreadsheet,
   Loader2,
-  Lock,
+  ShieldX,
   Plus,
   Trash2,
   ClipboardList,
   Settings,
   X,
+  Users,
+  LogOut,
+  Check,
+  UserPlus,
 } from "lucide-react";
+import { createAuthClient } from "@/lib/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { format, parseISO } from "date-fns";
 
-type DevTab = "settings" | "log" | "upload";
+type DevTab = "settings" | "log" | "upload" | "team";
 
 export default function AdminPage() {
-  const [unlocked, setUnlocked] = useState(false);
-  const [password, setPassword] = useState("");
-  const [pwError, setPwError] = useState(false);
+  const { role, loading } = useAuth();
 
-  function tryUnlock() {
-    const correct = process.env.NEXT_PUBLIC_DEV_PASSWORD || "duckforce";
-    if (password === correct) {
-      setUnlocked(true);
-      setPwError(false);
-    } else {
-      setPwError(true);
-    }
+  if (loading) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        </div>
+        <BottomNav />
+      </div>
+    );
   }
 
-  if (!unlocked) {
+  if (role !== "admin") {
     return (
       <div className="flex flex-col h-full">
         <header className="bg-background border-b border-border px-4 py-3">
           <h1 className="text-lg font-semibold">Dev Settings</h1>
-          <p className="text-sm text-muted">Enter password to access</p>
         </header>
         <div className="flex-1 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm space-y-4">
-            <div className="flex items-center justify-center">
-              <Lock className="w-12 h-12 text-muted" />
-            </div>
-            <div>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  setPwError(false);
-                }}
-                onKeyDown={(e) => e.key === "Enter" && tryUnlock()}
-                placeholder="Password"
-                className="w-full rounded-lg border border-border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-              {pwError && (
-                <p className="text-xs text-danger mt-1">Incorrect password</p>
-              )}
-            </div>
-            <button
-              onClick={tryUnlock}
-              className="w-full py-3 rounded-lg bg-primary text-white font-medium text-sm"
-            >
-              Unlock
-            </button>
+          <div className="text-center space-y-3">
+            <ShieldX className="w-12 h-12 text-muted mx-auto" />
+            <p className="font-medium">Admin access required</p>
+            <p className="text-sm text-muted">
+              Your account doesn&apos;t have permission to view this page.
+            </p>
           </div>
         </div>
         <BottomNav />
@@ -103,9 +85,10 @@ function UnlockedContent() {
     <>
       <header className="bg-background border-b border-border px-4 py-3">
         <h1 className="text-lg font-semibold">Dev Settings</h1>
-        <div className="flex gap-1 mt-2">
+        <div className="flex gap-1 mt-2 overflow-x-auto">
           {([
             { id: "settings" as const, label: "Config", icon: Settings },
+            { id: "team" as const, label: "Team", icon: Users },
             { id: "log" as const, label: "Action Log", icon: ClipboardList },
             { id: "upload" as const, label: "Upload", icon: Upload },
           ]).map(({ id, label, icon: Icon }) => (
@@ -127,6 +110,7 @@ function UnlockedContent() {
 
       <div className="flex-1 overflow-y-auto p-4">
         {tab === "settings" && <SettingsTab />}
+        {tab === "team" && <TeamTab />}
         {tab === "log" && <LogTab />}
         {tab === "upload" && <UploadTab />}
       </div>
@@ -134,17 +118,435 @@ function UnlockedContent() {
   );
 }
 
+/* ── Team Tab ── */
+interface AllowedEmail {
+  id: string;
+  email: string;
+  name: string | null;
+  role: string;
+  created_at: string;
+}
+
+interface AccessRequest {
+  id: string;
+  email: string;
+  name: string | null;
+  created_at: string;
+}
+
+const ROLE_OPTIONS = [
+  { value: "member", label: "Member" },
+  { value: "payroll-admin", label: "Payroll Admin" },
+  { value: "admin", label: "Admin" },
+] as const;
+
+const ROLE_STYLES: Record<string, string> = {
+  admin: "bg-primary/15 text-primary",
+  "payroll-admin": "bg-rba-green/15 text-rba-green",
+  member: "bg-surface border border-border text-muted",
+};
+
+function TeamTab() {
+  const [emails, setEmails] = useState<AllowedEmail[]>([]);
+  const [requests, setRequests] = useState<AccessRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newEmail, setNewEmail] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newRole, setNewRole] = useState<string>("member");
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editRole, setEditRole] = useState("");
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    setLoading(true);
+    const supabase = createAuthClient();
+    const [emailsRes, requestsRes] = await Promise.all([
+      supabase
+        .from("allowed_emails")
+        .select("*")
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("access_requests")
+        .select("*")
+        .order("created_at", { ascending: true }),
+    ]);
+    setEmails(emailsRes.data || []);
+    setRequests(requestsRes.data || []);
+    setLoading(false);
+  }
+
+  async function approveRequest(req: AccessRequest) {
+    const supabase = createAuthClient();
+    const { error: insertError } = await supabase
+      .from("allowed_emails")
+      .insert({ email: req.email, name: req.name, role: "member" });
+
+    if (insertError && insertError.code !== "23505") return;
+
+    await supabase.from("access_requests").delete().eq("id", req.id);
+    setRequests((prev) => prev.filter((r) => r.id !== req.id));
+    await loadData();
+  }
+
+  async function denyRequest(id: string) {
+    const supabase = createAuthClient();
+    await supabase.from("access_requests").delete().eq("id", id);
+    setRequests((prev) => prev.filter((r) => r.id !== id));
+  }
+
+  async function addEmail() {
+    const trimmedEmail = newEmail.trim().toLowerCase();
+    const trimmedName = newName.trim();
+    if (!trimmedEmail) return;
+
+    setAdding(true);
+    setError("");
+
+    const supabase = createAuthClient();
+    const { error: insertError } = await supabase
+      .from("allowed_emails")
+      .insert({ email: trimmedEmail, name: trimmedName || null, role: newRole });
+
+    if (insertError) {
+      if (insertError.code === "23505") {
+        setError("This email is already on the list.");
+      } else {
+        setError(insertError.message);
+      }
+    } else {
+      setNewEmail("");
+      setNewName("");
+      setNewRole("member");
+      await loadData();
+    }
+    setAdding(false);
+  }
+
+  function startEdit(entry: AllowedEmail) {
+    setEditingId(entry.id);
+    setEditName(entry.name || "");
+    setEditEmail(entry.email);
+    setEditRole(entry.role);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+  }
+
+  function isLastAdminEntry(entry: AllowedEmail): boolean {
+    if (entry.role !== "admin") return false;
+    const adminCount = emails.filter((e) => e.role === "admin").length;
+    return adminCount <= 1;
+  }
+
+  async function saveEdit(id: string) {
+    const trimmedEmail = editEmail.trim().toLowerCase();
+    const trimmedName = editName.trim();
+    if (!trimmedEmail) return;
+
+    // Prevent demoting the last admin
+    const original = emails.find((e) => e.id === id);
+    if (original && original.role === "admin" && editRole !== "admin") {
+      if (isLastAdminEntry(original)) {
+        setError("Cannot demote the last admin. Promote another admin first.");
+        return;
+      }
+    }
+
+    const supabase = createAuthClient();
+    const { error: updateError } = await supabase
+      .from("allowed_emails")
+      .update({
+        email: trimmedEmail,
+        name: trimmedName || null,
+        role: editRole,
+      })
+      .eq("id", id);
+
+    if (updateError) {
+      setError(updateError.message);
+    } else {
+      setEmails((prev) =>
+        prev.map((e) =>
+          e.id === id
+            ? { ...e, email: trimmedEmail, name: trimmedName || null, role: editRole }
+            : e
+        )
+      );
+      setEditingId(null);
+    }
+  }
+
+  async function removeEmail(id: string) {
+    // Prevent removing the last admin
+    const entry = emails.find((e) => e.id === id);
+    if (entry && isLastAdminEntry(entry)) {
+      setError("Cannot remove the last admin. Promote another admin first.");
+      return;
+    }
+
+    const supabase = createAuthClient();
+    await supabase.from("allowed_emails").delete().eq("id", id);
+    setEmails((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  async function handleSignOut() {
+    const supabase = createAuthClient();
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-6 h-6 text-primary animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {requests.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-warning mb-1">
+            Pending Requests
+          </h2>
+          <p className="text-xs text-muted mb-3">
+            These people requested access. Approve to add them to the team.
+          </p>
+          <div className="space-y-2">
+            {requests.map((req) => (
+              <div
+                key={req.id}
+                className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-warning/30 bg-warning/5"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <UserPlus className="w-4 h-4 text-warning shrink-0" />
+                    {req.name && (
+                      <span className="text-sm font-medium truncate">
+                        {req.name}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs text-muted block truncate">
+                    {req.email}
+                  </span>
+                </div>
+                <div className="flex gap-1 shrink-0 ml-2">
+                  <button
+                    onClick={() => approveRequest(req)}
+                    className="p-1.5 rounded hover:bg-success/10 text-success transition-colors"
+                    title="Approve"
+                  >
+                    <Check className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => denyRequest(req.id)}
+                    className="p-1.5 rounded hover:bg-danger/10 text-danger transition-colors"
+                    title="Deny"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-1">
+          Allowed Emails
+        </h2>
+        <p className="text-xs text-muted mb-3">
+          Only people on this list can sign in. Add their email, then they can
+          create an account.
+        </p>
+
+        <div className="space-y-2">
+          {emails.map((entry) =>
+            editingId === entry.id ? (
+              <div
+                key={entry.id}
+                className="rounded-lg border border-primary bg-surface p-3 space-y-2"
+              >
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Name"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  placeholder="Email"
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <select
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  {ROLE_OPTIONS.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => saveEdit(entry.id)}
+                    className="flex-1 py-2 rounded-lg bg-primary text-white text-sm font-medium flex items-center justify-center gap-1"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    Save
+                  </button>
+                  <button
+                    onClick={cancelEdit}
+                    className="flex-1 py-2 rounded-lg border border-border text-sm font-medium flex items-center justify-center gap-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                key={entry.id}
+                onClick={() => startEdit(entry)}
+                className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-border bg-surface cursor-pointer hover:border-primary/30 transition-colors"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    {entry.name && (
+                      <span className="text-sm font-medium truncate">
+                        {entry.name}
+                      </span>
+                    )}
+                    <span
+                      className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${
+                        ROLE_STYLES[entry.role] || ROLE_STYLES.member
+                      }`}
+                    >
+                      {ROLE_OPTIONS.find((r) => r.value === entry.role)?.label ||
+                        "Member"}
+                    </span>
+                  </div>
+                  <span className="text-xs text-muted block truncate">
+                    {entry.email}
+                  </span>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeEmail(entry.id);
+                  }}
+                  className="p-1.5 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors shrink-0 ml-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            )
+          )}
+
+          {emails.length === 0 && (
+            <div className="text-center py-6 text-muted">
+              <Users className="w-8 h-8 mx-auto mb-2" />
+              <p className="text-sm">No emails added yet</p>
+              <p className="text-xs mt-1">
+                Add team member emails below to grant access
+              </p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-3">
+          Add Team Member
+        </h2>
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="Name (optional)"
+            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+          />
+          <div className="flex gap-2">
+            <input
+              type="email"
+              value={newEmail}
+              onChange={(e) => {
+                setNewEmail(e.target.value);
+                setError("");
+              }}
+              onKeyDown={(e) => e.key === "Enter" && addEmail()}
+              placeholder="email@company.com"
+              className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            <select
+              value={newRole}
+              onChange={(e) => setNewRole(e.target.value)}
+              className="rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            >
+              {ROLE_OPTIONS.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={addEmail}
+              disabled={adding || !newEmail.trim()}
+              className="px-3 py-2 rounded-lg bg-primary text-white text-sm font-medium disabled:opacity-50"
+            >
+              {adding ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Plus className="w-4 h-4" />
+              )}
+            </button>
+          </div>
+          {error && (
+            <p className="text-xs text-danger flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" />
+              {error}
+            </p>
+          )}
+        </div>
+      </section>
+
+      <section className="pt-4 border-t border-border">
+        <button
+          onClick={handleSignOut}
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border border-border text-danger text-sm font-medium hover:bg-danger/5 transition-colors"
+        >
+          <LogOut className="w-4 h-4" />
+          Sign Out
+        </button>
+      </section>
+    </div>
+  );
+}
+
 /* ── Settings Tab ── */
 function SettingsTab() {
   const [actionTypes, setTypes] = useState<string[]>([]);
-  const [people, setPeople] = useState<ActionPerson[]>([]);
   const [newType, setNewType] = useState("");
-  const [newName, setNewName] = useState("");
-  const [newEmail, setNewEmail] = useState("");
 
   useEffect(() => {
     getActionTypes().then(setTypes);
-    getActionPeople().then(setPeople);
   }, []);
 
   function addType() {
@@ -159,21 +561,6 @@ function SettingsTab() {
     const updated = actionTypes.filter((_, i) => i !== idx);
     setTypes(updated);
     setActionTypes(updated);
-  }
-
-  function addPerson() {
-    if (!newName.trim() || !newEmail.trim()) return;
-    const updated = [...people, { name: newName.trim(), email: newEmail.trim() }];
-    setPeople(updated);
-    setActionPeople(updated);
-    setNewName("");
-    setNewEmail("");
-  }
-
-  function removePerson(idx: number) {
-    const updated = people.filter((_, i) => i !== idx);
-    setPeople(updated);
-    setActionPeople(updated);
   }
 
   return (
@@ -217,67 +604,13 @@ function SettingsTab() {
         </div>
       </section>
 
-      {/* People */}
-      <section>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-3">
-          People
-        </h2>
-        <div className="space-y-2">
-          {people.map((p, i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-surface"
-            >
-              <div>
-                <span className="text-sm font-medium">{p.name}</span>
-                <span className="text-xs text-muted ml-2">{p.email}</span>
-              </div>
-              <button
-                onClick={() => removePerson(i)}
-                className="p-1 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
-          <div className="space-y-2">
-            <input
-              type="text"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="Name"
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            />
-            <div className="flex gap-2">
-              <input
-                type="email"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addPerson()}
-                placeholder="Email"
-                className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-              />
-              <button
-                onClick={addPerson}
-                className="px-3 py-2 rounded-lg bg-primary text-white text-sm font-medium"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }
 
 /* ── Action Log Tab ── */
 function LogTab() {
-  const [log, setLog] = useState<ActionLogEntry[]>([]);
-
-  useEffect(() => {
-    setLog(getActionLog());
-  }, []);
+  const [log] = useState<ActionLogEntry[]>(() => getActionLog());
 
   if (log.length === 0) {
     return (

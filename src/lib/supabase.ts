@@ -1,14 +1,14 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-const SUPA_URL = "https://xusqjotoyntnfysquvlv.supabase.co";
-const SUPA_KEY = "sb_publishable_HQigRx1Q8I6OpPffXMxRZQ_iqegVCka";
-
 let _client: SupabaseClient | null = null;
 
 export function getSupabase(): SupabaseClient | null {
   if (_client) return _client;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
   try {
-    _client = createClient(SUPA_URL, SUPA_KEY);
+    _client = createClient(url, key);
     return _client;
   } catch {
     return null;

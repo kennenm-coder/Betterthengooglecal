@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import DataProvider from "@/components/DataProvider";
+import ColorLoader from "@/components/ColorLoader";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -48,6 +49,7 @@ export default function RootLayout({
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
       <head />
       <body className="h-full flex flex-col">
+        <ColorLoader />
         <DataProvider>{children}</DataProvider>
         <script
           dangerouslySetInnerHTML={{

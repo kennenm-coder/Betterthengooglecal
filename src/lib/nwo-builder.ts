@@ -905,3 +905,59 @@ export function buildBoardSummaryByUnit(
     })
     .map(([sig, labels]) => ({ sig, unitLabels: labels }));
 }
+
+// ─── PO TRACKING (reads from shared trim_purchase_orders table) ─────────────
+
+export interface PurchaseOrder {
+  id: string;
+  job_id: string | null;
+  vendor: string;
+  customer_name: string | null;
+  job_po_number: string | null;
+  status: string; // 'ordered' | 'partial' | 'received' | 'cancelled'
+  ordered_at: string;
+  received_at: string | null;
+  estimated_arrival_min: string | null;
+  estimated_arrival_max: string | null;
+  line_items: any[];
+  notes: string | null;
+  homeowner: string | null;
+  source: string; // 'job' | 'standalone'
+}
+
+/** Fetch all POs for a specific job */
+export async function fetchPOsForJob(jobId: string): Promise<PurchaseOrder[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from("trim_purchase_orders")
+      .select("*")
+      .eq("job_id", jobId)
+      .neq("status", "cancelled")
+      .order("ordered_at", { ascending: false });
+    if (error) throw error;
+    return (data || []) as PurchaseOrder[];
+  } catch (e) {
+    console.warn("fetchPOsForJob failed:", e);
+    return [];
+  }
+}
+
+/** Fetch all open (ordered/partial) POs across all jobs */
+export async function fetchOpenPOs(): Promise<PurchaseOrder[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from("trim_purchase_orders")
+      .select("*")
+      .in("status", ["ordered", "partial"])
+      .order("ordered_at", { ascending: true });
+    if (error) throw error;
+    return (data || []) as PurchaseOrder[];
+  } catch (e) {
+    console.warn("fetchOpenPOs failed:", e);
+    return [];
+  }
+}

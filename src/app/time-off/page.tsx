@@ -21,8 +21,9 @@ import {
   Download,
   UserPlus,
   Filter,
+  ShieldX,
 } from "lucide-react";
-import PinModal from "@/components/PinModal";
+import { useAuth } from "@/hooks/useAuth";
 import { format } from "date-fns";
 
 interface DraftRow {
@@ -59,12 +60,7 @@ function TimeOffContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const fromScheduler = searchParams.get("from") === "scheduler";
-  const [unlocked, setUnlocked] = useState(() => {
-    if (typeof window !== "undefined") {
-      return sessionStorage.getItem("timeoff_unlocked") === "1";
-    }
-    return false;
-  });
+  const { role, loading: authLoading } = useAuth();
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,10 +84,6 @@ function TimeOffContent() {
   const [filterStart, setFilterStart] = useState("");
   const [filterEnd, setFilterEnd] = useState("");
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
   async function loadData() {
     setLoading(true);
     const [reqData, empData] = await Promise.all([
@@ -102,6 +94,8 @@ function TimeOffContent() {
     setEmployees(empData);
     setLoading(false);
   }
+
+  useEffect(() => { loadData(); }, []);
 
   const filteredRequests = useMemo(() => {
     if (!filterStart && !filterEnd) return requests;
@@ -229,22 +223,30 @@ function TimeOffContent() {
     }
   }
 
-  if (!unlocked) {
+  if (authLoading) {
     return (
       <div className="flex flex-col h-full bg-background items-center justify-center">
-        <PinModal
-          onSuccess={() => {
-            sessionStorage.setItem("timeoff_unlocked", "1");
-            setUnlocked(true);
-          }}
-          onClose={() => {
-            if (fromScheduler) {
-              window.close();
-            } else {
-              router.push("/");
-            }
-          }}
-        />
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
+    );
+  }
+
+  if (role !== "admin" && role !== "payroll-admin") {
+    return (
+      <div className="flex flex-col h-full bg-background items-center justify-center p-4">
+        <div className="text-center space-y-3">
+          <ShieldX className="w-12 h-12 text-muted mx-auto" />
+          <p className="font-medium">Admin access required</p>
+          <p className="text-sm text-muted">
+            Your account doesn&apos;t have permission to manage time off.
+          </p>
+          <button
+            onClick={() => fromScheduler ? window.close() : router.push("/")}
+            className="mt-2 px-4 py-2 rounded-lg bg-primary text-white text-sm font-medium"
+          >
+            Go Back
+          </button>
+        </div>
       </div>
     );
   }

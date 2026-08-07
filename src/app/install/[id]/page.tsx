@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { MaterialJobData, MaterialUnit } from "@/lib/types";
 import { getSupabase } from "@/lib/supabase";
-import { buildNwoRows, buildBoardSummaryByUnit, fetchCatalogAndOffsets, NwoRow, BoardSummaryEntry } from "@/lib/nwo-builder";
-import { ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
+import { buildNwoRows, buildBoardSummaryByUnit, fetchCatalogAndOffsets, fetchPOsForJob, NwoRow, BoardSummaryEntry, PurchaseOrder } from "@/lib/nwo-builder";
+import { ArrowLeft, Loader2, AlertTriangle, Package, CheckCircle2, Clock, AlertCircle } from "lucide-react";
 
 function fracToString(frac: number): string {
   if (frac === 0.125) return "1/8";
@@ -122,6 +122,7 @@ export default function InstallInstructionsPage() {
   const [job, setJob] = useState<MaterialJobData | null>(null);
   const [nwoRows, setNwoRows] = useState<NwoRow[]>([]);
   const [boardSummary, setBoardSummary] = useState<BoardSummaryEntry[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -152,6 +153,10 @@ export default function InstallInstructionsPage() {
           setJob(jobData);
           setNwoRows(buildNwoRows(d.job || {}, d.units || [], catalogData.catalog, catalogData.offsets));
           setBoardSummary(buildBoardSummaryByUnit(d.job || {}, d.units || [], catalogData.catalog, catalogData.offsets));
+
+          // Fetch PO tracking data for this job
+          const pos = await fetchPOsForJob(jobRes.data.id);
+          setPurchaseOrders(pos);
         }
       } catch {
         // Network or query failure — job stays null, shows "Job not found"
@@ -245,6 +250,73 @@ export default function InstallInstructionsPage() {
                 LEAD
               </div>
             )}
+          </div>
+        )}
+
+        {/* PO Tracking Status */}
+        {purchaseOrders.length > 0 && (
+          <div className="mb-5">
+            <div className="bg-[#1a1a1a] text-white text-[11px] font-bold tracking-wider uppercase px-3.5 py-1.5 flex items-center gap-2">
+              <Package className="w-3.5 h-3.5" />
+              Purchase Orders
+            </div>
+            <div className="border border-border rounded-b-lg overflow-hidden">
+              {purchaseOrders.map((po) => {
+                const isReceived = po.status === "received";
+                const isPartial = po.status === "partial";
+                const isOrdered = po.status === "ordered";
+                const isOverdue = po.estimated_arrival_max && new Date(po.estimated_arrival_max) < new Date();
+                const itemCount = (po.line_items || []).length;
+                const totalLF = (po.line_items || []).reduce((s: number, it: any) => s + (it.total_lf || 0), 0);
+
+                return (
+                  <div
+                    key={po.id}
+                    className={`flex items-center gap-3 px-3.5 py-2.5 border-b border-border last:border-b-0 ${
+                      isReceived ? "bg-green-50 dark:bg-green-950/20" :
+                      isOverdue ? "bg-red-50 dark:bg-red-950/20" :
+                      isPartial ? "bg-amber-50 dark:bg-amber-950/20" :
+                      "bg-surface"
+                    }`}
+                  >
+                    {isReceived ? (
+                      <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                    ) : isOverdue ? (
+                      <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                    ) : (
+                      <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold font-mono text-foreground">{po.id}</span>
+                        <span className="text-[10px] font-bold text-[#6DB344]">{po.vendor}</span>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                          isReceived ? "bg-green-600/15 text-green-700" :
+                          isPartial ? "bg-amber-500/15 text-amber-700" :
+                          isOverdue ? "bg-red-600/15 text-red-700" :
+                          "bg-blue-500/15 text-blue-700"
+                        }`}>
+                          {isReceived ? "RECEIVED" : isPartial ? "PARTIAL" : isOverdue ? "OVERDUE" : "ORDERED"}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-muted mt-0.5 flex items-center gap-3 flex-wrap">
+                        <span>Ordered {new Date(po.ordered_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                        {isReceived && po.received_at && (
+                          <span>Received {new Date(po.received_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                        )}
+                        {!isReceived && po.estimated_arrival_min && po.estimated_arrival_max && (
+                          <span className={isOverdue ? "text-red-600 font-semibold" : ""}>
+                            Expected {new Date(po.estimated_arrival_min).toLocaleDateString("en-US", { month: "short", day: "numeric" })}–{new Date(po.estimated_arrival_max).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                            {isOverdue && " ⚠️"}
+                          </span>
+                        )}
+                        <span>{itemCount} item{itemCount !== 1 ? "s" : ""}{totalLF > 0 ? ` • ${totalLF} LF` : ""}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 

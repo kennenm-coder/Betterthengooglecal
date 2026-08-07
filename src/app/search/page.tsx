@@ -172,7 +172,12 @@ function MaterialJobTile({ job, onTap }: { job: MaterialJobData; onTap: (id: str
             {unitSummary && (
               <span className="truncate">{unitSummary}</span>
             )}
-            {job.submitted && (
+            {job.submitted && job.status === "awaiting_trim" && (
+              <span className="text-xs bg-amber-500/15 text-amber-700 px-1.5 py-0.5 rounded">
+                Awaiting Trim
+              </span>
+            )}
+            {job.submitted && (job.status === "trim_ordered" || job.status === "complete") && (
               <span className="text-xs bg-green-600/15 text-green-700 px-1.5 py-0.5 rounded">
                 Submitted
               </span>

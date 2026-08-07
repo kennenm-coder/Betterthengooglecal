@@ -1,5 +1,5 @@
-const CACHE_NAME = "rba-field-cal-v6";
-const PRECACHE_URLS = ["/", "/search", "/admin", "/time-off"];
+const CACHE_NAME = "rba-field-cal-v9";
+const PRECACHE_URLS = ["/", "/search", "/admin", "/time-off", "/login", "/settings"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -37,7 +37,23 @@ self.addEventListener("fetch", (event) => {
   // Caching these caused stale appointment times and missing data on mobile.
   if (url.pathname.startsWith("/api/")) return;
 
-  // App shell & static assets: cache-first for instant loads, network updates cache in background
+  // Navigation requests (HTML pages): network-first so auth and code changes always apply
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Static assets (JS, CSS, images): cache-first for speed, update in background
   event.respondWith(
     caches.match(event.request).then((cached) => {
       const networkFetch = fetch(event.request)
@@ -50,7 +66,6 @@ self.addEventListener("fetch", (event) => {
         })
         .catch(() => cached);
 
-      // Serve cache immediately if available (instant app shell), update in background
       return cached || networkFetch;
     })
   );
