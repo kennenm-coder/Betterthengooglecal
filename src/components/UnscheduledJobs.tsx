@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { MaterialJobData, WorkOrder } from "@/lib/types";
-import { fetchAllMaterialJobs } from "@/lib/store";
+import { useData } from "@/components/DataProvider";
 import { lastFirst } from "@/lib/format-utils";
 import { Loader2, Database, Package } from "lucide-react";
 
@@ -15,14 +15,8 @@ export default function UnscheduledJobs({
   onSelectOrder: (order: WorkOrder) => void;
 }) {
   const router = useRouter();
-  const [jobs, setJobs] = useState<MaterialJobData[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchAllMaterialJobs()
-      .then(setJobs)
-      .finally(() => setLoading(false));
-  }, []);
+  // Use material jobs already loaded by DataProvider — no extra fetch.
+  const { materialJobs: jobs, loadingBackground: loading } = useData();
 
   const scheduledPOs = new Set(
     orders.filter((o) => o.scheduledStart).map((o) => o.orderNumber)

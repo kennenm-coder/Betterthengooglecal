@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
-import { WorkOrder } from "@/lib/types";
+import { WorkOrder, MaterialJobData } from "@/lib/types";
 import {
   saveBoundedCache,
   loadBoundedCache,
@@ -9,7 +9,6 @@ import {
   loadInitialWindow,
   loadUnscheduled,
   loadFutureExtended,
-  loadHistorical,
   loadMonth,
   mergeOrders,
   fetchMaterialJobs,
@@ -21,6 +20,8 @@ const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"])
 
 interface DataContextType {
   orders: WorkOrder[];
+  /** All submitted material jobs, loaded once and shared across views. */
+  materialJobs: MaterialJobData[];
   loading: boolean;
   loadingBackground: boolean;
   lastUpdated: string | null;
@@ -31,6 +32,7 @@ interface DataContextType {
 
 const DataContext = createContext<DataContextType>({
   orders: [],
+  materialJobs: [],
   loading: true,
   loadingBackground: false,
   lastUpdated: null,
@@ -61,6 +63,7 @@ function getMonthsInRange(start: string, end: string): Set<string> {
 
 export default function DataProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<WorkOrder[]>([]);
+  const [materialJobs, setMaterialJobs] = useState<MaterialJobData[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingBackground, setLoadingBackground] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
@@ -98,11 +101,14 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       // Save bounded cache immediately
       saveBoundedCache(initial);
 
-      // Fetch material jobs (don't block initial render)
+      // Fetch material jobs (don't block initial render).
+      // The Map is also flattened into materialJobs state so Search and
+      // UnscheduledJobs can consume it from context instead of re-fetching.
       try {
         const jobByPO = await fetchMaterialJobs();
         if (stale()) return;
         jobByPORef.current = jobByPO;
+        setMaterialJobs(Array.from(jobByPO.values()) as MaterialJobData[]);
         const enriched = enrichWithMaterials(initial, jobByPO);
         setOrders(enriched);
         saveBoundedCache(enriched);
@@ -152,24 +158,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         // Keep showing what we have
       }
 
-      // Phase C: Historical
-      try {
-        await loadHistorical((page) => {
-          if (stale()) return;
-          const enrichedPage = jobByPORef.current.size > 0
-            ? enrichWithMaterials(page, jobByPORef.current)
-            : page;
-          setOrders((prev) => mergeOrders(prev, enrichedPage));
-          for (const o of page) {
-            if (o.scheduledStart) {
-              const d = new Date(o.scheduledStart);
-              loadedMonthsRef.current.add(monthKey(d.getFullYear(), d.getMonth() + 1));
-            }
-          }
-        }, ac.signal);
-      } catch {
-        // Keep showing what we have
-      }
+      // Phase C removed — historical data (before -90 days) is now loaded
+      // on demand via loadMonth() when the user navigates to an old date.
+      // This avoids downloading the entire work_orders backlog on every visit.
 
       if (!stale()) {
         setLoadingBackground(false);
@@ -242,6 +233,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     <DataContext.Provider
       value={{
         orders,
+        materialJobs,
         loading,
         loadingBackground,
         lastUpdated,
