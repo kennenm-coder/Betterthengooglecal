@@ -2,10 +2,6 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useData } from "@/components/DataProvider";
-import { parseXlsHtml } from "@/lib/parse-xls";
-import { parseCsv } from "@/lib/parse-csv";
-import { upsertWorkOrders, insertNewAccounts } from "@/lib/store";
-import { parseAccountsCsv, isAccountsCsv } from "@/lib/parse-accounts-csv";
 import {
   getActionTypes,
   setActionTypes,
@@ -124,6 +120,7 @@ interface AllowedEmail {
   email: string;
   name: string | null;
   role: string;
+  auto_cc: string[] | null;
   created_at: string;
 }
 
@@ -159,6 +156,7 @@ function TeamTab() {
   const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editRole, setEditRole] = useState("");
+  const [editAutoCc, setEditAutoCc] = useState("");
 
   useEffect(() => {
     loadData();
@@ -234,6 +232,7 @@ function TeamTab() {
     setEditName(entry.name || "");
     setEditEmail(entry.email);
     setEditRole(entry.role);
+    setEditAutoCc((entry.auto_cc || []).join(", "));
   }
 
   function cancelEdit() {
@@ -260,6 +259,11 @@ function TeamTab() {
       }
     }
 
+    const parsedAutoCc = editAutoCc
+      .split(/[,;\n]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.includes("@"));
+
     const supabase = createAuthClient();
     const { error: updateError } = await supabase
       .from("allowed_emails")
@@ -267,6 +271,7 @@ function TeamTab() {
         email: trimmedEmail,
         name: trimmedName || null,
         role: editRole,
+        auto_cc: parsedAutoCc,
       })
       .eq("id", id);
 
@@ -276,7 +281,7 @@ function TeamTab() {
       setEmails((prev) =>
         prev.map((e) =>
           e.id === id
-            ? { ...e, email: trimmedEmail, name: trimmedName || null, role: editRole }
+            ? { ...e, email: trimmedEmail, name: trimmedName || null, role: editRole, auto_cc: parsedAutoCc }
             : e
         )
       );
@@ -403,6 +408,21 @@ function TeamTab() {
                     </option>
                   ))}
                 </select>
+                <div>
+                  <label className="text-[11px] font-medium text-muted mb-1 block">
+                    Auto CC on Field Notes
+                  </label>
+                  <textarea
+                    value={editAutoCc}
+                    onChange={(e) => setEditAutoCc(e.target.value)}
+                    placeholder="email1@company.com, email2@company.com"
+                    rows={2}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                  <p className="text-[10px] text-muted mt-0.5">
+                    Comma-separated. These emails auto-CC when this person sends field notes.
+                  </p>
+                </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => saveEdit(entry.id)}
@@ -445,6 +465,11 @@ function TeamTab() {
                   <span className="text-xs text-muted block truncate">
                     {entry.email}
                   </span>
+                  {entry.auto_cc && entry.auto_cc.length > 0 && (
+                    <span className="text-[10px] text-muted mt-0.5 block truncate">
+                      CC: {entry.auto_cc.join(", ")}
+                    </span>
+                  )}
                 </div>
                 <button
                   onClick={(e) => {
@@ -674,31 +699,23 @@ function UploadTab() {
     setResult(null);
 
     try {
-      const text = await file.text();
-      let parsed = parseXlsHtml(text);
-      if (parsed.length === 0) {
-        parsed = parseCsv(text);
-      }
+      const formData = new FormData();
+      formData.append("file", file);
 
-      if (parsed.length === 0) {
-        setResult({ success: false, message: "No orders found in file." });
-        setUploading(false);
-        return;
-      }
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const json = await res.json();
 
-      const supaOk = await upsertWorkOrders(parsed);
-
-      if (supaOk) {
+      if (res.ok && json.success) {
         await refresh();
         setResult({
           success: true,
-          message: `Uploaded ${parsed.length} orders to cloud. Material data will link automatically.`,
+          message: `Uploaded ${json.parsed} orders to cloud. Material data will link automatically.`,
         });
       } else {
         await refresh();
         setResult({
           success: false,
-          message: `Cloud sync failed for ${parsed.length} orders. Calendar restored from cloud data.`,
+          message: json.error || `Cloud sync failed. Calendar restored from cloud data.`,
         });
       }
     } catch {
@@ -714,27 +731,25 @@ function UploadTab() {
     setAcctResult(null);
 
     try {
-      const text = await file.text();
-      if (!isAccountsCsv(text)) {
-        setAcctResult({ success: false, message: "Not an accounts CSV. Needs 'Account Name' column." });
-        return;
+      const formData = new FormData();
+      formData.append("file", file);
+
+      setAcctResult({ success: true, message: "Uploading accounts..." });
+
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const json = await res.json();
+
+      if (res.ok && json.success) {
+        setAcctResult({
+          success: true,
+          message: `Done — ${json.parsed} accounts processed, ${json.inserted || 0} new, ${json.updated || 0} updated.`,
+        });
+      } else {
+        setAcctResult({
+          success: false,
+          message: json.error || "Account name upload failed.",
+        });
       }
-      const accounts = parseAccountsCsv(text);
-      if (accounts.length === 0) {
-        setAcctResult({ success: false, message: "No account names found in file." });
-        return;
-      }
-
-      setAcctResult({ success: true, message: `Parsing ${accounts.length} accounts...` });
-
-      const { inserted, total } = await insertNewAccounts(accounts, (done, all) => {
-        setAcctResult({ success: true, message: `Processing ${done} / ${all} accounts...` });
-      });
-
-      setAcctResult({
-        success: true,
-        message: `Done — ${total} unique accounts processed, new ones added, existing skipped.`,
-      });
     } catch {
       setAcctResult({ success: false, message: "Account name upload failed." });
     } finally {

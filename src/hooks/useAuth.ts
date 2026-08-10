@@ -9,6 +9,8 @@ export type UserRole = "admin" | "payroll-admin" | "member";
 interface AuthState {
   user: User | null;
   role: UserRole;
+  /** Extra emails to auto-CC on field notes for this user */
+  autoCc: string[];
   loading: boolean;
 }
 
@@ -16,6 +18,7 @@ export function useAuth(): AuthState {
   const [state, setState] = useState<AuthState>({
     user: null,
     role: "member",
+    autoCc: [],
     loading: true,
   });
 
@@ -30,17 +33,18 @@ export function useAuth(): AuthState {
       if (user?.email) {
         const { data } = await supabase
           .from("allowed_emails")
-          .select("role")
+          .select("role, auto_cc")
           .eq("email", user.email.toLowerCase())
           .maybeSingle();
 
         setState({
           user,
           role: (data?.role as UserRole) || "member",
+          autoCc: Array.isArray(data?.auto_cc) ? data.auto_cc : [],
           loading: false,
         });
       } else {
-        setState({ user, role: "member", loading: false });
+        setState({ user, role: "member", autoCc: [], loading: false });
       }
     }
 

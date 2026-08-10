@@ -5,6 +5,7 @@ import { isAccountsCsv, parseAccountsCsv, AccountRow } from "@/lib/parse-account
 import { createClient } from "@supabase/supabase-js";
 import { WorkOrder } from "@/lib/types";
 import { requireRole } from "@/lib/auth";
+import { writeImportLog, diffOrderIds } from "@/lib/import-log";
 
 type FileResult = {
   text: string;
@@ -273,6 +274,26 @@ export async function POST(request: NextRequest) {
 
       const stats = await upsertAccountsToSupabase(accounts);
 
+      // Log the accounts import
+      const acctSource = isBrowserUpload ? "browser" : "power_automate";
+      try {
+        await writeImportLog({
+          format: "accounts_csv",
+          source: acctSource,
+          total_count: accounts.length,
+          added_count: stats.inserted,
+          updated_count: stats.updated,
+          orders: accounts.slice(0, 50).map((a) => ({
+            workOrderNumber: a.order_number || "",
+            customerName: a.account_name,
+            scheduledStart: null,
+            action: a.order_number ? ("updated" as const) : ("added" as const),
+          })),
+        });
+      } catch (logErr) {
+        console.error("Import log write failed:", logErr);
+      }
+
       return NextResponse.json({
         success: true,
         format: "accounts_csv",
@@ -315,7 +336,41 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Diff: figure out which orders are new vs. updated
+    const existingIds = await diffOrderIds(orders.map((o) => o.id));
+    const addedOrders = orders.filter((o) => !existingIds.has(o.id));
+    const updatedOrders = orders.filter((o) => existingIds.has(o.id));
+
     const upserted = await upsertToSupabase(orders);
+
+    // Log the import for the shared import log
+    const source = isBrowserUpload ? "browser" : "power_automate";
+    try {
+      await writeImportLog({
+        format,
+        source,
+        total_count: orders.length,
+        added_count: addedOrders.length,
+        updated_count: updatedOrders.length,
+        orders: [
+          ...addedOrders.map((o) => ({
+            workOrderNumber: o.workOrderNumber,
+            customerName: o.customerName,
+            scheduledStart: o.scheduledStart,
+            action: "added" as const,
+          })),
+          ...updatedOrders.map((o) => ({
+            workOrderNumber: o.workOrderNumber,
+            customerName: o.customerName,
+            scheduledStart: o.scheduledStart,
+            action: "updated" as const,
+          })),
+        ],
+      });
+    } catch (logErr) {
+      // Import log is non-critical — don't fail the upload
+      console.error("Import log write failed:", logErr);
+    }
 
     return NextResponse.json({
       success: true,
