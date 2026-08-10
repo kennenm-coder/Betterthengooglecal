@@ -10,6 +10,8 @@ import OrderSheet from "@/components/OrderSheet";
 import BottomNav from "@/components/BottomNav";
 import FilterPanel, { Filters, EMPTY_FILTERS, applyFilters } from "@/components/FilterPanel";
 import TimeOffBanner from "@/components/TimeOffBanner";
+import StaleTabTag from "@/components/StaleTabBanner";
+import { useStaleTab } from "@/hooks/useStaleTab";
 import PinModal from "@/components/PinModal";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
@@ -31,6 +33,7 @@ function CalendarPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
   const [showPinModal, setShowPinModal] = useState(false);
+  const { isStale, staleAfter, nextUpdate, isDesktop, dismiss, resetBlock } = useStaleTab();
 
   useEffect(() => {
     fetchTimeOffRequests().then(setTimeOffRequests);
@@ -64,6 +67,7 @@ function CalendarPage() {
       }
       await refresh();
       fetchTimeOffRequests().then(setTimeOffRequests);
+      resetBlock();
     } finally {
       setRefreshing(false);
     }
@@ -127,11 +131,22 @@ function CalendarPage() {
             <ChevronRight className="w-5 h-5" />
           </button>
 
-          <h1 className="text-base font-semibold flex-1 truncate">
+          <h1 className="text-base font-semibold truncate">
             {view === "day"
               ? format(currentDate, "EEE, MMM d")
               : format(currentDate, "MMM yyyy")}
           </h1>
+
+          {isDesktop && (
+            <StaleTabTag
+              isStale={isStale}
+              staleAfter={staleAfter}
+              nextUpdate={nextUpdate}
+              onRefresh={handleRefresh}
+            />
+          )}
+
+          <div className="flex-1" />
 
           <button
             onClick={() => setShowPinModal(true)}

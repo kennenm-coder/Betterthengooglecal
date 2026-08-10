@@ -52,6 +52,7 @@ export interface NwoRow {
   species: string;
   lengths: string;
   vendor: string;
+  profileId?: string;
 }
 
 interface CatalogItem {
@@ -64,6 +65,10 @@ interface CatalogItem {
   nicknames?: string[];
   sendExtra?: boolean;
   sendExtraRate?: number;
+  hasSpecialInstructions?: boolean;
+  specialInstructionsText?: string;
+  requiresProfile?: boolean;
+  requiresCAD?: boolean;
 }
 
 interface MaterialCatalog {
@@ -205,6 +210,23 @@ function resolveProfileNickname(typed: string, catalogItems: CatalogItem[] | und
   const lower = typed.toLowerCase().trim();
   const match = (catalogItems || []).find(it => (it.nicknames || []).some(n => n.toLowerCase().trim() === lower));
   return match ? match.profile : typed;
+}
+
+// Get display name for a catalog item — appends special instructions in parentheses if set
+export function getDisplayName(catItem: CatalogItem | null | undefined): string {
+  if (!catItem) return "";
+  const base = catItem.profile || "";
+  if (catItem.hasSpecialInstructions && catItem.specialInstructionsText) {
+    return `${base} (${catItem.specialInstructionsText})`;
+  }
+  return base;
+}
+
+// Look up a catalog item by profile name and return its display name
+export function getDisplayNameByProfile(profile: string, catalogItems: CatalogItem[] | undefined): string {
+  if (!profile || !catalogItems) return profile || "";
+  const catItem = catalogItems.find(it => it.profile === profile);
+  return catItem ? getDisplayName(catItem) : profile;
 }
 
 // ─── MULL CUTS ──────────────────────────────────────────────────────────────
@@ -720,7 +742,9 @@ function buildNWOMaterialList(globalMaterials: any[], units: any[], materialCata
         .join(" ");
     }
     const qty = m.exactLengths ? m.exactLengths.length : Object.values(m.stockTotals as Record<number, number>).reduce((a, b) => a + b, 0);
-    return { qty, unit: "PCS", item: m.profile, color: m.color, species: m.species, lengths, vendor: m.vendor };
+    const catItem = (materialCatalog?.items || []).find(it => it.profile === m.profile);
+    const displayItem = catItem ? getDisplayName(catItem) : m.profile;
+    return { qty, unit: catItem?.unit || "PCS", item: displayItem, color: m.color, species: m.species, lengths, vendor: m.vendor, profileId: catItem?.id };
   });
 }
 
@@ -782,13 +806,14 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
     .filter((m: any) => m.profile)
     .map((m: any) => {
       const canonical = resolveProfileNickname(m.profile, materialCatalog?.items);
+      const ci = (materialCatalog?.items || []).find(it => it.profile === canonical);
       let vendor = m.vendor || "";
       if (!vendor) {
-        const ci = (materialCatalog?.items || []).find(it => it.profile === canonical);
         const opt = ci ? ((ci.options || []).find(o => !m.species || o.species === m.species) || ci.options?.[0]) : null;
         if (opt?.vendors?.length) vendor = opt.vendors[0];
       }
-      return { qty: m.qty || 1, unit: m.unit || "PCS", item: canonical, color: m.color || "", species: m.species || "", lengths: m.lengths || "—", vendor };
+      const displayItem = ci ? getDisplayName(ci) : canonical;
+      return { qty: m.qty || 1, unit: m.unit || "PCS", item: displayItem, color: m.color || "", species: m.species || "", lengths: m.lengths || "—", vendor, profileId: ci?.id };
     });
 
   // 4. Merge + length consolidation
@@ -890,7 +915,8 @@ export function buildBoardSummaryByUnit(
           .sort((a, b) => Number(a[0]) - Number(b[0]))
           .map(([sl, n]) => `${n}@${SL[Number(sl)] || Math.round(Number(sl) / 12) + "'"}`)
           .join(" ");
-        return `${stockStr} ${prof}`;
+        const displayProf = getDisplayNameByProfile(prof, materialCatalog?.items);
+        return `${stockStr} ${displayProf}`;
       });
     const sig = parts.join(", ");
     if (!sigMap[sig]) sigMap[sig] = [];

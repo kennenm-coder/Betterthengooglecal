@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useData } from "@/components/DataProvider";
 import JobCard from "@/components/JobCard";
 import BottomNav from "@/components/BottomNav";
 import { searchOrders, searchMaterialJobs } from "@/lib/search";
-import { fetchAllMaterialJobs } from "@/lib/store";
 import { lastFirst } from "@/lib/format-utils";
 import { MaterialJobData } from "@/lib/types";
 import { Search, Loader2, X, Database } from "lucide-react";
@@ -14,17 +13,11 @@ import { useRouter } from "next/navigation";
 const MAX_RESULTS = 50;
 
 export default function SearchPage() {
-  const { orders, loading } = useData();
+  // Use material jobs already loaded by DataProvider — no extra fetch.
+  const { orders, materialJobs, loading, loadingBackground } = useData();
+  const jobsLoading = loadingBackground && materialJobs.length === 0;
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const [materialJobs, setMaterialJobs] = useState<MaterialJobData[]>([]);
-  const [jobsLoading, setJobsLoading] = useState(true);
-
-  useEffect(() => {
-    fetchAllMaterialJobs()
-      .then(setMaterialJobs)
-      .finally(() => setJobsLoading(false));
-  }, []);
 
   const scheduledPOs = useMemo(
     () => new Set(orders.filter((o) => o.scheduledStart).map((o) => o.orderNumber)),
