@@ -243,7 +243,7 @@ function computeMullCuts(layout: any[], unitsByLabel: Record<string, { W: number
   }).filter(Boolean) as any[];
   if (!positioned.length) return null;
 
-  const groupLabel = layout.map((t: any) => t.label).join("+");
+  const groupLabel = layout.map((t: any) => t.label).sort().join("+");
   const cuts: any[] = [];
 
   const uniqueY = [...new Set(positioned.map((p: any) => p.gridY))];
@@ -342,7 +342,7 @@ function computeMullLatticeCuts(layout: any[], unitsByLabel: Record<string, { W:
   }).filter(Boolean) as any[];
   if (positioned.length < 2) return null;
   const near = (a: number, b: number) => Math.abs(a - b) < 1;
-  const groupLabel = layout.map((t: any) => t.label).join("+");
+  const groupLabel = layout.map((t: any) => t.label).sort().join("+");
   const cuts: any[] = [];
   for (let i = 0; i < positioned.length; i++) {
     for (let j = i + 1; j < positioned.length; j++) {
@@ -508,6 +508,32 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
     }
     if (!cuts.length) continue;
 
+    // ── Splice pass: cuts exceeding the longest available stock ──────────
+    // When a cut won't fit on any single board, split it into N pieces of
+    // the next size down. Each piece gets its own waste buffer since it's a
+    // separate physical board. E.g. a 170" cut (175" with buffer) that
+    // exceeds 14' (168") becomes 2 pieces @ ~85" each → 2×8' boards.
+    const maxStock = STOCK[STOCK.length - 1];
+    for (let i = cuts.length - 1; i >= 0; i--) {
+      if (cuts[i].length > maxStock) {
+        const cut = cuts.splice(i, 1)[0];
+        const n = Math.ceil(cut.rawLength / (maxStock - buf));
+        let remainingRaw = cut.rawLength;
+        for (let j = 0; j < n; j++) {
+          const segmentsLeft = n - j;
+          const segRaw = remainingRaw / segmentsLeft;
+          remainingRaw -= segRaw;
+          cuts.push({
+            ...cut,
+            rawLength: segRaw,
+            length: segRaw + buf,
+            cutName: `${cut.cutName} (splice ${j + 1}/${n})`,
+            _spliced: true,
+          });
+        }
+      }
+    }
+
     // Pack per-unit: group cuts by source so each board belongs to one unit
     const bySource: Record<string, any[]> = {};
     for (const cut of cuts) {
@@ -537,6 +563,7 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       if (packed[i].cuts.length !== 1) continue;
       if (packed[i].cuts[0]._doors3pc) continue;
       if (packed[i].cuts[0]._nonDeepEJ) continue;
+      if (packed[i].cuts[0]._spliced) continue;
       const iSource = packed[i].cuts[0].source;
       for (let j = 0; j < i; j++) {
         if (!packed[j].cuts.some((c: any) => c.source === iSource)) continue;
@@ -557,7 +584,7 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
     // Bump boards with too little remaining
     for (let i = packed.length - 1; i >= 0; i--) {
       const board = packed[i];
-      if (board.cuts.some((c: any) => c._nonDeepEJ)) continue;
+      if (board.cuts.some((c: any) => c._nonDeepEJ || c._spliced)) continue;
       if (board.remaining > 0 && board.remaining < MIN_BOARD_REMAINING) {
         const nextStock = STOCK.find(s => s > board.stockLength);
         if (nextStock) {
