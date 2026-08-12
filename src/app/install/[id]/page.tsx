@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { MaterialJobData, MaterialUnit } from "@/lib/types";
 import { getSupabase } from "@/lib/supabase";
 import { buildNwoRows, buildBoardSummaryByUnit, fetchCatalogAndOffsets, fetchPOsForJob, NwoRow, BoardSummaryEntry, PurchaseOrder } from "@/lib/nwo-builder";
-import { ArrowLeft, Loader2, AlertTriangle, Package, CheckCircle2, Clock, AlertCircle } from "lucide-react";
+import { ArrowLeft, Loader2, AlertTriangle, Package, CheckCircle2, Clock, AlertCircle, Printer } from "lucide-react";
 
 function fracToString(frac: number): string {
   if (frac === 0.125) return "1/8";
@@ -197,14 +197,30 @@ export default function InstallInstructionsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Back button */}
-      <div className="sticky top-0 bg-background z-20 border-b border-border px-3 py-2">
+      {/* Print styles — hide nav chrome, clean up for paper */}
+      <style>{`
+        @media print {
+          .no-print { display: none !important; }
+          body, .min-h-screen { background: white !important; }
+          * { color-adjust: exact; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+      `}</style>
+
+      {/* Back button + Print */}
+      <div className="no-print sticky top-0 bg-background z-20 border-b border-border px-3 py-2 flex items-center justify-between">
         <button
           onClick={() => router.back()}
           className="flex items-center gap-1.5 text-sm text-primary"
         >
           <ArrowLeft className="w-4 h-4" />
           Back
+        </button>
+        <button
+          onClick={() => window.print()}
+          className="hidden md:flex items-center gap-1.5 text-sm text-primary hover:text-foreground transition-colors"
+        >
+          <Printer className="w-4 h-4" />
+          Print
         </button>
       </div>
 
