@@ -137,7 +137,23 @@ function buildAutoSummaryFromUnits(units: any[]) {
   return Array.from(grouped.values());
 }
 
-function calcConsumableQty(autoFormula: any, summaryRows: any[]): number {
+// Apply send-extra buffer per consumable type
+// Exterior caulk: always +1 extra tube
+// Interior caulk: +1 when fractional > 0.5 or whole number (e.g. 2.5→3, 2.75→4, 3.0→4)
+// Coil/Foam/Sill tape: +1 when fractional > 0.7 (e.g. 2.7→3, 2.8→4)
+function applyConsumableBuffer(raw: number, profileId?: string): number {
+  if (raw <= 0) return 0;
+  if (profileId === "paint-caulk") return Math.ceil(raw) + 1;
+  // Round fractional to 4 decimals to avoid floating-point noise (e.g. 2.7%1 = 0.70000000000002)
+  const frac = Math.round((raw % 1) * 10000) / 10000;
+  if (profileId === "silicone-caulk") {
+    return (frac > 0.5 || frac === 0) ? Math.ceil(raw) + 1 : Math.ceil(raw);
+  }
+  // coil, foam, sill-tape
+  return frac > 0.7 ? Math.ceil(raw) + 1 : Math.ceil(raw);
+}
+
+function calcConsumableQty(autoFormula: any, summaryRows: any[], profileId?: string): number {
   if (!autoFormula) return 0;
   if (autoFormula.fixed) return autoFormula.fixed;
   let AD3 = 0, AD4 = 0, AD5 = 0, AD6 = 0;
@@ -152,15 +168,14 @@ function calcConsumableQty(autoFormula: any, summaryRows: any[]): number {
       else AD6 += qty;
     }
   }
-  return Math.ceil(
-    (autoFormula.ED || 0) * AD3 +
+  const raw = (autoFormula.ED || 0) * AD3 +
     (autoFormula.PTD || 0) * AD4 +
     (autoFormula.FF || 0) * AD5 +
-    (autoFormula.IF || 0) * AD6
-  );
+    (autoFormula.IF || 0) * AD6;
+  return applyConsumableBuffer(raw, profileId);
 }
 
-function getExteriorColorQtys(autoFormula: any, summaryRows: any[]): { color: string; qty: number }[] {
+function getExteriorColorQtys(autoFormula: any, summaryRows: any[], profileId?: string): { color: string; qty: number }[] {
   const colorMap: Record<string, number> = {};
   for (const row of (summaryRows || [])) {
     const qty = Number(row.qty) || 0;
@@ -175,23 +190,45 @@ function getExteriorColorQtys(autoFormula: any, summaryRows: any[]): { color: st
     if (contrib > 0) colorMap[color] = (colorMap[color] || 0) + contrib;
   }
   return Object.entries(colorMap)
-    .map(([color, qty]) => ({ color, qty: Math.ceil(qty) }))
+    .map(([color, qty]) => ({ color, qty: applyConsumableBuffer(qty, profileId) }))
     .filter(r => r.qty > 0);
 }
+
+// Normalize color name variants (e.g. "Snow Mist" → "Snowmist")
+const PAINT_NAME_MAP: Record<string, string> = {
+  "white": "White[RBA]",
+  "snow mist": "Snowmist",
+  "snowmist": "Snowmist",
+  "dark bronze": "Dark Bronze",
+  "canvas": "Canvas",
+  "sandtone": "Sandtone",
+  "terratone": "Terratone",
+  "cocoa bean": "Cocoa Bean",
+  "forest green": "Forest Green",
+  "black": "Black",
+  "red rock": "Red Rock",
+  "primed": "Primed",
+  "raw": "RAW",
+};
 
 function detectTrimCaulkColors(globalMaterials: any[], materialCatalog: MaterialCatalog | null, units: any[], additionalMaterials: any[]): string[] {
   const stainSet = new Set(Array.isArray(materialCatalog?.stains) ? materialCatalog!.stains : MC_DEFAULT_STAINS);
   let hasStain = false;
   const paintColors = new Set<string>();
 
+  // Normalize color names so variants like "Snow Mist" / "Snowmist" merge
+  const normColor = (c: string) => PAINT_NAME_MAP[(c || "").toLowerCase()] || c;
+
   for (const m of (globalMaterials || []).filter(m => !m.autoFormula && m.color)) {
-    if (stainSet.has(m.color) || m.color === "RAW") hasStain = true;
-    else paintColors.add(m.color);
+    const nc = normColor(m.color);
+    if (stainSet.has(nc) || nc === "RAW") hasStain = true;
+    else paintColors.add(nc);
   }
   for (const m of (additionalMaterials || [])) {
     if (!m.color) continue;
-    if (stainSet.has(m.color) || m.color === "RAW") hasStain = true;
-    else paintColors.add(m.color);
+    const nc = normColor(m.color);
+    if (stainSet.has(nc) || nc === "RAW") hasStain = true;
+    else paintColors.add(nc);
   }
   for (const u of (units || [])) {
     if (u.isMisc) continue;
@@ -760,7 +797,7 @@ function buildNWOMaterialList(globalMaterials: any[], units: any[], materialCata
       m.exactLengths.forEach((l: number) => { const k = Math.round(l * 16); counts[k] = counts[k] || { l, n: 0 }; counts[k].n++; });
       lengths = Object.values(counts)
         .sort((a, b) => a.l - b.l)
-        .map(({ l, n }) => `${n > 1 ? n + "@" : ""}${fmtLen(l)}`)
+        .map(({ l, n }) => `${n}@${fmtLen(l)}`)
         .join("  ");
     } else if (Object.keys(m.stockTotals).length) {
       lengths = Object.entries(m.stockTotals)
@@ -785,11 +822,11 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
   // 1. Consumable rows
   const consumableRows: NwoRow[] = [];
   for (const mat of gmItems.filter((m: any) => m.autoFormula)) {
-    const baseQty = mat.qtyOverride != null ? mat.qtyOverride : calcConsumableQty(mat.autoFormula, _allRows);
+    const baseQty = mat.qtyOverride != null ? mat.qtyOverride : calcConsumableQty(mat.autoFormula, _allRows, mat.profileId);
     if (mat.customOverride) {
       if (baseQty > 0) consumableRows.push({ qty: baseQty, unit: mat.unit || "PCS", item: mat.profile, color: (mat.colorOverride != null ? mat.colorOverride : mat.color) || "—", species: "—", lengths: "—", vendor: mat.vendor || "WAREHOUSE" });
     } else if (mat.profileId === "coil" || mat.profileId === "paint-caulk") {
-      const colorQtys = getExteriorColorQtys(mat.autoFormula, _allRows);
+      const colorQtys = getExteriorColorQtys(mat.autoFormula, _allRows, mat.profileId);
       if (colorQtys.length > 0) {
         for (const { color, qty } of colorQtys) {
           if (qty > 0) consumableRows.push({ qty, unit: mat.unit || "PCS", item: mat.profile, color, species: "—", lengths: "—", vendor: mat.vendor || "WAREHOUSE" });
@@ -808,7 +845,7 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
     if (!mat.customOverride && (mat.extraColors || []).length > 0) {
       const autoColors = new Set<string>();
       if (mat.profileId === "coil" || mat.profileId === "paint-caulk") {
-        getExteriorColorQtys(mat.autoFormula, _allRows).forEach(c => autoColors.add(c.color));
+        getExteriorColorQtys(mat.autoFormula, _allRows, mat.profileId).forEach(c => autoColors.add(c.color));
       } else if (mat.profileId === "silicone-caulk") {
         detectTrimCaulkColors(gmItems, materialCatalog, units, job.additionalMaterials).forEach(c => autoColors.add(c));
       }
@@ -881,7 +918,29 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
     }
   }
 
-  // 5. Vendor assignment overrides
+  // 5. Apply Material Summary overrides (±qty adjustments from JobEditor Section 4)
+  const summaryOv = job.materialSummaryOverrides || {};
+  if (Object.keys(summaryOv).length) {
+    const norm = (s: string) => (!s || s === "--" || s === "—") ? "" : s;
+    const deltaMap: Record<string, number> = {};
+    for (const k of Object.keys(summaryOv)) {
+      const d = summaryOv[k];
+      const p = k.split("|");
+      let nk: string | undefined;
+      if (p[0] === "cons") nk = p[1] + "|" + norm(p[2]) + "|";
+      else if (p[0] === "addl") nk = p[1] + "|" + norm(p[2]) + "|" + norm(p[3]);
+      if (nk && typeof d === "number") {
+        deltaMap[nk] = (deltaMap[nk] || 0) + d;
+      }
+    }
+    for (const r of merged) {
+      const key = r.item + "|" + norm(r.color) + "|" + norm(r.species);
+      const delta = deltaMap[key];
+      if (delta) r.qty = Math.max(0, r.qty + delta);
+    }
+  }
+
+  // 6. Vendor assignment overrides
   for (const row of merged) {
     const vaKey = `${row.item}|${row.color || ""}|${row.species || ""}`;
     if (vendorAssignments[vaKey]) row.vendor = vendorAssignments[vaKey];
