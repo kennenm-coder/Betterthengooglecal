@@ -135,6 +135,8 @@ export function parseXlsHtml(html: string): WorkOrder[] {
       doors: parseInt(cell(row, "# Doors"), 10) || 0,
       orderAlerts: cell(row, "Order Alerts") || "",
       accountName: cell(row, "Account Name: Account Name") || "",
+      latitude: parseFloat(cell(row, "Latitude")) || null,
+      longitude: parseFloat(cell(row, "Longitude")) || null,
     };
   });
 }

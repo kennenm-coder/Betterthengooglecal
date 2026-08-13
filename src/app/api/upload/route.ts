@@ -143,6 +143,8 @@ async function upsertToSupabase(orders: WorkOrder[]) {
     doors: wo.doors || 0,
     order_alerts: wo.orderAlerts || "",
     account_name: wo.accountName || "",
+    latitude: wo.latitude,
+    longitude: wo.longitude,
     updated_at: new Date().toISOString(),
   }));
 
