@@ -797,7 +797,7 @@ function buildNWOMaterialList(globalMaterials: any[], units: any[], materialCata
       m.exactLengths.forEach((l: number) => { const k = Math.round(l * 16); counts[k] = counts[k] || { l, n: 0 }; counts[k].n++; });
       lengths = Object.values(counts)
         .sort((a, b) => a.l - b.l)
-        .map(({ l, n }) => `${n > 1 ? n + "@" : ""}${fmtLen(l)}`)
+        .map(({ l, n }) => `${n}@${fmtLen(l)}`)
         .join("  ");
     } else if (Object.keys(m.stockTotals).length) {
       lengths = Object.entries(m.stockTotals)
