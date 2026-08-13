@@ -179,19 +179,41 @@ function getExteriorColorQtys(autoFormula: any, summaryRows: any[]): { color: st
     .filter(r => r.qty > 0);
 }
 
+// Normalize color name variants (e.g. "Snow Mist" → "Snowmist")
+const PAINT_NAME_MAP: Record<string, string> = {
+  "white": "White[RBA]",
+  "snow mist": "Snowmist",
+  "snowmist": "Snowmist",
+  "dark bronze": "Dark Bronze",
+  "canvas": "Canvas",
+  "sandtone": "Sandtone",
+  "terratone": "Terratone",
+  "cocoa bean": "Cocoa Bean",
+  "forest green": "Forest Green",
+  "black": "Black",
+  "red rock": "Red Rock",
+  "primed": "Primed",
+  "raw": "RAW",
+};
+
 function detectTrimCaulkColors(globalMaterials: any[], materialCatalog: MaterialCatalog | null, units: any[], additionalMaterials: any[]): string[] {
   const stainSet = new Set(Array.isArray(materialCatalog?.stains) ? materialCatalog!.stains : MC_DEFAULT_STAINS);
   let hasStain = false;
   const paintColors = new Set<string>();
 
+  // Normalize color names so variants like "Snow Mist" / "Snowmist" merge
+  const normColor = (c: string) => PAINT_NAME_MAP[(c || "").toLowerCase()] || c;
+
   for (const m of (globalMaterials || []).filter(m => !m.autoFormula && m.color)) {
-    if (stainSet.has(m.color) || m.color === "RAW") hasStain = true;
-    else paintColors.add(m.color);
+    const nc = normColor(m.color);
+    if (stainSet.has(nc) || nc === "RAW") hasStain = true;
+    else paintColors.add(nc);
   }
   for (const m of (additionalMaterials || [])) {
     if (!m.color) continue;
-    if (stainSet.has(m.color) || m.color === "RAW") hasStain = true;
-    else paintColors.add(m.color);
+    const nc = normColor(m.color);
+    if (stainSet.has(nc) || nc === "RAW") hasStain = true;
+    else paintColors.add(nc);
   }
   for (const u of (units || [])) {
     if (u.isMisc) continue;
@@ -881,7 +903,29 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
     }
   }
 
-  // 5. Vendor assignment overrides
+  // 5. Apply Material Summary overrides (±qty adjustments from JobEditor Section 4)
+  const summaryOv = job.materialSummaryOverrides || {};
+  if (Object.keys(summaryOv).length) {
+    const norm = (s: string) => (!s || s === "--" || s === "—") ? "" : s;
+    const deltaMap: Record<string, number> = {};
+    for (const k of Object.keys(summaryOv)) {
+      const d = summaryOv[k];
+      const p = k.split("|");
+      let nk: string | undefined;
+      if (p[0] === "cons") nk = p[1] + "|" + norm(p[2]) + "|";
+      else if (p[0] === "addl") nk = p[1] + "|" + norm(p[2]) + "|" + norm(p[3]);
+      if (nk && typeof d === "number") {
+        deltaMap[nk] = (deltaMap[nk] || 0) + d;
+      }
+    }
+    for (const r of merged) {
+      const key = r.item + "|" + norm(r.color) + "|" + norm(r.species);
+      const delta = deltaMap[key];
+      if (delta) r.qty = Math.max(0, r.qty + delta);
+    }
+  }
+
+  // 6. Vendor assignment overrides
   for (const row of merged) {
     const vaKey = `${row.item}|${row.color || ""}|${row.species || ""}`;
     if (vendorAssignments[vaKey]) row.vendor = vendorAssignments[vaKey];
