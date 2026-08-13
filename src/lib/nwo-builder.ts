@@ -137,7 +137,23 @@ function buildAutoSummaryFromUnits(units: any[]) {
   return Array.from(grouped.values());
 }
 
-function calcConsumableQty(autoFormula: any, summaryRows: any[]): number {
+// Apply send-extra buffer per consumable type
+// Exterior caulk: always +1 extra tube
+// Interior caulk: +1 when fractional > 0.5 or whole number (e.g. 2.5→3, 2.75→4, 3.0→4)
+// Coil/Foam/Sill tape: +1 when fractional > 0.7 (e.g. 2.7→3, 2.8→4)
+function applyConsumableBuffer(raw: number, profileId?: string): number {
+  if (raw <= 0) return 0;
+  if (profileId === "paint-caulk") return Math.ceil(raw) + 1;
+  // Round fractional to 4 decimals to avoid floating-point noise (e.g. 2.7%1 = 0.70000000000002)
+  const frac = Math.round((raw % 1) * 10000) / 10000;
+  if (profileId === "silicone-caulk") {
+    return (frac > 0.5 || frac === 0) ? Math.ceil(raw) + 1 : Math.ceil(raw);
+  }
+  // coil, foam, sill-tape
+  return frac > 0.7 ? Math.ceil(raw) + 1 : Math.ceil(raw);
+}
+
+function calcConsumableQty(autoFormula: any, summaryRows: any[], profileId?: string): number {
   if (!autoFormula) return 0;
   if (autoFormula.fixed) return autoFormula.fixed;
   let AD3 = 0, AD4 = 0, AD5 = 0, AD6 = 0;
@@ -152,15 +168,14 @@ function calcConsumableQty(autoFormula: any, summaryRows: any[]): number {
       else AD6 += qty;
     }
   }
-  return Math.ceil(
-    (autoFormula.ED || 0) * AD3 +
+  const raw = (autoFormula.ED || 0) * AD3 +
     (autoFormula.PTD || 0) * AD4 +
     (autoFormula.FF || 0) * AD5 +
-    (autoFormula.IF || 0) * AD6
-  );
+    (autoFormula.IF || 0) * AD6;
+  return applyConsumableBuffer(raw, profileId);
 }
 
-function getExteriorColorQtys(autoFormula: any, summaryRows: any[]): { color: string; qty: number }[] {
+function getExteriorColorQtys(autoFormula: any, summaryRows: any[], profileId?: string): { color: string; qty: number }[] {
   const colorMap: Record<string, number> = {};
   for (const row of (summaryRows || [])) {
     const qty = Number(row.qty) || 0;
@@ -175,7 +190,7 @@ function getExteriorColorQtys(autoFormula: any, summaryRows: any[]): { color: st
     if (contrib > 0) colorMap[color] = (colorMap[color] || 0) + contrib;
   }
   return Object.entries(colorMap)
-    .map(([color, qty]) => ({ color, qty: Math.ceil(qty) }))
+    .map(([color, qty]) => ({ color, qty: applyConsumableBuffer(qty, profileId) }))
     .filter(r => r.qty > 0);
 }
 
@@ -807,11 +822,11 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
   // 1. Consumable rows
   const consumableRows: NwoRow[] = [];
   for (const mat of gmItems.filter((m: any) => m.autoFormula)) {
-    const baseQty = mat.qtyOverride != null ? mat.qtyOverride : calcConsumableQty(mat.autoFormula, _allRows);
+    const baseQty = mat.qtyOverride != null ? mat.qtyOverride : calcConsumableQty(mat.autoFormula, _allRows, mat.profileId);
     if (mat.customOverride) {
       if (baseQty > 0) consumableRows.push({ qty: baseQty, unit: mat.unit || "PCS", item: mat.profile, color: (mat.colorOverride != null ? mat.colorOverride : mat.color) || "—", species: "—", lengths: "—", vendor: mat.vendor || "WAREHOUSE" });
     } else if (mat.profileId === "coil" || mat.profileId === "paint-caulk") {
-      const colorQtys = getExteriorColorQtys(mat.autoFormula, _allRows);
+      const colorQtys = getExteriorColorQtys(mat.autoFormula, _allRows, mat.profileId);
       if (colorQtys.length > 0) {
         for (const { color, qty } of colorQtys) {
           if (qty > 0) consumableRows.push({ qty, unit: mat.unit || "PCS", item: mat.profile, color, species: "—", lengths: "—", vendor: mat.vendor || "WAREHOUSE" });
@@ -830,7 +845,7 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
     if (!mat.customOverride && (mat.extraColors || []).length > 0) {
       const autoColors = new Set<string>();
       if (mat.profileId === "coil" || mat.profileId === "paint-caulk") {
-        getExteriorColorQtys(mat.autoFormula, _allRows).forEach(c => autoColors.add(c.color));
+        getExteriorColorQtys(mat.autoFormula, _allRows, mat.profileId).forEach(c => autoColors.add(c.color));
       } else if (mat.profileId === "silicone-caulk") {
         detectTrimCaulkColors(gmItems, materialCatalog, units, job.additionalMaterials).forEach(c => autoColors.add(c));
       }
