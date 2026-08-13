@@ -72,6 +72,8 @@ interface WorkOrderRow {
   doors: number;
   order_alerts: string;
   account_name: string;
+  latitude: number | null;
+  longitude: number | null;
   uploaded_at: string;
   updated_at: string;
 }
@@ -113,6 +115,8 @@ function rowToWorkOrder(row: WorkOrderRow): WorkOrder {
     doors: row.doors || 0,
     orderAlerts: row.order_alerts || "",
     accountName: row.account_name || "",
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
   };
 }
 
@@ -148,6 +152,8 @@ function workOrderToRow(wo: WorkOrder) {
     doors: wo.doors || 0,
     order_alerts: wo.orderAlerts || "",
     account_name: wo.accountName || "",
+    latitude: wo.latitude,
+    longitude: wo.longitude,
     updated_at: new Date().toISOString(),
   };
 }

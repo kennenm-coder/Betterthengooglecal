@@ -29,6 +29,8 @@ export interface WorkOrder {
   doors: number;
   orderAlerts: string;
   accountName: string;
+  latitude: number | null;
+  longitude: number | null;
   materialJob?: MaterialJobData | null;
 }
 
