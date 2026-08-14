@@ -146,8 +146,8 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        {/* Dev Page — admin only */}
-        {role === "admin" && (
+        {/* Dev Page — admin & payroll-admin */}
+        {(role === "admin" || role === "payroll-admin") && (
           <section>
             <Link
               href="/admin"

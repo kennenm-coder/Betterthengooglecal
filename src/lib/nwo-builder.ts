@@ -511,22 +511,25 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       const isDoor = isUnitDoor(u);
 
       const mullGk = mullGroupsByLabel[unitLabel];
-      if (mullGk && (isCasing || isEJ || isLattice) && !isDoor) {
+      if (mullGk && (isCasing || isEJ || isLattice)) {
         if (mullGroupsProcessed.has(mullGk)) continue;
         mullGroupsProcessed.add(mullGk);
         const layout = mullLayouts[mullGk];
         const unitsByLabel: Record<string, { W: number; H: number }> = {};
+        // If any unit in the group is a door, skip bottom cut for the whole group
+        let groupHasDoor = false;
         units.forEach((gu: any) => {
           const gl = String(gu.label || gu.id);
           if (mullHandled.has(gl)) {
             unitsByLabel[gl] = { W: (gu.widthWhole || 0) + (gu.widthFrac || 0), H: (gu.heightWhole || 0) + (gu.heightFrac || 0) };
+            if (isUnitDoor(gu)) groupHasDoor = true;
           }
         });
         if (isLattice) {
           const latticeCuts = computeMullLatticeCuts(layout, unitsByLabel, buf);
           if (latticeCuts && latticeCuts.length) cuts.push(...latticeCuts);
         } else {
-          const mullCuts = computeMullCuts(layout, unitsByLabel, buf, isEJ, deepEJ, isDoor);
+          const mullCuts = computeMullCuts(layout, unitsByLabel, buf, isEJ, deepEJ, groupHasDoor);
           if (mullCuts && mullCuts.length) {
             if (isEJ && !deepEJ) mullCuts.forEach((c: any) => { c._nonDeepEJ = true; });
             cuts.push(...mullCuts);
