@@ -46,6 +46,21 @@ export default function AdminPage() {
     );
   }
 
+  // Payroll admins get access to Team tab only
+  if (role === "payroll-admin") {
+    return (
+      <div className="flex flex-col h-full">
+        <header className="bg-background border-b border-border px-4 py-3">
+          <h1 className="text-lg font-semibold">Team Management</h1>
+        </header>
+        <main className="flex-1 overflow-y-auto p-4">
+          <TeamTab canDelete={false} isPayrollAdmin={true} />
+        </main>
+        <BottomNav />
+      </div>
+    );
+  }
+
   if (role !== "admin") {
     return (
       <div className="flex flex-col h-full">
@@ -106,7 +121,7 @@ function UnlockedContent() {
 
       <div className="flex-1 overflow-y-auto p-4">
         {tab === "settings" && <SettingsTab />}
-        {tab === "team" && <TeamTab />}
+        {tab === "team" && <TeamTab canDelete={true} />}
         {tab === "log" && <LogTab />}
         {tab === "upload" && <UploadTab />}
       </div>
@@ -143,7 +158,7 @@ const ROLE_STYLES: Record<string, string> = {
   member: "bg-surface border border-border text-muted",
 };
 
-function TeamTab() {
+function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boolean; isPayrollAdmin?: boolean }) {
   const [emails, setEmails] = useState<AllowedEmail[]>([]);
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -157,6 +172,11 @@ function TeamTab() {
   const [editEmail, setEditEmail] = useState("");
   const [editRole, setEditRole] = useState("");
   const [editAutoCc, setEditAutoCc] = useState("");
+
+  // Payroll admins can only assign member or payroll-admin roles (not admin)
+  const availableRoles = isPayrollAdmin
+    ? ROLE_OPTIONS.filter((r) => r.value !== "admin")
+    : ROLE_OPTIONS;
 
   useEffect(() => {
     loadData();
@@ -228,6 +248,8 @@ function TeamTab() {
   }
 
   function startEdit(entry: AllowedEmail) {
+    // Payroll admins cannot edit admin users
+    if (isPayrollAdmin && entry.role === "admin") return;
     setEditingId(entry.id);
     setEditName(entry.name || "");
     setEditEmail(entry.email);
@@ -402,7 +424,7 @@ function TeamTab() {
                   onChange={(e) => setEditRole(e.target.value)}
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
                 >
-                  {ROLE_OPTIONS.map((r) => (
+                  {availableRoles.map((r) => (
                     <option key={r.value} value={r.value}>
                       {r.label}
                     </option>
@@ -444,7 +466,11 @@ function TeamTab() {
               <div
                 key={entry.id}
                 onClick={() => startEdit(entry)}
-                className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-border bg-surface cursor-pointer hover:border-primary/30 transition-colors"
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg border border-border bg-surface transition-colors ${
+                  isPayrollAdmin && entry.role === "admin"
+                    ? "opacity-60"
+                    : "cursor-pointer hover:border-primary/30"
+                }`}
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -471,15 +497,17 @@ function TeamTab() {
                     </span>
                   )}
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeEmail(entry.id);
-                  }}
-                  className="p-1.5 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors shrink-0 ml-2"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {canDelete && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeEmail(entry.id);
+                    }}
+                    className="p-1.5 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors shrink-0 ml-2"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             )
           )}
