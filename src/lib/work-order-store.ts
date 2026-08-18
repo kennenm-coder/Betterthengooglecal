@@ -389,9 +389,16 @@ export interface NewWriteUp {
   createdByName?: string;
 }
 
-export async function createWriteUp(input: NewWriteUp): Promise<FieldWorkOrder | null> {
+export interface CreateWriteUpResult {
+  writeUp: FieldWorkOrder | null;
+  error: string | null;
+}
+
+export async function createWriteUp(input: NewWriteUp): Promise<CreateWriteUpResult> {
   const supabase = getSupabase();
-  if (!supabase) return null;
+  if (!supabase) {
+    return { writeUp: null, error: "Not signed in — could not reach the database." };
+  }
 
   const { data, error } = await supabase
     .from("field_work_orders")
@@ -416,8 +423,13 @@ export async function createWriteUp(input: NewWriteUp): Promise<FieldWorkOrder |
     .select("*")
     .single();
 
-  if (error || !data) return null;
-  return rowToWriteUp(data as FieldWorkOrderRow);
+  if (error || !data) {
+    // Surface the real reason (RLS denial, missing table/column, etc.) instead
+    // of failing silently — the modal shows this to the field manager.
+    console.error("createWriteUp insert failed:", error);
+    return { writeUp: null, error: error?.message || "Unknown database error." };
+  }
+  return { writeUp: rowToWriteUp(data as FieldWorkOrderRow), error: null };
 }
 
 // ─── Batch submit (multi-unit write-up) ─────────────────────────────────────
@@ -444,15 +456,22 @@ export interface SubmitContext {
   createdByName?: string;
 }
 
+export interface SubmitBatchResult {
+  created: FieldWorkOrder[];
+  /** First database error encountered, if any — surfaced to the user. */
+  error: string | null;
+}
+
 /**
  * Upload photos and create one row per unit entry. Returns the created
- * write-ups. Photo upload failures are skipped so the write-up still saves.
+ * write-ups plus the first error (if any). Photo upload failures are skipped so
+ * the write-up still saves; a row-insert failure stops the batch and reports.
  */
 export async function submitWriteUpBatch(
   ctx: SubmitContext,
   entries: WriteUpEntryInput[],
   onProgress?: (done: number, total: number) => void
-): Promise<FieldWorkOrder[]> {
+): Promise<SubmitBatchResult> {
   const created: FieldWorkOrder[] = [];
   let done = 0;
   for (const e of entries) {
@@ -465,7 +484,7 @@ export async function submitWriteUpBatch(
         photos.push({ path, name: `${e.unitLabel || "Whole job"} photo ${i + 1} of ${total}` });
       }
     }
-    const wo = await createWriteUp({
+    const { writeUp, error } = await createWriteUp({
       orderNumber: ctx.orderNumber,
       workOrderNumber: ctx.workOrderNumber,
       jobId: ctx.jobId,
@@ -481,10 +500,16 @@ export async function submitWriteUpBatch(
       createdBy: ctx.createdBy,
       createdByName: ctx.createdByName,
     });
-    if (wo) created.push(wo);
+    if (writeUp) {
+      created.push(writeUp);
+    } else {
+      // Stop on the first insert failure and report it — the draft is kept so
+      // nothing is lost.
+      return { created, error: error || "Could not save the write-up." };
+    }
     onProgress?.(++done, entries.length);
   }
-  return created;
+  return { created, error: null };
 }
 
 /** Field-notes inbox the write-up email is addressed to. */

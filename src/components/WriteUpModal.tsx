@@ -472,7 +472,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     onClose();
   }
 
-  async function submitAndEmail() {
+  async function submitWriteUp(sendEmail: boolean) {
     let allEntries = entries;
     if (editorHasContent) {
       const key = editingKey || crypto.randomUUID();
@@ -506,20 +506,31 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       photoFiles: e.photos.map((p) => p.blob),
     }));
 
-    const created = await submitWriteUpBatch(ctx, inputs, (done, total) => setProgress({ done, total }));
+    const { created, error: saveError } = await submitWriteUpBatch(ctx, inputs, (done, total) =>
+      setProgress({ done, total })
+    );
     setSubmitting(false);
     setProgress(null);
 
     if (created.length === 0) {
-      setError("Could not save the write-up. It's still saved as a draft — try again.");
+      // Show the actual database reason so it's fixable (RLS, permissions, etc.).
+      // The draft is untouched, so nothing is lost.
+      setError(
+        saveError
+          ? `Couldn't save: ${saveError} — it's still saved as a draft, try again.`
+          : "Could not save the write-up. It's still saved as a draft — try again."
+      );
       return;
     }
 
     await clearDraft(order.orderNumber);
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
-    const docLink = `${origin}/work-orders/${encodeURIComponent(order.orderNumber)}`;
-    const mailto = buildWriteUpMailto(ctx, inputs, docLink, autoCc);
-    if (typeof window !== "undefined") window.location.href = mailto;
+
+    if (sendEmail) {
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const docLink = `${origin}/work-orders/${encodeURIComponent(order.orderNumber)}`;
+      const mailto = buildWriteUpMailto(ctx, inputs, docLink, autoCc);
+      if (typeof window !== "undefined") window.location.href = mailto;
+    }
 
     onSaved?.();
     onClose();
@@ -897,24 +908,37 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
 
         {/* Footer */}
         <div className="px-4 py-3 border-t border-border shrink-0">
-          <button
-            onClick={submitAndEmail}
-            disabled={submitting || totalUnits === 0}
-            className="w-full py-4 rounded-xl bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.99] transition-transform"
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                {progress ? `Uploading ${progress.done}/${progress.total}…` : "Saving…"}
-              </>
-            ) : (
-              <>
-                <Send className="w-5 h-5" />
-                Finish &amp; Email ({totalUnits})
-              </>
-            )}
-          </button>
-          <p className="text-[11px] text-muted text-center mt-1.5">Auto-saves as you go.</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => submitWriteUp(false)}
+              disabled={submitting || totalUnits === 0}
+              className="shrink-0 px-4 py-4 rounded-xl border-2 border-amber-500 text-amber-600 font-semibold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.99] transition-transform"
+              title="Save the write-up without opening email"
+            >
+              <Check className="w-5 h-5" />
+              Save
+            </button>
+            <button
+              onClick={() => submitWriteUp(true)}
+              disabled={submitting || totalUnits === 0}
+              className="flex-1 py-4 rounded-xl bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.99] transition-transform"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  {progress ? `Uploading ${progress.done}/${progress.total}…` : "Saving…"}
+                </>
+              ) : (
+                <>
+                  <Send className="w-5 h-5" />
+                  Save &amp; Email ({totalUnits})
+                </>
+              )}
+            </button>
+          </div>
+          <p className="text-[11px] text-muted text-center mt-1.5">
+            Auto-saves a draft as you go · <strong>Save</strong> posts it to Write-Ups.
+          </p>
         </div>
       </div>
     </div>

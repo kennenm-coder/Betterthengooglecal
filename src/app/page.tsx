@@ -16,7 +16,8 @@ import PinModal from "@/components/PinModal";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO } from "date-fns";
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database, CalendarDays, Plus } from "lucide-react";
+import Link from "next/link";
+import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database, CalendarDays, Plus, UserCog } from "lucide-react";
 
 export default function CalendarPageWrapper() {
   return (
@@ -156,6 +157,14 @@ function CalendarPage() {
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">Time Off</span>
           </button>
+
+          <Link
+            href="/settings"
+            className="p-1.5 rounded-md hover:bg-surface text-muted hover:text-foreground shrink-0"
+            title="Settings"
+          >
+            <UserCog className="w-5 h-5" />
+          </Link>
         </div>
 
         {/* Row 2: Actions */}

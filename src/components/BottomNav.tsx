@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Calendar, Search, ScrollText, UserCog, Wrench } from "lucide-react";
+import { Calendar, Search, ScrollText, Wrench } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork, canReviewWriteUps } from "@/lib/roles";
 
+// Settings lives in the top-right of the calendar header, not the bottom nav.
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: Calendar },
   { href: "/search", label: "Search", icon: Search },
   { href: "/log", label: "Changes", icon: ScrollText },
-  { href: "/settings", label: "Settings", icon: UserCog },
 ];
 
 export default function BottomNav() {
@@ -19,11 +19,7 @@ export default function BottomNav() {
   const showWriteUps = canDoFieldWork(role) || canReviewWriteUps(role);
 
   const items = showWriteUps
-    ? [
-        ...NAV_ITEMS.slice(0, 3),
-        { href: "/work-orders", label: "Write-Ups", icon: Wrench },
-        ...NAV_ITEMS.slice(3),
-      ]
+    ? [...NAV_ITEMS, { href: "/work-orders", label: "Write-Ups", icon: Wrench }]
     : NAV_ITEMS;
 
   return (
@@ -34,12 +30,14 @@ export default function BottomNav() {
           <Link
             key={href}
             href={href}
-            className={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors ${
+            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors ${
               active ? "text-primary" : "text-muted"
             }`}
           >
-            <Icon className="w-5 h-5" />
-            <span className="text-[11px] font-medium">{label}</span>
+            <Icon className="w-5 h-5 shrink-0" />
+            <span className="text-[11px] font-medium leading-none truncate max-w-full px-0.5">
+              {label}
+            </span>
           </Link>
         );
       })}
