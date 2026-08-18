@@ -30,12 +30,12 @@ export default function BottomNav() {
           <Link
             key={href}
             href={href}
-            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors ${
+            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-2.5 gap-1 transition-colors ${
               active ? "text-primary" : "text-muted"
             }`}
           >
-            <Icon className="w-5 h-5 shrink-0" />
-            <span className="text-[11px] font-medium leading-none truncate max-w-full px-0.5">
+            <Icon className="w-6 h-6 shrink-0" />
+            <span className="text-xs font-medium leading-none truncate max-w-full px-0.5">
               {label}
             </span>
           </Link>
