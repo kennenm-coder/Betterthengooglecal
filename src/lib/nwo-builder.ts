@@ -403,13 +403,41 @@ function computeMullLatticeCuts(layout: any[], unitsByLabel: Record<string, { W:
 
 // ─── BOARD PACKING (buildGlobalMaterialBoards) ──────────────────────────────
 
-function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materialCatalog: MaterialCatalog | null, boardWaste: number, mullLayouts: any, options?: { doors3pc?: boolean }) {
+function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materialCatalog: MaterialCatalog | null, boardWaste: number, mullLayouts: any, options?: { doors3pc?: boolean; summaryOverrides?: any }) {
   const doors3pc = options?.doors3pc ?? false;
   const buf = boardWaste ?? 5;
   const MIN_BOARD_REMAINING = 8;
   const DEFAULT_STOCK = [96, 120, 144, 168];
   const allBoards: any[] = [];
   const customCalcMethods = materialCatalog?.calcMethods || [];
+
+  // ── Section 4 per-unit board overrides (mirrors cut-list-pro/lib/boardCalc.js) ──
+  // Re-designate a unit+material's board set from the Section 4 Material Summary
+  // (stored as per-length deltas, e.g. { "8'": -2, "10'": +2 }) so the tally,
+  // boards-by-unit, and cut list all agree. Applied in the override pass below.
+  const summaryOverrides = options?.summaryOverrides || {};
+  const hasOverrides = Object.keys(summaryOverrides).length > 0;
+  const SL_INCH_TO_LABEL: Record<number, string> = { 96: "8'", 120: "10'", 144: "12'", 168: "14'", 192: "16'", 216: "18'", 240: "20'" };
+  const SL_LABEL_TO_INCH: Record<string, number> = Object.fromEntries(Object.entries(SL_INCH_TO_LABEL).map(([i, l]) => [l, Number(i)]));
+  const inchToLabel = (inch: number) => SL_INCH_TO_LABEL[inch] || (Math.round(Number(inch) / 12) + "'");
+  const _mullCount: Record<string, number> = {};
+  (units || []).forEach((u: any) => {
+    const mm = String(u.label || "").trim().match(/^(\d+)\s*([a-zA-Z]+)$/);
+    if (mm) _mullCount[mm[1]] = (_mullCount[mm[1]] || 0) + 1;
+  });
+  const labelToMullBase: Record<string, string> = {};
+  (units || []).forEach((u: any) => {
+    const raw = String(u.label || "").trim();
+    const mm = raw.match(/^(\d+)\s*([a-zA-Z]+)$/);
+    if (mm && _mullCount[mm[1]] >= 2) labelToMullBase[raw] = mm[1];
+  });
+  const overrideUnitKey = (source: any) => {
+    const label = String(source || "").replace(/\s*\(.*\)\s*$/, "");
+    if (!label) return "";
+    const first = label.split("+")[0];
+    if (labelToMullBase[first]) return `mull-${labelToMullBase[first]}`;
+    return label;
+  };
 
   const isWphMethod = (method: string) => {
     if (method === "wph" || method === "1w") return true;
@@ -696,6 +724,60 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       packed.push(...otherBoards);
     }
 
+    // ── Section 4 override pass ──────────────────────────────────────────
+    if (hasOverrides && packed.length) {
+      const profileName = mat.profile || catItem.profile;
+      const matColor = mat.color || "";
+      const matSpecies = mat.species || "";
+      const groups = new Map<string, any[]>();
+      packed.forEach((b: any) => {
+        const k = overrideUnitKey(b.cuts[0]?.source);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k)!.push(b);
+      });
+      const replacements: any[] = [];
+      let mutated = false;
+      groups.forEach((boards, unitKey) => {
+        const ovKey = `unit|${unitKey}|${profileName}|${matColor}|${matSpecies}`;
+        const delta = summaryOverrides[ovKey];
+        if (!delta || typeof delta !== "object") { replacements.push(...boards); return; }
+        const target: Record<string, number> = {};
+        boards.forEach((b: any) => { const lab = inchToLabel(b.stockLength); target[lab] = (target[lab] || 0) + 1; });
+        Object.entries(delta).forEach(([lab, d]) => { target[lab] = Math.max(0, (target[lab] || 0) + (Number(d) || 0)); });
+        const targetInches: number[] = [];
+        Object.entries(target).forEach(([lab, n]) => {
+          const inch = SL_LABEL_TO_INCH[lab];
+          if (inch && n > 0) for (let i = 0; i < n; i++) targetInches.push(inch);
+        });
+        targetInches.sort((a, b) => a - b);
+        const unitCuts = boards.flatMap((b: any) => b.cuts);
+        const template = boards[0];
+        const _srcCounts: Record<string, number> = {};
+        unitCuts.forEach((c: any) => { if (c.source) _srcCounts[c.source] = (_srcCounts[c.source] || 0) + 1; });
+        const repSource = Object.entries(_srcCounts).sort((a, b) => b[1] - a[1])[0]?.[0]
+          || boards[0]?.cuts[0]?.source || "";
+        if (!targetInches.length) {
+          if (unitCuts.length) { boards.forEach((b: any) => { b._overrideUnfit = true; }); replacements.push(...boards); mutated = true; }
+          return;
+        }
+        const bins = targetInches.map((len: number) => ({
+          stockLength: len, profile: template.profile, species: template.species,
+          color: template.color, vendor: template.vendor, category: template.category,
+          cuts: [] as any[], remaining: len, _overrideDesignated: true, source: repSource,
+        }));
+        let unfit = false;
+        [...unitCuts].sort((a: any, b: any) => b.length - a.length).forEach((cut: any) => {
+          const bin = bins.find((bn: any) => (bn.remaining - (bn.cuts.length ? (cut.rawLength || (cut.length - buf)) : cut.length)) >= 0);
+          if (bin) { bin.remaining -= bin.cuts.length ? (cut.rawLength || (cut.length - buf)) : cut.length; bin.cuts.push(cut); }
+          else { unfit = true; bins[bins.length - 1].cuts.push(cut); }
+        });
+        if (unfit) bins.forEach((bn: any) => { (bn as any)._overrideUnfit = true; });
+        replacements.push(...bins);
+        mutated = true;
+      });
+      if (mutated) { packed.length = 0; packed.push(...replacements); }
+    }
+
     allBoards.push(...packed);
   }
 
@@ -704,7 +786,7 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
 
 // ─── buildNWOMaterialList (trim rows from board packing) ────────────────────
 
-function buildNWOMaterialList(globalMaterials: any[], units: any[], materialCatalog: MaterialCatalog | null, boardWaste: number, mullLayouts: any, options?: { doors3pc?: boolean }) {
+function buildNWOMaterialList(globalMaterials: any[], units: any[], materialCatalog: MaterialCatalog | null, boardWaste: number, mullLayouts: any, options?: { doors3pc?: boolean; summaryOverrides?: any }) {
   if (!globalMaterials || !globalMaterials.length) return [];
   const { boards } = buildGlobalMaterialBoards(globalMaterials, units, materialCatalog, boardWaste, mullLayouts, options);
 
@@ -865,7 +947,7 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
     materialCatalog,
     offsets?.boardWaste,
     job.mullLayouts,
-    { doors3pc: job.doors3pc !== false }
+    { doors3pc: job.doors3pc !== false, summaryOverrides: job.materialSummaryOverrides }
   );
 
   // 3. Additional materials
@@ -921,10 +1003,19 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
     }
   }
 
-  // 5. Apply Material Summary overrides (±qty adjustments from JobEditor Section 4)
+  // 5. Apply Material Summary overrides (±qty adjustments from JobEditor Section 4).
+  // Per-unit board overrides (unit|...) are already baked into the boards by
+  // buildGlobalMaterialBoards (via summaryOverrides) — do NOT re-apply them.
+  // Only aggregate qty adjustments (consumables, additional materials, extra
+  // boards, section-1 items) are applied to the merged rows here.
   const summaryOv = job.materialSummaryOverrides || {};
   if (Object.keys(summaryOv).length) {
     const norm = (s: string) => (!s || s === "--" || s === "—") ? "" : s;
+    const sumDelta = (d: any): number => {
+      if (typeof d === "number") return d;
+      if (d && typeof d === "object") return Object.keys(d).reduce((s: number, kk: string) => s + (Number(d[kk]) || 0), 0);
+      return 0;
+    };
     const deltaMap: Record<string, number> = {};
     for (const k of Object.keys(summaryOv)) {
       const d = summaryOv[k];
@@ -932,9 +1023,10 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
       let nk: string | undefined;
       if (p[0] === "cons") nk = p[1] + "|" + norm(p[2]) + "|";
       else if (p[0] === "addl") nk = p[1] + "|" + norm(p[2]) + "|" + norm(p[3]);
-      if (nk && typeof d === "number") {
-        deltaMap[nk] = (deltaMap[nk] || 0) + d;
-      }
+      else if (p[0] === "extra") nk = p[1] + "|" + norm(p[2]) + "|" + norm(p[3]);
+      else if (p[0] === "secone") nk = p[1] + "|" + norm(p[2]) + "|";
+      // unit|... intentionally skipped — handled by the packer.
+      if (nk) deltaMap[nk] = (deltaMap[nk] || 0) + sumDelta(d);
     }
     for (const r of merged) {
       const key = r.item + "|" + norm(r.color) + "|" + norm(r.species);
@@ -972,7 +1064,7 @@ export function buildBoardSummaryByUnit(
   const { boards } = buildGlobalMaterialBoards(
     (job.globalMaterials || []).filter((m: any) => !m.autoFormula),
     units, materialCatalog, offsets?.boardWaste, job.mullLayouts,
-    { doors3pc: job.doors3pc !== false }
+    { doors3pc: job.doors3pc !== false, summaryOverrides: job.materialSummaryOverrides }
   );
   if (!boards.length) return [];
 
@@ -987,8 +1079,11 @@ export function buildBoardSummaryByUnit(
       if (label) cutCounts[label] = (cutCounts[label] || 0) + 1;
     }
     const entries = Object.entries(cutCounts);
-    if (!entries.length) continue;
-    const owner = entries.sort((a, b) => b[1] - a[1])[0][0];
+    // Empty designated boards (from a Section 4 override) carry no cuts — fall
+    // back to the stamped source so they still attribute to their unit.
+    let owner = entries.length ? entries.sort((a, b) => b[1] - a[1])[0][0] : "";
+    if (!owner && (b as any).source) owner = String((b as any).source).replace(/\s*\(.*\)\s*$/, "");
+    if (!owner) continue;
     if (!byUnit[owner]) byUnit[owner] = {};
     if (!byUnit[owner][b.profile]) byUnit[owner][b.profile] = {};
     byUnit[owner][b.profile][b.stockLength] = (byUnit[owner][b.profile][b.stockLength] || 0) + 1;
