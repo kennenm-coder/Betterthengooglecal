@@ -5,7 +5,7 @@ import { isAccountsCsv, parseAccountsCsv, AccountRow } from "@/lib/parse-account
 import { createClient } from "@supabase/supabase-js";
 import { WorkOrder } from "@/lib/types";
 import { requireRole } from "@/lib/auth";
-import { writeImportLog, diffOrderIds } from "@/lib/import-log";
+import { writeImportLog, fetchExistingOrders, computeOrderChanges } from "@/lib/import-log";
 
 type FileResult = {
   text: string;
@@ -338,10 +338,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Diff: figure out which orders are new vs. updated
-    const existingIds = await diffOrderIds(orders.map((o) => o.id));
-    const addedOrders = orders.filter((o) => !existingIds.has(o.id));
-    const updatedOrders = orders.filter((o) => existingIds.has(o.id));
+    // Diff: fetch existing rows so we know which orders are new vs. updated,
+    // and what the tracked fields changed from — must happen BEFORE the upsert
+    // overwrites the old values.
+    const existingRows = await fetchExistingOrders(orders.map((o) => o.id));
+    const addedOrders = orders.filter((o) => !existingRows.has(o.id));
+    const updatedOrders = orders.filter((o) => existingRows.has(o.id));
 
     const upserted = await upsertToSupabase(orders);
 
@@ -361,12 +363,17 @@ export async function POST(request: NextRequest) {
             scheduledStart: o.scheduledStart,
             action: "added" as const,
           })),
-          ...updatedOrders.map((o) => ({
-            workOrderNumber: o.workOrderNumber,
-            customerName: o.customerName,
-            scheduledStart: o.scheduledStart,
-            action: "updated" as const,
-          })),
+          // Updated orders that actually changed a tracked field come first, so
+          // the (capped) stored list keeps the entries worth reading.
+          ...updatedOrders
+            .map((o) => ({
+              workOrderNumber: o.workOrderNumber,
+              customerName: o.customerName,
+              scheduledStart: o.scheduledStart,
+              action: "updated" as const,
+              changes: computeOrderChanges(existingRows.get(o.id)!, o),
+            }))
+            .sort((a, b) => b.changes.length - a.changes.length),
         ],
       });
     } catch (logErr) {

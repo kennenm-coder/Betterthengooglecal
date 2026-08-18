@@ -46,6 +46,8 @@ import {
   Send,
   ChevronLeft,
   RotateCcw,
+  MessageSquare,
+  StickyNote,
 } from "lucide-react";
 
 export type WriteUpTarget = Pick<
@@ -63,14 +65,12 @@ interface Props {
 
 const WHOLE_JOB = "__whole_job__";
 
-/** A photo held locally (camera/upload/restored draft), persisted in IndexedDB. */
 interface LocalPhoto {
   id: string;
   name: string;
   blob: Blob;
 }
 
-/** A unit committed to the current write-up session. */
 interface BuiltEntry {
   key: string;
   unitLabel: string | null;
@@ -99,12 +99,10 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
   const [options, setOptions] = useState<UnitOptions | null>(null);
   const [entries, setEntries] = useState<BuiltEntry[]>([]);
 
-  // Editor (one unit at a time)
+  // Editor
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [selectedUnit, setSelectedUnit] = useState<string>(initialUnit || WHOLE_JOB);
-  const [chosenPresets, setChosenPresets] = useState<Set<string>>(new Set());
-  const [customItems, setCustomItems] = useState<string[]>([]);
-  const [customDraft, setCustomDraft] = useState("");
+  const [workItems, setWorkItems] = useState<WriteUpLineItem[]>([]);
   const [specDrafts, setSpecDrafts] = useState<Record<string, string>>({});
   const [materialItems, setMaterialItems] = useState<WriteUpMaterialItem[]>([]);
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
@@ -113,17 +111,21 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
   const [newUnitNumber, setNewUnitNumber] = useState("");
   const [newProduct, setNewProduct] = useState<WriteUpNewProduct>(emptyProduct);
 
+  // Progressive disclosure of optional sections
+  const [showSpec, setShowSpec] = useState(false);
+  const [showTrim, setShowTrim] = useState(false);
+  const [showPhotos, setShowPhotos] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
+
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState("");
 
-  // Draft recovery
   const [pendingDraft, setPendingDraft] = useState<WriteUpDraft | null>(null);
   const [draftReady, setDraftReady] = useState(false);
   const [savedTick, setSavedTick] = useState(false);
-
-  // "Save this photo to your device?" prompt after a camera capture
   const [savePrompt, setSavePrompt] = useState<File | null>(null);
+  const [closing, setClosing] = useState(false); // "unsaved changes" guard
 
   useEffect(() => {
     getWriteUpPresets().then(setPresets);
@@ -131,7 +133,6 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     fetchUnitOptions().then(setOptions).catch(() => setOptions(null));
   }, []);
 
-  // On open: look for a saved draft for this job.
   useEffect(() => {
     let cancelled = false;
     loadDraft(order.orderNumber).then((d) => {
@@ -173,20 +174,18 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     setSpecDrafts(next);
   }, [selectedUnit]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function togglePreset(p: string) {
-    setChosenPresets((prev) => {
-      const next = new Set(prev);
-      if (next.has(p)) next.delete(p);
-      else next.add(p);
-      return next;
-    });
-  }
-
-  function addCustom() {
-    const v = customDraft.trim();
+  // ── Work items ──
+  function addWorkItem(label: string, kind: "preset" | "custom") {
+    const v = label.trim();
     if (!v) return;
-    setCustomItems((prev) => [...prev, v]);
-    setCustomDraft("");
+    if (workItems.some((w) => w.label.toLowerCase() === v.toLowerCase())) return;
+    setWorkItems((prev) => [...prev, { kind, label: v }]);
+  }
+  function removeWorkItem(i: number) {
+    setWorkItems((prev) => prev.filter((_, j) => j !== i));
+  }
+  function setWorkItemNotes(i: number, notes: string | undefined) {
+    setWorkItems((prev) => prev.map((w, j) => (j === i ? { ...w, notes } : w)));
   }
 
   async function addPhotos(files: File[]) {
@@ -194,17 +193,15 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     for (const f of files) {
       const id = crypto.randomUUID();
       added.push({ id, name: f.name || "photo", blob: f });
-      putDraftPhoto(id, f); // persist immediately so an error can't lose it
+      putDraftPhoto(id, f);
     }
     setPhotos((prev) => [...prev, ...added]);
   }
-
   function removePhoto(id: string) {
     setPhotos((prev) => prev.filter((p) => p.id !== id));
     deleteDraftPhoto(id);
   }
 
-  /** Offer to save a just-taken photo to the device (camera roll via share sheet). */
   async function saveToDevice(file: File) {
     const nav = navigator as Navigator & {
       canShare?: (data?: unknown) => boolean;
@@ -214,7 +211,6 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       if (nav.share && nav.canShare && nav.canShare({ files: [file] })) {
         await nav.share({ files: [file] });
       } else {
-        // Desktop / unsupported: download instead (goes to Downloads, not the roll)
         const url = URL.createObjectURL(file);
         const a = document.createElement("a");
         a.href = url;
@@ -223,7 +219,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
         URL.revokeObjectURL(url);
       }
     } catch {
-      // User cancelled the share sheet — nothing to do
+      /* cancelled */
     }
     setSavePrompt(null);
   }
@@ -241,21 +237,12 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     return out;
   }, [addProductMode, activeUnit, specDrafts, selectedUnit]);
 
-  const editorLineItems: WriteUpLineItem[] = useMemo(() => {
-    const presetItems: WriteUpLineItem[] = [...chosenPresets].map((label) => ({
-      kind: "preset",
-      label,
-    }));
-    const custom: WriteUpLineItem[] = customItems.map((label) => ({ kind: "custom", label }));
-    return [...presetItems, ...custom];
-  }, [chosenPresets, customItems]);
-
   const validNewProduct =
     addProductMode && newUnitNumber.trim().length > 0 && newProduct.type.trim().length > 0;
 
   const editorHasContent =
     validNewProduct ||
-    editorLineItems.length > 0 ||
+    workItems.length > 0 ||
     editorSpecChanges.length > 0 ||
     materialItems.length > 0 ||
     photos.length > 0 ||
@@ -264,9 +251,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
   function resetEditor() {
     setEditingKey(null);
     setSelectedUnit(WHOLE_JOB);
-    setChosenPresets(new Set());
-    setCustomItems([]);
-    setCustomDraft("");
+    setWorkItems([]);
     setSpecDrafts({});
     setMaterialItems([]);
     setPhotos([]);
@@ -274,6 +259,10 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     setAddProductMode(false);
     setNewUnitNumber("");
     setNewProduct(emptyProduct);
+    setShowSpec(false);
+    setShowTrim(false);
+    setShowPhotos(false);
+    setShowNotes(false);
     setError("");
   }
 
@@ -282,7 +271,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     return {
       key,
       unitLabel: isNew ? newUnitNumber.trim() : selectedUnit === WHOLE_JOB ? null : selectedUnit,
-      lineItems: editorLineItems,
+      lineItems: workItems,
       specChanges: isNew ? [] : editorSpecChanges,
       materialItems,
       newProduct: isNew ? { ...newProduct } : null,
@@ -310,14 +299,16 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     resetEditor();
   }
 
-  /** Populate the editor from an entry (edit an existing one, or restore a draft). */
   function hydrateEditor(e: BuiltEntry, key: string | null) {
     setEditingKey(key);
-    setChosenPresets(new Set(e.lineItems.filter((l) => l.kind === "preset").map((l) => l.label)));
-    setCustomItems(e.lineItems.filter((l) => l.kind === "custom").map((l) => l.label));
+    setWorkItems(e.lineItems);
     setMaterialItems(e.materialItems);
     setPhotos(e.photos);
     setNotes(e.notes);
+    setShowSpec(e.specChanges.length > 0);
+    setShowTrim(e.materialItems.length > 0);
+    setShowPhotos(e.photos.length > 0);
+    setShowNotes(!!e.notes);
     if (e.newProduct) {
       setAddProductMode(true);
       setNewUnitNumber(e.unitLabel || "");
@@ -375,12 +366,11 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       photos: e.photos.map((p) => ({ id: p.id, name: p.name })),
     };
   }
-
   async function fromDraftEntry(d: DraftEntry): Promise<BuiltEntry> {
-    const photos: LocalPhoto[] = [];
+    const ph: LocalPhoto[] = [];
     for (const p of d.photos) {
       const blob = await getDraftPhoto(p.id);
-      if (blob) photos.push({ id: p.id, name: p.name, blob });
+      if (blob) ph.push({ id: p.id, name: p.name, blob });
     }
     return {
       key: d.key,
@@ -390,10 +380,9 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       materialItems: d.materialItems,
       newProduct: d.newProduct,
       notes: d.notes,
-      photos,
+      photos: ph,
     };
   }
-
   async function resumeDraft() {
     if (!pendingDraft) return;
     const restored = await Promise.all(pendingDraft.entries.map(fromDraftEntry));
@@ -402,7 +391,6 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     setPendingDraft(null);
     setDraftReady(true);
   }
-
   async function discardDraft() {
     await clearDraft(order.orderNumber);
     setPendingDraft(null);
@@ -411,24 +399,54 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     setDraftReady(true);
   }
 
-  // ── Auto-save (debounced) once the draft decision is made ──
+  /** Snapshot the current write-up as a draft (or null if truly empty). */
+  function buildDraftNow(): WriteUpDraft | null {
+    const editorEntry = editorHasContent ? toDraftEntry(editorToEntry(editingKey || "editor")) : null;
+    if (entries.length === 0 && !editorEntry) return null;
+    return {
+      orderNumber: order.orderNumber,
+      updatedAt: new Date().toISOString(),
+      entries: entries.map(toDraftEntry),
+      editor: editorEntry,
+    };
+  }
+
+  // Keep a live pointer to the current flush so background/crash handlers save
+  // the latest state without re-binding listeners on every keystroke.
+  const flushRef = useRef<() => void>(() => {});
+  flushRef.current = () => {
+    if (!draftReady || submitting) return;
+    const d = buildDraftNow();
+    if (d) saveDraft(d);
+    else clearDraft(order.orderNumber);
+  };
+
+  // Flush immediately when the app is backgrounded or closed (crash-safe-ish).
+  useEffect(() => {
+    const flush = () => flushRef.current?.();
+    const onVis = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, []);
+
+  // ── Auto-save (debounced) ──
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!draftReady || submitting) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      const editorEntry = editorHasContent ? toDraftEntry(editorToEntry(editingKey || "editor")) : null;
-      if (entries.length === 0 && !editorEntry) {
+      const d = buildDraftNow();
+      if (!d) {
         clearDraft(order.orderNumber);
         return;
       }
-      const draft: WriteUpDraft = {
-        orderNumber: order.orderNumber,
-        updatedAt: new Date().toISOString(),
-        entries: entries.map(toDraftEntry),
-        editor: editorEntry,
-      };
-      saveDraft(draft);
+      saveDraft(d);
       setSavedTick(true);
       setTimeout(() => setSavedTick(false), 1500);
     }, 700);
@@ -436,20 +454,23 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    draftReady,
-    entries,
-    selectedUnit,
-    chosenPresets,
-    customItems,
-    specDrafts,
-    materialItems,
-    photos,
-    notes,
-    addProductMode,
-    newUnitNumber,
-    newProduct,
-  ]);
+  }, [draftReady, entries, selectedUnit, workItems, specDrafts, materialItems, photos, notes, addProductMode, newUnitNumber, newProduct]);
+
+  // ── Close guard ──
+  const dirty = editorHasContent || entries.length > 0;
+  function attemptClose() {
+    if (dirty) setClosing(true);
+    else onClose();
+  }
+  async function saveAndClose() {
+    const d = buildDraftNow();
+    if (d) await saveDraft(d);
+    onClose();
+  }
+  async function discardAndClose() {
+    await clearDraft(order.orderNumber);
+    onClose();
+  }
 
   async function submitAndEmail() {
     let allEntries = entries;
@@ -475,7 +496,6 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       createdBy: user?.email || "",
       createdByName: user?.email?.split("@")[0] || "",
     };
-
     const inputs: WriteUpEntryInput[] = allEntries.map((e) => ({
       unitLabel: e.unitLabel,
       lineItems: e.lineItems,
@@ -486,9 +506,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       photoFiles: e.photos.map((p) => p.blob),
     }));
 
-    const created = await submitWriteUpBatch(ctx, inputs, (done, total) =>
-      setProgress({ done, total })
-    );
+    const created = await submitWriteUpBatch(ctx, inputs, (done, total) => setProgress({ done, total }));
     setSubmitting(false);
     setProgress(null);
 
@@ -497,9 +515,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       return;
     }
 
-    // Submitted — clear the local draft, then open the mail app.
     await clearDraft(order.orderNumber);
-
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     const docLink = `${origin}/work-orders/${encodeURIComponent(order.orderNumber)}`;
     const mailto = buildWriteUpMailto(ctx, inputs, docLink, autoCc);
@@ -510,10 +526,44 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
   }
 
   const totalUnits = entries.length + (editorHasContent ? 1 : 0);
+  const unitTitle =
+    addProductMode && newUnitNumber.trim()
+      ? `Unit ${newUnitNumber.trim()}`
+      : selectedUnit === WHOLE_JOB
+      ? "Whole job"
+      : selectedUnit;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50">
-      {/* Save-to-device prompt (after a camera capture) */}
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) attemptClose();
+      }}
+    >
+      {/* Unsaved-changes close guard */}
+      {closing && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-6">
+          <div className="bg-background rounded-2xl shadow-xl w-full max-w-xs p-5 text-center">
+            <RotateCcw className="w-8 h-8 text-amber-600 mx-auto mb-2" />
+            <p className="font-semibold">Leave this write-up?</p>
+            <p className="text-xs text-muted mt-1">
+              Your progress is saved as a draft — you can resume it later, or discard it now.
+            </p>
+            <div className="mt-4 space-y-2">
+              <button onClick={() => setClosing(false)} className="w-full py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold">
+                Keep editing
+              </button>
+              <button onClick={saveAndClose} className="w-full py-3 rounded-xl border border-border text-sm font-medium">
+                Save draft &amp; close
+              </button>
+              <button onClick={discardAndClose} className="w-full py-3 rounded-xl text-sm font-medium text-danger">
+                Discard write-up
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {savePrompt && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-6">
           <div className="bg-background rounded-2xl shadow-xl w-full max-w-xs p-5 text-center">
@@ -523,16 +573,10 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
               It&apos;s already attached to the write-up. Saving also keeps a copy in your photos.
             </p>
             <div className="flex gap-2 mt-4">
-              <button
-                onClick={() => setSavePrompt(null)}
-                className="flex-1 py-2.5 rounded-xl border border-border text-sm font-medium"
-              >
+              <button onClick={() => setSavePrompt(null)} className="flex-1 py-3 rounded-xl border border-border text-sm font-medium">
                 Not now
               </button>
-              <button
-                onClick={() => saveToDevice(savePrompt)}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold"
-              >
+              <button onClick={() => saveToDevice(savePrompt)} className="flex-1 py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold">
                 Save
               </button>
             </div>
@@ -540,27 +584,26 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
         </div>
       )}
 
-      <div className="bg-background w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[94vh] flex flex-col shadow-xl">
+      <div className="bg-background w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl h-[96vh] sm:h-auto sm:max-h-[94vh] flex flex-col shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
-          <div className="flex items-center gap-2">
-            <Wrench className="w-5 h-5 text-amber-600" />
-            <div>
+          <div className="flex items-center gap-2 min-w-0">
+            <Wrench className="w-5 h-5 text-amber-600 shrink-0" />
+            <div className="min-w-0">
               <h2 className="text-base font-semibold leading-tight">Field Write-Up</h2>
-              <p className="text-xs text-muted leading-tight">
+              <p className="text-xs text-muted leading-tight truncate">
                 {order.customerName} · #{order.orderNumber}
-                {savedTick && <span className="text-green-600"> · draft saved</span>}
+                {savedTick && <span className="text-green-600"> · saved</span>}
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface text-muted">
+          <button onClick={attemptClose} className="p-2 rounded-lg hover:bg-surface text-muted shrink-0">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Resume-draft prompt */}
         {pendingDraft && (
-          <div className="mx-4 mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 shrink-0">
+          <div className="mx-4 mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-3 shrink-0">
             <p className="text-sm font-medium flex items-center gap-1.5">
               <RotateCcw className="w-4 h-4 text-amber-600" />
               Unfinished write-up found
@@ -569,17 +612,11 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
               Saved {new Date(pendingDraft.updatedAt).toLocaleString()} ·{" "}
               {pendingDraft.entries.length + (pendingDraft.editor ? 1 : 0)} unit(s)
             </p>
-            <div className="flex gap-2 mt-2">
-              <button
-                onClick={resumeDraft}
-                className="flex-1 py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold"
-              >
+            <div className="flex gap-2 mt-2.5">
+              <button onClick={resumeDraft} className="flex-1 py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold">
                 Resume
               </button>
-              <button
-                onClick={discardDraft}
-                className="flex-1 py-2 rounded-lg border border-border text-sm font-medium"
-              >
+              <button onClick={discardDraft} className="flex-1 py-3 rounded-xl border border-border text-sm font-medium">
                 Start fresh
               </button>
             </div>
@@ -587,17 +624,16 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
         )}
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+          {/* Committed units */}
           {entries.length > 0 && (
             <section>
-              <label className="text-xs font-semibold uppercase tracking-wide text-muted">
-                Units in this write-up ({entries.length})
-              </label>
-              <div className="mt-2 space-y-1.5">
+              <SectionLabel step={1}>Units added ({entries.length})</SectionLabel>
+              <div className="mt-2 space-y-2">
                 {entries.map((e) => (
                   <div
                     key={e.key}
-                    className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg border ${
+                    className={`flex items-center justify-between gap-2 px-3 py-3 rounded-xl border ${
                       editingKey === e.key ? "border-amber-500 bg-amber-500/5" : "border-border bg-surface"
                     }`}
                   >
@@ -606,10 +642,10 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
                       <div className="text-xs text-muted truncate">{summarizeEntry(e)}</div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      <button onClick={() => editEntry(e)} className="p-1.5 rounded text-muted hover:text-primary">
+                      <button onClick={() => editEntry(e)} className="p-2 rounded-lg text-muted hover:text-primary">
                         <Pencil className="w-4 h-4" />
                       </button>
-                      <button onClick={() => removeEntry(e.key)} className="p-1.5 rounded text-muted hover:text-danger">
+                      <button onClick={() => removeEntry(e.key)} className="p-2 rounded-lg text-muted hover:text-danger">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
@@ -619,26 +655,22 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
             </section>
           )}
 
-          <div className="flex items-center gap-2 pt-1">
-            {editingKey && (
-              <button onClick={resetEditor} className="p-1 rounded text-muted hover:text-foreground">
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-            )}
-            <h3 className="text-sm font-bold">
-              {editingKey ? "Edit unit" : entries.length ? "Add another unit" : "Add a unit"}
-            </h3>
-          </div>
-
-          {/* Unit picker */}
+          {/* Editor */}
           <section>
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted">Which unit?</label>
-            <div className="flex flex-wrap gap-2 mt-2">
-              <UnitChip
-                active={selectedUnit === WHOLE_JOB && !addProductMode}
-                onClick={() => pickUnit(WHOLE_JOB)}
-                label="Whole job"
-              />
+            <div className="flex items-center gap-2">
+              {editingKey && (
+                <button onClick={resetEditor} className="p-1.5 -ml-1.5 rounded-lg text-muted hover:text-foreground">
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+              )}
+              <SectionLabel step={entries.length ? 2 : 1}>
+                {editingKey ? "Edit unit" : entries.length ? "Add another unit" : "Pick a unit"}
+              </SectionLabel>
+            </div>
+
+            {/* Unit picker */}
+            <div className="flex flex-wrap gap-2 mt-3">
+              <UnitChip active={selectedUnit === WHOLE_JOB && !addProductMode} onClick={() => pickUnit(WHOLE_JOB)} label="Whole job" />
               {unitOptions.map((o) => {
                 const added = entries.some((e) => e.unitLabel === o.label);
                 return (
@@ -653,10 +685,8 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
               })}
               <button
                 onClick={startAddProduct}
-                className={`px-3 py-2 rounded-lg text-sm font-medium border border-dashed transition-colors flex items-center gap-1 ${
-                  addProductMode
-                    ? "bg-amber-500 border-amber-500 text-white"
-                    : "border-amber-500/50 text-amber-600 hover:bg-amber-500/10"
+                className={`px-3 py-2.5 rounded-lg text-sm font-medium border border-dashed transition-colors flex items-center gap-1 ${
+                  addProductMode ? "bg-amber-500 border-amber-500 text-white" : "border-amber-500/50 text-amber-600 hover:bg-amber-500/10"
                 }`}
               >
                 <Plus className="w-4 h-4" />
@@ -664,130 +694,87 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
               </button>
             </div>
             {unitOptions.length === 0 && !addProductMode && (
-              <p className="text-[11px] text-muted mt-1.5">
-                No products programmed for this job — use <strong>Add product</strong> to enter one.
+              <p className="text-xs text-muted mt-2">
+                No products programmed for this job — tap <strong>Add product</strong> to enter one.
               </p>
+            )}
+
+            {/* Add-product form — single column */}
+            {addProductMode && (
+              <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 space-y-3">
+                <StackedInput label="Unit #" value={newUnitNumber} onChange={setNewUnitNumber} placeholder="101" />
+                <StackedInput label="Product type" value={newProduct.type} onChange={(v) => setNewProduct((p) => ({ ...p, type: v }))} list="wu-types" placeholder="Double Hung" />
+                <StackedInput label="Size (W x H)" value={newProduct.size} onChange={(v) => setNewProduct((p) => ({ ...p, size: v }))} placeholder={'24" x 36"'} />
+                <StackedInput label="Exterior color" value={newProduct.exteriorColor} onChange={(v) => setNewProduct((p) => ({ ...p, exteriorColor: v }))} list="wu-ext" />
+                <StackedInput label="Interior color" value={newProduct.interiorColor} onChange={(v) => setNewProduct((p) => ({ ...p, interiorColor: v }))} list="wu-int" />
+                <StackedInput label="Interior finish" value={newProduct.intFinish} onChange={(v) => setNewProduct((p) => ({ ...p, intFinish: v }))} list="wu-fin" />
+                <StackedInput label="Frame" value={newProduct.frame} onChange={(v) => setNewProduct((p) => ({ ...p, frame: v }))} list="wu-frames" />
+                <StackedInput label="Details" value={newProduct.details} onChange={(v) => setNewProduct((p) => ({ ...p, details: v }))} list="wu-details" />
+                {options && (
+                  <>
+                    <datalist id="wu-types">{options.productTypes.map((v) => <option key={v} value={v} />)}</datalist>
+                    <datalist id="wu-ext">{options.extColors.map((v) => <option key={v} value={v} />)}</datalist>
+                    <datalist id="wu-int">{options.intColors.map((v) => <option key={v} value={v} />)}</datalist>
+                    <datalist id="wu-fin">{options.intFinishes.map((v) => <option key={v} value={v} />)}</datalist>
+                    <datalist id="wu-details">{options.details.map((v) => <option key={v} value={v} />)}</datalist>
+                    <datalist id="wu-frames">{options.frames.map((v) => <option key={v} value={v} />)}</datalist>
+                  </>
+                )}
+              </div>
             )}
           </section>
 
-          {/* Add-product form */}
-          {addProductMode && (
-            <section className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
-              <label className="text-xs font-semibold uppercase tracking-wide text-amber-700 flex items-center gap-1.5">
-                <Package className="w-3.5 h-3.5" />
-                New product
-              </label>
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <LabeledInput label="Unit #" value={newUnitNumber} onChange={setNewUnitNumber} placeholder="101" />
-                <LabeledInput
-                  label="Product type"
-                  value={newProduct.type}
-                  onChange={(v) => setNewProduct((p) => ({ ...p, type: v }))}
-                  list="wu-types"
-                  placeholder="Double Hung"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <LabeledInput label="Size (W x H)" value={newProduct.size} onChange={(v) => setNewProduct((p) => ({ ...p, size: v }))} placeholder='24" x 36"' />
-                <LabeledInput label="Frame" value={newProduct.frame} onChange={(v) => setNewProduct((p) => ({ ...p, frame: v }))} list="wu-frames" />
-              </div>
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <LabeledInput label="Exterior color" value={newProduct.exteriorColor} onChange={(v) => setNewProduct((p) => ({ ...p, exteriorColor: v }))} list="wu-ext" />
-                <LabeledInput label="Interior color" value={newProduct.interiorColor} onChange={(v) => setNewProduct((p) => ({ ...p, interiorColor: v }))} list="wu-int" />
-              </div>
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <LabeledInput label="Int. finish" value={newProduct.intFinish} onChange={(v) => setNewProduct((p) => ({ ...p, intFinish: v }))} list="wu-fin" />
-                <LabeledInput label="Details" value={newProduct.details} onChange={(v) => setNewProduct((p) => ({ ...p, details: v }))} list="wu-details" />
-              </div>
-              {options && (
-                <>
-                  <datalist id="wu-types">{options.productTypes.map((v) => <option key={v} value={v} />)}</datalist>
-                  <datalist id="wu-ext">{options.extColors.map((v) => <option key={v} value={v} />)}</datalist>
-                  <datalist id="wu-int">{options.intColors.map((v) => <option key={v} value={v} />)}</datalist>
-                  <datalist id="wu-fin">{options.intFinishes.map((v) => <option key={v} value={v} />)}</datalist>
-                  <datalist id="wu-details">{options.details.map((v) => <option key={v} value={v} />)}</datalist>
-                  <datalist id="wu-frames">{options.frames.map((v) => <option key={v} value={v} />)}</datalist>
-                </>
-              )}
-            </section>
-          )}
-
-          {/* Work needed */}
+          {/* Work needed — type-to-search */}
           <section>
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted">Work needed</label>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {presets.map((p) => {
-                const active = chosenPresets.has(p);
-                return (
-                  <button
-                    key={p}
-                    onClick={() => togglePreset(p)}
-                    className={`px-3 py-2 rounded-full text-sm font-medium border transition-colors ${
-                      active
-                        ? "bg-amber-500 border-amber-500 text-white"
-                        : "bg-surface border-border text-foreground hover:border-amber-400"
-                    }`}
-                  >
-                    {active && <Check className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />}
-                    {p}
-                  </button>
-                );
-              })}
-            </div>
-
-            {customItems.length > 0 && (
-              <div className="mt-3 space-y-1.5">
-                {customItems.map((c, i) => (
-                  <div key={i} className="flex items-center justify-between px-3 py-2 rounded-lg bg-surface border border-border text-sm">
-                    <span>{c}</span>
-                    <button onClick={() => setCustomItems((prev) => prev.filter((_, j) => j !== i))} className="p-1 rounded text-muted hover:text-danger">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2 mt-2">
-              <input
-                value={customDraft}
-                onChange={(e) => setCustomDraft(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addCustom()}
-                placeholder="Add custom work item…"
-                className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+            <SectionLabel step={entries.length ? 3 : 2}>What needs done? — {unitTitle}</SectionLabel>
+            <div className="mt-3">
+              <WorkNeeded
+                presets={presets}
+                items={workItems}
+                onAdd={addWorkItem}
+                onRemove={removeWorkItem}
+                onNotes={setWorkItemNotes}
               />
-              <button
-                onClick={addCustom}
-                disabled={!customDraft.trim()}
-                className="px-3 py-2 rounded-lg bg-surface border border-border text-sm font-medium disabled:opacity-50"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
             </div>
           </section>
 
-          {/* Spec corrections */}
-          {activeUnit && !addProductMode && (
+          {/* Optional details — revealed on demand */}
+          <section>
+            <div className="grid grid-cols-2 gap-2">
+              {activeUnit && !addProductMode && !showSpec && (
+                <RevealButton icon={Pencil} label="Fix a spec" onClick={() => setShowSpec(true)} />
+              )}
+              {!showTrim && <RevealButton icon={Package} label="Trim / material" onClick={() => setShowTrim(true)} />}
+              {!showPhotos && <RevealButton icon={Camera} label="Photos" onClick={() => setShowPhotos(true)} />}
+              {!showNotes && <RevealButton icon={StickyNote} label="Note" onClick={() => setShowNotes(true)} />}
+            </div>
+          </section>
+
+          {/* Spec fix */}
+          {showSpec && activeUnit && !addProductMode && (
             <section>
-              <label className="text-xs font-semibold uppercase tracking-wide text-muted flex items-center gap-1.5">
-                <Pencil className="w-3.5 h-3.5" />
-                Fix a spec ({selectedUnit})
-              </label>
-              <p className="text-[11px] text-muted mt-0.5">
-                Only edit what&apos;s wrong. Blank = leave as-is. Corrections show on the calendar.
-              </p>
-              <div className="mt-2 space-y-2">
+              <SectionLabel>
+                <span className="flex items-center gap-1.5">
+                  <Pencil className="w-3.5 h-3.5" /> Fix a spec ({selectedUnit})
+                </span>
+              </SectionLabel>
+              <p className="text-[11px] text-muted mt-0.5">Only change what&apos;s wrong. Blank = leave as-is.</p>
+              <div className="mt-2 space-y-3">
                 {SPEC_FIELDS.map((f) => {
                   const original = f.read(activeUnit);
                   const draft = specDrafts[f.label] ?? "";
                   const changed = draft.trim() && draft.trim() !== original;
                   return (
-                    <div key={f.label} className="flex items-center gap-2">
-                      <span className="w-28 shrink-0 text-xs text-muted">{f.label}</span>
+                    <div key={f.label}>
+                      <label className="text-xs text-muted block mb-1">
+                        {f.label}
+                        {original ? <span className="text-muted/70"> · now: {original}</span> : ""}
+                      </label>
                       <input
                         value={draft}
                         onChange={(e) => setSpecDrafts((prev) => ({ ...prev, [f.label]: e.target.value }))}
                         placeholder={original || "—"}
-                        className={`flex-1 rounded-lg border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50 ${
+                        className={`w-full rounded-lg border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50 ${
                           changed ? "border-amber-500" : "border-border"
                         }`}
                       />
@@ -798,111 +785,111 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
             </section>
           )}
 
-          {/* Materials */}
-          <section>
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted flex items-center gap-1.5">
-              <Package className="w-3.5 h-3.5" />
-              Trim / material to order
-            </label>
-            <p className="text-[11px] text-muted mt-0.5">
-              Pick from the catalog, then set color, qty and lengths — same as the material list.
-            </p>
-
-            {materialItems.length > 0 && (
-              <div className="mt-2 space-y-1.5">
-                {materialItems.map((m, i) => (
-                  <div key={i} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-surface border border-border">
-                    <div className="min-w-0 text-sm">
-                      <span className="font-semibold">
-                        {m.qty} {m.unit} · {m.item}
-                      </span>
-                      <span className="text-muted">
-                        {m.color ? ` · ${m.color}` : ""}
-                        {m.species ? ` · ${m.species}` : ""}
-                        {m.lengths ? ` · ${m.lengths}` : ""}
-                        {m.vendor ? ` · ${m.vendor}` : ""}
-                      </span>
+          {/* Trim / material */}
+          {showTrim && (
+            <section>
+              <SectionLabel>
+                <span className="flex items-center gap-1.5">
+                  <Package className="w-3.5 h-3.5" /> Trim / material to order
+                </span>
+              </SectionLabel>
+              {materialItems.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {materialItems.map((m, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 px-3 py-3 rounded-xl bg-surface border border-border">
+                      <div className="min-w-0 text-sm">
+                        <span className="font-semibold">{m.qty} {m.unit} · {m.item}</span>
+                        <span className="text-muted">
+                          {[m.color, m.species, m.lengths, m.vendor].filter(Boolean).map((s) => ` · ${s}`).join("")}
+                        </span>
+                      </div>
+                      <button onClick={() => setMaterialItems((prev) => prev.filter((_, j) => j !== i))} className="p-2 rounded-lg text-muted hover:text-danger shrink-0">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
-                    <button onClick={() => setMaterialItems((prev) => prev.filter((_, j) => j !== i))} className="p-1 rounded text-muted hover:text-danger shrink-0">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <MaterialAdder catalog={catalog} onAdd={(m) => setMaterialItems((prev) => [...prev, m])} />
-          </section>
+                  ))}
+                </div>
+              )}
+              <MaterialAdder catalog={catalog} onAdd={(m) => setMaterialItems((prev) => [...prev, m])} />
+            </section>
+          )}
 
           {/* Photos */}
-          <section>
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted flex items-center gap-1.5">
-              <Camera className="w-3.5 h-3.5" />
-              Photos
-            </label>
-            {photos.length > 0 && (
-              <div className="grid grid-cols-4 gap-2 mt-2">
-                {photos.map((p) => (
-                  <PhotoThumb key={p.id} blob={p.blob} onRemove={() => removePhoto(p.id)} />
-                ))}
+          {showPhotos && (
+            <section>
+              <SectionLabel>
+                <span className="flex items-center gap-1.5">
+                  <Camera className="w-3.5 h-3.5" /> Photos
+                </span>
+              </SectionLabel>
+              {photos.length > 0 && (
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  {photos.map((p) => (
+                    <PhotoThumb key={p.id} blob={p.blob} onRemove={() => removePhoto(p.id)} />
+                  ))}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <label className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-border text-sm font-medium text-muted cursor-pointer active:bg-surface">
+                  <Camera className="w-4 h-4" /> Take photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []);
+                      if (files.length) {
+                        addPhotos(files);
+                        setSavePrompt(files[0]);
+                      }
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+                <label className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-border text-sm font-medium text-muted cursor-pointer active:bg-surface">
+                  <ImagePlus className="w-4 h-4" /> Upload
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []);
+                      if (files.length) addPhotos(files);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
               </div>
-            )}
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              <label className="flex items-center justify-center gap-2 py-3 rounded-lg border border-dashed border-border text-sm font-medium text-muted cursor-pointer active:bg-surface">
-                <Camera className="w-4 h-4" />
-                Take photo
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={(e) => {
-                    const files = Array.from(e.target.files || []);
-                    if (files.length) {
-                      addPhotos(files);
-                      setSavePrompt(files[0]); // offer to save the shot to the device
-                    }
-                    e.target.value = "";
-                  }}
-                />
-              </label>
-              <label className="flex items-center justify-center gap-2 py-3 rounded-lg border border-dashed border-border text-sm font-medium text-muted cursor-pointer active:bg-surface">
-                <ImagePlus className="w-4 h-4" />
-                Upload
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    const files = Array.from(e.target.files || []);
-                    if (files.length) addPhotos(files);
-                    e.target.value = "";
-                  }}
-                />
-              </label>
-            </div>
-          </section>
+            </section>
+          )}
 
           {/* Notes */}
-          <section>
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted">Notes</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={3}
-              placeholder="Anything else the office should know…"
-              className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-            />
-          </section>
+          {showNotes && (
+            <section>
+              <SectionLabel>
+                <span className="flex items-center gap-1.5">
+                  <StickyNote className="w-3.5 h-3.5" /> Note for this unit
+                </span>
+              </SectionLabel>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                placeholder="Anything else the office should know…"
+                className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-3 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+              />
+            </section>
+          )}
 
           <button
             onClick={commitEntry}
             disabled={!editorHasContent}
-            className="w-full py-2.5 rounded-xl border-2 border-amber-500 text-amber-600 font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
+            className="w-full py-3.5 rounded-xl border-2 border-amber-500 text-amber-600 font-semibold flex items-center justify-center gap-2 disabled:opacity-40"
           >
-            <Plus className="w-5 h-5" />
-            {editingKey ? "Update unit" : "Add unit to write-up"}
+            <Check className="w-5 h-5" />
+            {editingKey ? "Save this unit" : "Add this unit"}
           </button>
 
           {error && <p className="text-sm text-danger">{error}</p>}
@@ -913,7 +900,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
           <button
             onClick={submitAndEmail}
             disabled={submitting || totalUnits === 0}
-            className="w-full py-3 rounded-xl bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.99] transition-transform"
+            className="w-full py-4 rounded-xl bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.99] transition-transform"
           >
             {submitting ? (
               <>
@@ -923,15 +910,137 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
             ) : (
               <>
                 <Send className="w-5 h-5" />
-                Submit &amp; Email ({totalUnits} unit{totalUnits !== 1 ? "s" : ""})
+                Finish &amp; Email ({totalUnits})
               </>
             )}
           </button>
-          <p className="text-[11px] text-muted text-center mt-1.5">
-            Auto-saves as you go · saves the write-up, then opens your mail app with a link to send.
-          </p>
+          <p className="text-[11px] text-muted text-center mt-1.5">Auto-saves as you go.</p>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ── Work-needed: type-to-search + item rows with optional notes ── */
+function WorkNeeded({
+  presets,
+  items,
+  onAdd,
+  onRemove,
+  onNotes,
+}: {
+  presets: string[];
+  items: WriteUpLineItem[];
+  onAdd: (label: string, kind: "preset" | "custom") => void;
+  onRemove: (i: number) => void;
+  onNotes: (i: number, notes: string | undefined) => void;
+}) {
+  const [draft, setDraft] = useState("");
+
+  const q = draft.trim().toLowerCase();
+  const matches = presets.filter(
+    (p) => p.toLowerCase().includes(q) && !items.some((w) => w.label.toLowerCase() === p.toLowerCase())
+  );
+  const exact = presets.some((p) => p.toLowerCase() === q);
+
+  function addCustom() {
+    if (!q) return;
+    onAdd(draft.trim(), exact ? "preset" : "custom");
+    setDraft("");
+  }
+
+  return (
+    <div>
+      {/* Added items */}
+      {items.length > 0 && (
+        <div className="space-y-2 mb-2">
+          {items.map((w, i) => (
+            <div key={i} className="rounded-xl border border-border bg-surface px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium">{w.label}</span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => onNotes(i, w.notes === undefined ? "" : undefined)}
+                    className={`p-1.5 rounded-lg ${w.notes !== undefined ? "text-amber-600" : "text-muted hover:text-foreground"}`}
+                    title="Add a note"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => onRemove(i)} className="p-1.5 rounded-lg text-muted hover:text-danger">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              {w.notes !== undefined && (
+                <textarea
+                  value={w.notes}
+                  onChange={(e) => onNotes(i, e.target.value)}
+                  rows={2}
+                  autoFocus
+                  placeholder="Add detail for this item (optional)…"
+                  className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Search / add */}
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            addCustom();
+          }
+        }}
+        placeholder="Type a task (e.g. Redo caulking)…"
+        className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+      />
+
+      {q && (
+        <div className="mt-2 rounded-xl border border-border overflow-hidden">
+          {matches.map((p) => (
+            <button
+              key={p}
+              onClick={() => {
+                onAdd(p, "preset");
+                setDraft("");
+              }}
+              className="w-full text-left px-3 py-3 text-sm border-b border-border last:border-b-0 hover:bg-surface flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4 text-muted" />
+              {p}
+            </button>
+          ))}
+          {!exact && (
+            <button
+              onClick={addCustom}
+              className="w-full text-left px-3 py-3 text-sm bg-amber-500/10 text-amber-700 font-medium flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add “{draft.trim()}”
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* A couple of quick suggestions when the box is empty */}
+      {!q && items.length === 0 && (
+        <div className="flex flex-wrap gap-2 mt-2">
+          {presets.slice(0, 6).map((p) => (
+            <button
+              key={p}
+              onClick={() => onAdd(p, "preset")}
+              className="px-3 py-2 rounded-full text-sm font-medium border border-border bg-surface text-foreground hover:border-amber-400"
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -947,6 +1056,40 @@ function summarizeEntry(e: BuiltEntry): string {
   return parts.join(" · ") || "—";
 }
 
+function SectionLabel({ children, step }: { children: React.ReactNode; step?: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      {step !== undefined && (
+        <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+          {step}
+        </span>
+      )}
+      <span className="text-sm font-bold">{children}</span>
+    </div>
+  );
+}
+
+function RevealButton({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center justify-center gap-2 py-3 rounded-xl border border-dashed border-border text-sm font-medium text-muted hover:text-foreground hover:border-amber-400"
+    >
+      <Plus className="w-3.5 h-3.5" />
+      <Icon className="w-4 h-4" />
+      {label}
+    </button>
+  );
+}
+
 function PhotoThumb({ blob, onRemove }: { blob: Blob; onRemove: () => void }) {
   const [url, setUrl] = useState("");
   useEffect(() => {
@@ -955,15 +1098,16 @@ function PhotoThumb({ blob, onRemove }: { blob: Blob; onRemove: () => void }) {
     return () => URL.revokeObjectURL(u);
   }, [blob]);
   return (
-    <div className="relative aspect-square rounded-lg overflow-hidden border border-border bg-surface">
+    <div className="relative aspect-square rounded-xl overflow-hidden border border-border bg-surface">
       {url && <img src={url} alt="" className="w-full h-full object-cover" />}
-      <button onClick={onRemove} className="absolute top-0.5 right-0.5 p-0.5 rounded-full bg-black/60 text-white">
-        <X className="w-3.5 h-3.5" />
+      <button onClick={onRemove} className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-white">
+        <X className="w-4 h-4" />
       </button>
     </div>
   );
 }
 
+/* ── Material adder — single-column, big touch targets ── */
 function MaterialAdder({
   catalog,
   onAdd,
@@ -997,12 +1141,10 @@ function MaterialAdder({
     if (c.vendors.length === 1) setVendor(c.vendors[0]);
     if (c.species.length === 1) setSpecies(c.species[0]);
   }
-
   function chooseCustom() {
     setCustom(true);
     setPicked(null);
   }
-
   function reset() {
     setSearch("");
     setPicked(null);
@@ -1014,7 +1156,6 @@ function MaterialAdder({
     setLengths("");
     setVendor("");
   }
-
   function add() {
     const itemName = picked ? picked.profile : search.trim();
     if (!itemName) return;
@@ -1035,7 +1176,7 @@ function MaterialAdder({
   const showEntry = picked || custom;
 
   return (
-    <div className="mt-2 rounded-lg border border-dashed border-border p-2.5">
+    <div className="mt-2 rounded-xl border border-dashed border-border p-3">
       <div className="relative">
         <input
           value={search}
@@ -1044,90 +1185,77 @@ function MaterialAdder({
             setPicked(null);
             setCustom(false);
           }}
-          placeholder="Search catalog (e.g. 1x6 EJ, lattice, casing)…"
-          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+          placeholder="Search catalog (1x6 EJ, lattice, casing)…"
+          className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
         />
         {matches.length > 0 && (
-          <div className="absolute z-10 left-0 right-0 mt-1 rounded-lg border border-border bg-background shadow-lg max-h-56 overflow-y-auto">
+          <div className="absolute z-10 left-0 right-0 mt-1 rounded-xl border border-border bg-background shadow-lg max-h-60 overflow-y-auto">
             {matches.map((c) => (
               <button
                 key={c.id}
                 onClick={() => choose(c)}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-surface flex items-center justify-between gap-2"
+                className="w-full text-left px-3 py-3 text-sm hover:bg-surface flex items-center justify-between gap-2 border-b border-border last:border-b-0"
               >
                 <span className="font-medium truncate">{c.profile}</span>
                 <span className="text-[10px] text-muted shrink-0">{c.category}</span>
               </button>
             ))}
             {search.trim() && (
-              <button onClick={chooseCustom} className="w-full text-left px-3 py-2 text-sm border-t border-border text-amber-600 font-medium">
+              <button onClick={chooseCustom} className="w-full text-left px-3 py-3 text-sm text-amber-600 font-medium">
                 + Use “{search.trim()}” as custom item
               </button>
             )}
           </div>
         )}
         {search.trim() && !picked && !custom && matches.length === 0 && (
-          <button onClick={chooseCustom} className="mt-1 text-xs text-amber-600 font-medium">
+          <button onClick={chooseCustom} className="mt-2 text-sm text-amber-600 font-medium">
             + Use “{search.trim()}” as custom item
           </button>
         )}
       </div>
 
       {showEntry && (
-        <>
-          <div className="grid grid-cols-3 gap-2 mt-2">
-            <LabeledInput label="Qty" value={qty} onChange={setQty} type="number" />
-            <LabeledInput label="Unit" value={unit} onChange={setUnit} />
-            <LabeledInput label="Lengths" value={lengths} onChange={setLengths} placeholder="3 @ 8'" />
+        <div className="mt-3 space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <StackedInput label="Qty" value={qty} onChange={setQty} type="number" />
+            <StackedInput label="Unit" value={unit} onChange={setUnit} />
           </div>
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            <LabeledInput label="Color" value={color} onChange={setColor} />
-            <LabeledInput
-              label="Species"
-              value={species}
-              onChange={setSpecies}
-              list={picked && picked.species.length ? "wu-species" : undefined}
-            />
-          </div>
+          <StackedInput label="Color" value={color} onChange={setColor} />
+          <StackedInput label="Species" value={species} onChange={setSpecies} list={picked && picked.species.length ? "wu-mat-species" : undefined} />
+          <StackedInput label="Lengths" value={lengths} onChange={setLengths} placeholder="3 @ 8'" />
+          {picked && picked.vendors.length > 1 ? (
+            <div>
+              <label className="text-xs text-muted block mb-1">Vendor</label>
+              <select value={vendor} onChange={(e) => setVendor(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base">
+                <option value="">—</option>
+                {picked.vendors.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <StackedInput label="Vendor" value={vendor} onChange={setVendor} />
+          )}
           {picked && picked.species.length > 0 && (
-            <datalist id="wu-species">
+            <datalist id="wu-mat-species">
               {picked.species.map((s) => (
                 <option key={s} value={s} />
               ))}
             </datalist>
           )}
-          <div className="grid grid-cols-2 gap-2 mt-2 items-end">
-            {picked && picked.vendors.length > 1 ? (
-              <div>
-                <label className="text-[10px] font-medium text-muted block mb-0.5">Vendor</label>
-                <select
-                  value={vendor}
-                  onChange={(e) => setVendor(e.target.value)}
-                  className="w-full rounded-lg border border-border bg-background px-2 py-2 text-sm"
-                >
-                  <option value="">—</option>
-                  {picked.vendors.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <LabeledInput label="Vendor" value={vendor} onChange={setVendor} />
-            )}
-            <button onClick={add} className="py-2 rounded-lg bg-amber-500 text-white text-sm font-semibold flex items-center justify-center gap-1">
-              <Plus className="w-4 h-4" />
-              Add material
-            </button>
-          </div>
-        </>
+          <button onClick={add} className="w-full py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold flex items-center justify-center gap-1">
+            <Plus className="w-4 h-4" />
+            Add material
+          </button>
+        </div>
       )}
     </div>
   );
 }
 
-function LabeledInput({
+function StackedInput({
   label,
   value,
   onChange,
@@ -1144,14 +1272,14 @@ function LabeledInput({
 }) {
   return (
     <div>
-      <label className="text-[10px] font-medium text-muted block mb-0.5">{label}</label>
+      <label className="text-xs text-muted block mb-1">{label}</label>
       <input
         type={type}
         value={value}
         list={list}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+        className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
       />
     </div>
   );
@@ -1171,7 +1299,7 @@ function UnitChip({
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors flex items-center gap-1 ${
+      className={`px-3 py-2.5 rounded-lg text-sm font-medium border transition-colors flex items-center gap-1 ${
         active
           ? "bg-primary border-primary text-white"
           : added
