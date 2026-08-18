@@ -1,0 +1,371 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import BottomNav from "@/components/BottomNav";
+import { useAuth } from "@/hooks/useAuth";
+import { canDoFieldWork, canReviewWriteUps } from "@/lib/roles";
+import { FieldWorkOrder, WriteUpStatus } from "@/lib/types";
+import { fetchWriteUps, updateWriteUpStatus } from "@/lib/work-order-store";
+import {
+  Loader2,
+  ShieldX,
+  Wrench,
+  Printer,
+  ChevronDown,
+  ChevronRight,
+  Check,
+  Eye,
+  RotateCcw,
+  FileText,
+} from "lucide-react";
+import { format, parseISO } from "date-fns";
+
+type Filter = "open" | "in_review" | "closed" | "all";
+
+const FILTERS: { id: Filter; label: string }[] = [
+  { id: "open", label: "Open" },
+  { id: "in_review", label: "In Review" },
+  { id: "closed", label: "Closed" },
+  { id: "all", label: "All" },
+];
+
+export default function WorkOrdersPage() {
+  const { role, loading: authLoading } = useAuth();
+  const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<Filter>("open");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const canView = canDoFieldWork(role) || canReviewWriteUps(role);
+  const canReview = canReviewWriteUps(role);
+
+  useEffect(() => {
+    if (!canView) return;
+    load();
+  }, [canView]);
+
+  async function load() {
+    setLoading(true);
+    const data = await fetchWriteUps();
+    setWriteUps(data);
+    setLoading(false);
+  }
+
+  async function setStatus(id: string, status: WriteUpStatus) {
+    const ok = await updateWriteUpStatus(id, status);
+    if (ok) {
+      setWriteUps((prev) => prev.map((w) => (w.id === id ? { ...w, status } : w)));
+    }
+  }
+
+  const visible = useMemo(
+    () => (filter === "all" ? writeUps : writeUps.filter((w) => w.status === filter)),
+    [writeUps, filter]
+  );
+
+  // Group by order number (one job may have several unit write-ups).
+  const groups = useMemo(() => {
+    const map = new Map<string, FieldWorkOrder[]>();
+    for (const w of visible) {
+      if (!map.has(w.orderNumber)) map.set(w.orderNumber, []);
+      map.get(w.orderNumber)!.push(w);
+    }
+    return Array.from(map.entries());
+  }, [visible]);
+
+  if (authLoading) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        </div>
+        <BottomNav />
+      </div>
+    );
+  }
+
+  if (!canView) {
+    return (
+      <div className="flex flex-col h-full">
+        <header className="bg-background border-b border-border px-4 py-3">
+          <h1 className="text-lg font-semibold">Field Write-Ups</h1>
+        </header>
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center space-y-3">
+            <ShieldX className="w-12 h-12 text-muted mx-auto" />
+            <p className="font-medium">No access</p>
+            <p className="text-sm text-muted">
+              Field write-ups are limited to field managers and office staff.
+            </p>
+          </div>
+        </div>
+        <BottomNav />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <style>{`
+        @media print {
+          .no-print { display: none !important; }
+          body { background: white !important; }
+          .print-open { display: block !important; }
+        }
+      `}</style>
+
+      <header className="bg-background border-b border-border px-4 py-3 no-print">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Wrench className="w-5 h-5 text-amber-600" />
+            <h1 className="text-lg font-semibold">Field Write-Ups</h1>
+          </div>
+          <button
+            onClick={() => window.print()}
+            className="hidden md:flex items-center gap-1.5 text-sm text-primary hover:text-foreground"
+          >
+            <Printer className="w-4 h-4" />
+            Print
+          </button>
+        </div>
+        <div className="flex gap-1 mt-2 overflow-x-auto">
+          {FILTERS.map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setFilter(f.id)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
+                filter === f.id ? "bg-primary text-white" : "bg-surface text-muted"
+              }`}
+            >
+              {f.label}
+              {f.id !== "all" && (
+                <span className="ml-1.5 text-xs opacity-70">
+                  {writeUps.filter((w) => w.status === f.id).length}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      <main className="flex-1 overflow-y-auto p-4">
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-6 h-6 text-primary animate-spin" />
+          </div>
+        ) : groups.length === 0 ? (
+          <div className="text-center py-12 text-muted">
+            <Wrench className="w-10 h-10 mx-auto mb-2" />
+            <p className="text-sm">No {filter === "all" ? "" : filter.replace("_", " ")} write-ups</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {groups.map(([orderNumber, items]) => {
+              const first = items[0];
+              const isOpen = expanded.has(orderNumber);
+              return (
+                <div key={orderNumber} className="rounded-xl border border-border bg-surface overflow-hidden">
+                  <div className="flex items-stretch no-print">
+                    <button
+                      onClick={() =>
+                        setExpanded((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(orderNumber)) next.delete(orderNumber);
+                          else next.add(orderNumber);
+                          return next;
+                        })
+                      }
+                      className="flex-1 flex items-center justify-between px-4 py-3 text-left min-w-0"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-semibold truncate">{first.customerName || "—"}</p>
+                        <p className="text-xs text-muted truncate">
+                          #{orderNumber} · {items.length} write-up{items.length !== 1 ? "s" : ""}
+                          {first.address ? ` · ${first.address}` : ""}
+                        </p>
+                      </div>
+                      {isOpen ? (
+                        <ChevronDown className="w-5 h-5 text-muted shrink-0" />
+                      ) : (
+                        <ChevronRight className="w-5 h-5 text-muted shrink-0" />
+                      )}
+                    </button>
+                    <Link
+                      href={`/work-orders/${encodeURIComponent(orderNumber)}`}
+                      className="flex items-center gap-1.5 px-3 border-l border-border text-amber-600 shrink-0"
+                      title="Open work order doc"
+                    >
+                      <FileText className="w-4 h-4" />
+                      <span className="text-xs font-semibold hidden sm:inline">Doc</span>
+                    </Link>
+                  </div>
+
+                  <div className={isOpen ? "block" : "hidden print-open"}>
+                    {items.map((w) => (
+                      <WriteUpRow
+                        key={w.id}
+                        w={w}
+                        canReview={canReview}
+                        onStatus={setStatus}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </main>
+
+      <BottomNav />
+    </div>
+  );
+}
+
+function StatusPill({ status }: { status: WriteUpStatus }) {
+  const map: Record<WriteUpStatus, string> = {
+    open: "bg-amber-500/15 text-amber-600",
+    in_review: "bg-blue-500/15 text-blue-600",
+    closed: "bg-green-600/15 text-green-700",
+  };
+  const label = { open: "Open", in_review: "In Review", closed: "Closed" }[status];
+  return (
+    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${map[status]}`}>{label}</span>
+  );
+}
+
+function WriteUpRow({
+  w,
+  canReview,
+  onStatus,
+}: {
+  w: FieldWorkOrder;
+  canReview: boolean;
+  onStatus: (id: string, s: WriteUpStatus) => void;
+}) {
+  return (
+    <div className="px-4 py-3 border-t border-border">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold">{w.unitLabel || "Whole job"}</span>
+          <StatusPill status={w.status} />
+        </div>
+        <span className="text-[11px] text-muted">
+          {w.createdByName || w.createdBy} · {format(parseISO(w.createdAt), "MMM d, h:mm a")}
+        </span>
+      </div>
+
+      {w.newProduct && (
+        <div className="mb-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-amber-700 mb-0.5">
+            Added product
+          </p>
+          <p className="text-sm font-semibold">
+            {w.newProduct.type}
+            {w.newProduct.size ? ` · ${w.newProduct.size}` : ""}
+          </p>
+          <p className="text-xs text-muted">
+            {[w.newProduct.exteriorColor, w.newProduct.interiorColor, w.newProduct.intFinish, w.newProduct.frame]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        </div>
+      )}
+
+      {w.lineItems.length > 0 && (
+        <ul className="mb-2 space-y-1">
+          {w.lineItems.map((li, i) => (
+            <li key={i} className="text-sm flex items-start gap-2">
+              <span
+                className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${
+                  li.kind === "preset" ? "bg-amber-500" : "bg-primary"
+                }`}
+              />
+              <span>{li.label}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {w.specChanges.length > 0 && (
+        <div className="mb-2 rounded-lg bg-background border border-border px-3 py-2">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">Spec corrections</p>
+          {w.specChanges.map((c, i) => (
+            <p key={i} className="text-xs">
+              <span className="text-muted">{c.field}:</span>{" "}
+              <span className="line-through text-muted">{c.oldValue || "—"}</span>{" → "}
+              <span className="font-semibold text-amber-600">{c.newValue}</span>
+            </p>
+          ))}
+        </div>
+      )}
+
+      {w.materialItems.length > 0 && (
+        <div className="mb-2 overflow-x-auto">
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="bg-[#1a1a1a]">
+                {["QTY", "Item", "Color", "Species", "Lengths", "Vendor"].map((h) => (
+                  <th
+                    key={h}
+                    className="px-2 py-1 text-[9px] font-bold tracking-wider uppercase text-white"
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {w.materialItems.map((m, i) => (
+                <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-surface"}>
+                  <td className="px-2 py-1 text-xs border-b border-border font-bold whitespace-nowrap">
+                    {m.qty} {m.unit}
+                  </td>
+                  <td className="px-2 py-1 text-xs border-b border-border font-semibold">{m.item}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.color || "—"}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.species || "—"}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border text-muted font-mono">{m.lengths || "—"}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border font-bold text-[#6DB344]">{m.vendor || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {w.notes && <p className="text-sm text-muted whitespace-pre-wrap mb-2">{w.notes}</p>}
+
+      {canReview && (
+        <div className="flex gap-2 mt-2 no-print">
+          {w.status !== "in_review" && w.status !== "closed" && (
+            <button
+              onClick={() => onStatus(w.id, "in_review")}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-blue-500/10 text-blue-600 border border-blue-500/30"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              Mark reviewing
+            </button>
+          )}
+          {w.status !== "closed" ? (
+            <button
+              onClick={() => onStatus(w.id, "closed")}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-green-600/10 text-green-700 border border-green-600/30"
+            >
+              <Check className="w-3.5 h-3.5" />
+              Close
+            </button>
+          ) : (
+            <button
+              onClick={() => onStatus(w.id, "open")}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-surface text-muted border border-border"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reopen
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

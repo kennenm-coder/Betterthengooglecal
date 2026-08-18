@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Calendar, Search, ScrollText, UserCog } from "lucide-react";
+import { Calendar, Search, ScrollText, UserCog, Wrench } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { canDoFieldWork, canReviewWriteUps } from "@/lib/roles";
 
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: Calendar },
@@ -13,10 +15,20 @@ const NAV_ITEMS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
+  const { role } = useAuth();
+  const showWriteUps = canDoFieldWork(role) || canReviewWriteUps(role);
+
+  const items = showWriteUps
+    ? [
+        ...NAV_ITEMS.slice(0, 3),
+        { href: "/work-orders", label: "Write-Ups", icon: Wrench },
+        ...NAV_ITEMS.slice(3),
+      ]
+    : NAV_ITEMS;
 
   return (
     <nav className="sticky bottom-0 bg-background border-t border-border flex items-stretch z-40 safe-area-bottom">
-      {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+      {items.map(({ href, label, icon: Icon }) => {
         const active = pathname === href;
         return (
           <Link

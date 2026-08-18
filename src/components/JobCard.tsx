@@ -26,6 +26,9 @@ import {
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import ActionModal from "./ActionModal";
+import WriteUpModal from "./WriteUpModal";
+import { useAuth } from "@/hooks/useAuth";
+import { canDoFieldWork } from "@/lib/roles";
 import { parseISO, isSameDay } from "date-fns";
 
 function phoneHref(phone: string): string {
@@ -99,6 +102,9 @@ export default function JobCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [showAction, setShowAction] = useState(false);
+  const [showWriteUp, setShowWriteUp] = useState(false);
+  const { role } = useAuth();
+  const fieldWorker = canDoFieldWork(role);
   const router = useRouter();
   const typeBg = typeColor(order.workOrderType);
   const multiDay = isMultiDay(order);
@@ -180,13 +186,24 @@ export default function JobCard({
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
-              <button
-                onClick={() => setShowAction(true)}
-                className="p-1.5 rounded-lg border border-primary/30 bg-primary/10 hover:bg-primary/20 transition-colors"
-                title="Log Action"
-              >
-                <MessageSquarePlus className="w-5 h-5 text-primary" />
-              </button>
+              {fieldWorker && (
+                <button
+                  onClick={() => setShowWriteUp(true)}
+                  className="p-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 transition-colors"
+                  title="Field Write-Up"
+                >
+                  <Hammer className="w-5 h-5 text-amber-600" />
+                </button>
+              )}
+              {fieldWorker && (
+                <button
+                  onClick={() => setShowAction(true)}
+                  className="p-1.5 rounded-lg border border-primary/30 bg-primary/10 hover:bg-primary/20 transition-colors"
+                  title="Log Action"
+                >
+                  <MessageSquarePlus className="w-5 h-5 text-primary" />
+                </button>
+              )}
               <button
                 onClick={() => openSalesforce(order.workOrderNumber, order.orderNumber)}
                 className="p-1 rounded hover:bg-surface"
@@ -356,6 +373,14 @@ export default function JobCard({
 
       {showAction && (
         <ActionModal order={order} onClose={() => setShowAction(false)} />
+      )}
+
+      {showWriteUp && (
+        <WriteUpModal
+          order={order}
+          units={mat?.units || []}
+          onClose={() => setShowWriteUp(false)}
+        />
       )}
     </div>
   );
