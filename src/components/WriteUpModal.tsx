@@ -124,7 +124,11 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
   const [pendingDraft, setPendingDraft] = useState<WriteUpDraft | null>(null);
   const [draftReady, setDraftReady] = useState(false);
   const [savedTick, setSavedTick] = useState(false);
-  const [savePrompt, setSavePrompt] = useState<File | null>(null);
+  // Photos taken with the in-app camera this session (by id) that haven't been
+  // saved to the device yet. Library uploads are already in the roll, so they
+  // aren't tracked here.
+  const [cameraPhotoIds, setCameraPhotoIds] = useState<Set<string>>(new Set());
+  const [showSavePrompt, setShowSavePrompt] = useState(false);
   const [closing, setClosing] = useState(false); // "unsaved changes" guard
 
   useEffect(() => {
@@ -188,7 +192,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     setWorkItems((prev) => prev.map((w, j) => (j === i ? { ...w, notes } : w)));
   }
 
-  async function addPhotos(files: File[]) {
+  async function addPhotos(files: File[], fromCamera = false) {
     const added: LocalPhoto[] = [];
     for (const f of files) {
       const id = crypto.randomUUID();
@@ -196,32 +200,63 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       putDraftPhoto(id, f);
     }
     setPhotos((prev) => [...prev, ...added]);
+    if (fromCamera) {
+      setCameraPhotoIds((prev) => {
+        const next = new Set(prev);
+        for (const p of added) next.add(p.id);
+        return next;
+      });
+    }
   }
   function removePhoto(id: string) {
     setPhotos((prev) => prev.filter((p) => p.id !== id));
+    setCameraPhotoIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     deleteDraftPhoto(id);
   }
 
-  async function saveToDevice(file: File) {
+  /** Camera photos taken this session that the user hasn't saved to the roll. */
+  const unsavedCameraPhotos = photos.filter((p) => cameraPhotoIds.has(p.id));
+
+  function photoToFile(p: LocalPhoto): File {
+    return p.blob instanceof File
+      ? p.blob
+      : new File([p.blob], p.name || "photo.jpg", { type: p.blob.type || "image/jpeg" });
+  }
+
+  /** Save every camera photo to the device in one action — the iOS/Android share
+   *  sheet accepts multiple files and offers "Save N Images" to the camera roll.
+   *  Falls back to individual downloads on browsers without file sharing. */
+  async function saveAllToDevice() {
+    const files = unsavedCameraPhotos.map(photoToFile);
+    if (files.length === 0) return;
     const nav = navigator as Navigator & {
       canShare?: (data?: unknown) => boolean;
       share?: (data?: unknown) => Promise<void>;
     };
     try {
-      if (nav.share && nav.canShare && nav.canShare({ files: [file] })) {
-        await nav.share({ files: [file] });
+      if (nav.share && nav.canShare && nav.canShare({ files })) {
+        await nav.share({ files });
       } else {
-        const url = URL.createObjectURL(file);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = file.name || "photo.jpg";
-        a.click();
-        URL.revokeObjectURL(url);
+        for (const file of files) {
+          const url = URL.createObjectURL(file);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = file.name || "photo.jpg";
+          a.click();
+          URL.revokeObjectURL(url);
+        }
       }
+      // Mark them saved so the prompt/button don't nag for the same shots.
+      setCameraPhotoIds(new Set());
     } catch {
-      /* cancelled */
+      /* user cancelled the share sheet — keep them unsaved so they can retry */
     }
-    setSavePrompt(null);
+    setShowSavePrompt(false);
   }
 
   const editorSpecChanges: SpecChange[] = useMemo(() => {
@@ -575,20 +610,22 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
         </div>
       )}
 
-      {savePrompt && (
+      {showSavePrompt && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-6">
           <div className="bg-background rounded-2xl shadow-xl w-full max-w-xs p-5 text-center">
             <Camera className="w-8 h-8 text-amber-600 mx-auto mb-2" />
-            <p className="font-semibold">Save photo to your device?</p>
+            <p className="font-semibold">
+              Save {unsavedCameraPhotos.length} photo{unsavedCameraPhotos.length !== 1 ? "s" : ""} to your device?
+            </p>
             <p className="text-xs text-muted mt-1">
-              It&apos;s already attached to the write-up. Saving also keeps a copy in your photos.
+              They&apos;re already attached to the write-up. Saving also keeps a copy in your camera roll.
             </p>
             <div className="flex gap-2 mt-4">
-              <button onClick={() => setSavePrompt(null)} className="flex-1 py-3 rounded-xl border border-border text-sm font-medium">
+              <button onClick={() => setShowSavePrompt(false)} className="flex-1 py-3 rounded-xl border border-border text-sm font-medium">
                 Not now
               </button>
-              <button onClick={() => saveToDevice(savePrompt)} className="flex-1 py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold">
-                Save
+              <button onClick={saveAllToDevice} className="flex-1 py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold">
+                Save all
               </button>
             </div>
           </div>
@@ -850,10 +887,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
                     className="hidden"
                     onChange={(e) => {
                       const files = Array.from(e.target.files || []);
-                      if (files.length) {
-                        addPhotos(files);
-                        setSavePrompt(files[0]);
-                      }
+                      if (files.length) addPhotos(files, true);
                       e.target.value = "";
                     }}
                   />
@@ -873,6 +907,18 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
                   />
                 </label>
               </div>
+
+              {/* Batch save: take as many as you want, then save them all at
+                  once to the camera roll (one share sheet). */}
+              {unsavedCameraPhotos.length > 0 && (
+                <button
+                  onClick={() => setShowSavePrompt(true)}
+                  className="w-full mt-2 py-3 rounded-xl border border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-2 active:bg-amber-500/10"
+                >
+                  <ImagePlus className="w-4 h-4" />
+                  Save {unsavedCameraPhotos.length} photo{unsavedCameraPhotos.length !== 1 ? "s" : ""} to camera roll
+                </button>
+              )}
             </section>
           )}
 
