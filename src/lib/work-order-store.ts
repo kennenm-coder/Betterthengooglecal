@@ -1,5 +1,5 @@
 import { getSupabase } from "./supabase";
-import { fetchCatalogAndOffsets } from "./nwo-builder";
+import { fetchCatalogAndOffsets, fetchTrimCatalogOptions } from "./nwo-builder";
 import {
   FieldWorkOrder,
   WriteUpLineItem,
@@ -256,6 +256,55 @@ export async function fetchCatalogPickItems(): Promise<CatalogPickItem[]> {
   items.sort((a: CatalogPickItem, b: CatalogPickItem) => a.profile.localeCompare(b.profile));
   _pickCache = items;
   return items;
+}
+
+// ─── Trim option lists (colors / species / stains) ──────────────────────────
+// Feeds the write-up trim adder's type-ahead so color, species and stain are
+// picked from the same catalog the material-list maker uses (custom text still
+// allowed).
+
+export interface TrimOptions {
+  /** RbA exterior + interior colors seen across jobs. */
+  colors: string[];
+  /** Wood species offered by catalog profiles. */
+  species: string[];
+  /** Stain colors from the material catalog. */
+  stains: string[];
+}
+
+let _trimOptsCache: TrimOptions | null = null;
+
+export async function fetchTrimOptions(): Promise<TrimOptions> {
+  if (_trimOptsCache) return _trimOptsCache;
+  const [{ species, stains }, unit] = await Promise.all([
+    fetchTrimCatalogOptions(),
+    fetchUnitOptions(),
+  ]);
+  const colors = [...new Set([...unit.extColors, ...unit.intColors])]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  _trimOptsCache = { colors, species, stains };
+  return _trimOptsCache;
+}
+
+/**
+ * Count total pieces from a trim "lengths" entry so quantity isn't double-typed
+ * — matches the material-list maker's `N@len` format.
+ *   "5"                 → 5   (plain count)
+ *   "5@8'"              → 5
+ *   "5@8' 10@10' 2@12'" → 17  (sum of the counts before each @)
+ *   "8' 10'"            → 2   (bare lengths, no counts → one piece each)
+ */
+export function lengthsToQty(input: string): number {
+  const s = (input || "").trim();
+  if (!s) return 0;
+  if (s.includes("@")) {
+    let total = 0;
+    for (const m of s.matchAll(/(\d+)\s*@/g)) total += Number(m[1]) || 0;
+    return total;
+  }
+  if (/^\d+$/.test(s)) return Number(s);
+  return s.split(/[\s,]+/).filter(Boolean).length;
 }
 
 // ─── Photos ─────────────────────────────────────────────────────────────────

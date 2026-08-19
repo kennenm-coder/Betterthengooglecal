@@ -10,12 +10,16 @@ import {
   WriteUpNewProduct,
 } from "@/lib/types";
 import { useAuth } from "@/hooks/useAuth";
+import CameraCapture from "./CameraCapture";
 import {
   getWriteUpPresets,
   fetchCatalogPickItems,
   CatalogPickItem,
   fetchUnitOptions,
   UnitOptions,
+  fetchTrimOptions,
+  TrimOptions,
+  lengthsToQty,
   SPEC_FIELDS,
   unitLabelOf,
   submitWriteUpBatch,
@@ -97,6 +101,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
   const [presets, setPresets] = useState<string[]>([]);
   const [catalog, setCatalog] = useState<CatalogPickItem[]>([]);
   const [options, setOptions] = useState<UnitOptions | null>(null);
+  const [trimOptions, setTrimOptions] = useState<TrimOptions | null>(null);
   const [entries, setEntries] = useState<BuiltEntry[]>([]);
 
   // Editor
@@ -129,12 +134,14 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
   // aren't tracked here.
   const [cameraPhotoIds, setCameraPhotoIds] = useState<Set<string>>(new Set());
   const [showSavePrompt, setShowSavePrompt] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
   const [closing, setClosing] = useState(false); // "unsaved changes" guard
 
   useEffect(() => {
     getWriteUpPresets().then(setPresets);
     fetchCatalogPickItems().then(setCatalog).catch(() => setCatalog([]));
     fetchUnitOptions().then(setOptions).catch(() => setOptions(null));
+    fetchTrimOptions().then(setTrimOptions).catch(() => setTrimOptions(null));
   }, []);
 
   useEffect(() => {
@@ -632,6 +639,15 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
         </div>
       )}
 
+      {showCamera && (
+        <CameraCapture
+          onDone={(files) => {
+            if (files.length) addPhotos(files, true);
+          }}
+          onClose={() => setShowCamera(false)}
+        />
+      )}
+
       <div className="bg-background w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl h-[96vh] sm:h-auto sm:max-h-[94vh] flex flex-col shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
@@ -858,7 +874,14 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
                   ))}
                 </div>
               )}
-              <MaterialAdder catalog={catalog} onAdd={(m) => setMaterialItems((prev) => [...prev, m])} />
+              <MaterialAdder
+                catalog={catalog}
+                colorOptions={
+                  trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []
+                }
+                speciesOptions={trimOptions?.species || []}
+                onAdd={(m) => setMaterialItems((prev) => [...prev, m])}
+              />
             </section>
           )}
 
@@ -878,20 +901,13 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
                 </div>
               )}
               <div className="grid grid-cols-2 gap-2 mt-2">
-                <label className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-border text-sm font-medium text-muted cursor-pointer active:bg-surface">
-                  <Camera className="w-4 h-4" /> Take photo
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files || []);
-                      if (files.length) addPhotos(files, true);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowCamera(true)}
+                  className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-border text-sm font-medium text-muted cursor-pointer active:bg-surface"
+                >
+                  <Camera className="w-4 h-4" /> Take photos
+                </button>
                 <label className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-border text-sm font-medium text-muted cursor-pointer active:bg-surface">
                   <ImagePlus className="w-4 h-4" /> Upload
                   <input
@@ -1180,20 +1196,33 @@ function PhotoThumb({ blob, onRemove }: { blob: Blob; onRemove: () => void }) {
 /* ── Material adder — single-column, big touch targets ── */
 function MaterialAdder({
   catalog,
+  colorOptions,
+  speciesOptions,
   onAdd,
 }: {
   catalog: CatalogPickItem[];
+  colorOptions: string[];
+  speciesOptions: string[];
   onAdd: (m: WriteUpMaterialItem) => void;
 }) {
   const [search, setSearch] = useState("");
   const [picked, setPicked] = useState<CatalogPickItem | null>(null);
   const [custom, setCustom] = useState(false);
-  const [qty, setQty] = useState("1");
   const [unit, setUnit] = useState("PCS");
   const [color, setColor] = useState("");
   const [species, setSpecies] = useState("");
   const [lengths, setLengths] = useState("");
   const [vendor, setVendor] = useState("");
+
+  // Quantity is derived from the lengths field so it's never double-entered.
+  const computedQty = lengthsToQty(lengths);
+
+  // When a profile is picked, surface its own species first, then the rest of
+  // the catalog's species. Custom typing is always allowed.
+  const speciesList = useMemo(() => {
+    const head = picked?.species || [];
+    return [...new Set([...head, ...speciesOptions])];
+  }, [picked, speciesOptions]);
 
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1219,7 +1248,6 @@ function MaterialAdder({
     setSearch("");
     setPicked(null);
     setCustom(false);
-    setQty("1");
     setUnit("PCS");
     setColor("");
     setSpecies("");
@@ -1234,7 +1262,7 @@ function MaterialAdder({
       item: itemName,
       color: color.trim(),
       species: species.trim(),
-      qty: Math.max(1, Number(qty) || 1),
+      qty: Math.max(1, computedQty),
       unit: unit.trim() || "PCS",
       lengths: lengths.trim(),
       vendor: vendor.trim(),
@@ -1286,13 +1314,30 @@ function MaterialAdder({
 
       {showEntry && (
         <div className="mt-3 space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            <StackedInput label="Qty" value={qty} onChange={setQty} type="number" />
+          {/* Lengths drives the count — no separate qty field. */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="col-span-2">
+              <label className="text-xs text-muted block mb-1">Lengths / count</label>
+              <input
+                value={lengths}
+                onChange={(e) => setLengths(e.target.value)}
+                placeholder="5@8' 10@10'  ·  or just  5"
+                className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+              />
+            </div>
             <StackedInput label="Unit" value={unit} onChange={setUnit} />
           </div>
-          <StackedInput label="Color" value={color} onChange={setColor} />
-          <StackedInput label="Species" value={species} onChange={setSpecies} list={picked && picked.species.length ? "wu-mat-species" : undefined} />
-          <StackedInput label="Lengths" value={lengths} onChange={setLengths} placeholder="3 @ 8'" />
+          <p className="text-[11px] text-muted -mt-1">
+            {computedQty > 0 ? (
+              <>
+                Counts to <strong className="text-foreground">{computedQty} {unit.trim() || "PCS"}</strong>
+              </>
+            ) : (
+              <>Type a count like <strong>5</strong>, or lengths like <strong>5@8&apos; 10@10&apos;</strong></>
+            )}
+          </p>
+          <ComboInput label="Color" value={color} onChange={setColor} options={colorOptions} placeholder="Start typing a color or stain…" />
+          <ComboInput label="Species" value={species} onChange={setSpecies} options={speciesList} placeholder="Start typing a species…" />
           {picked && picked.vendors.length > 1 ? (
             <div>
               <label className="text-xs text-muted block mb-1">Vendor</label>
@@ -1308,17 +1353,68 @@ function MaterialAdder({
           ) : (
             <StackedInput label="Vendor" value={vendor} onChange={setVendor} />
           )}
-          {picked && picked.species.length > 0 && (
-            <datalist id="wu-mat-species">
-              {picked.species.map((s) => (
-                <option key={s} value={s} />
-              ))}
-            </datalist>
-          )}
-          <button onClick={add} className="w-full py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold flex items-center justify-center gap-1">
+          <button
+            onClick={add}
+            disabled={computedQty < 1}
+            className="w-full py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
+          >
             <Plus className="w-4 h-4" />
             Add material
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Text input with a catalog type-ahead — narrows as you type, custom text ok. */
+function ComboInput({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const q = value.trim().toLowerCase();
+  const matches = useMemo(() => {
+    if (!q) return options.slice(0, 8);
+    return options.filter((o) => o.toLowerCase().includes(q) && o.toLowerCase() !== q).slice(0, 8);
+  }, [q, options]);
+
+  return (
+    <div className="relative">
+      <label className="text-xs text-muted block mb-1">{label}</label>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder={placeholder}
+        className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+      />
+      {open && matches.length > 0 && (
+        <div className="absolute z-20 left-0 right-0 mt-1 rounded-xl border border-border bg-background shadow-lg max-h-56 overflow-y-auto">
+          {matches.map((o) => (
+            <button
+              key={o}
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onChange(o);
+                setOpen(false);
+              }}
+              className="w-full text-left px-3 py-2.5 text-sm hover:bg-surface border-b border-border last:border-b-0"
+            >
+              {o}
+            </button>
+          ))}
         </div>
       )}
     </div>

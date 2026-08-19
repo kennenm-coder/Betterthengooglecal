@@ -105,6 +105,25 @@ export async function fetchCatalogAndOffsets(): Promise<{ catalog: MaterialCatal
   return _catalogCache;
 }
 
+/**
+ * Species + stain option lists from the shared material catalog, for the field
+ * write-up trim adder. Species are the union across all catalog items' options;
+ * stains fall back to the material app's default stain list when the catalog
+ * doesn't override them — same source the material-list maker uses.
+ */
+export async function fetchTrimCatalogOptions(): Promise<{ species: string[]; stains: string[] }> {
+  const { catalog } = await fetchCatalogAndOffsets();
+  const sp = new Set<string>();
+  for (const it of catalog.items || []) {
+    for (const o of it.options || []) if (o.species) sp.add(String(o.species).trim());
+  }
+  const rawStains =
+    Array.isArray(catalog.stains) && catalog.stains.length ? catalog.stains : MC_DEFAULT_STAINS;
+  const stains = [...new Set(rawStains.map((s) => String(s).trim()).filter(Boolean))];
+  const species = [...sp].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  return { species, stains };
+}
+
 // ─── HELPERS ────────────────────────────────────────────────────────────────
 
 function isUnitDoor(u: any): boolean {
