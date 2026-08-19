@@ -126,7 +126,8 @@ export interface UnitOptions {
 // Seeds (from the material app's constants) so the lists are never empty.
 const SEED_PRODUCT_TYPES = [
   "Double Hung", "Casement", "Double Casement", "Triple Casement", "Picture",
-  "Awning", "Gliding", "Bay", "Bow", "Specialty", "Entry Door", "Patio Door", "Screen",
+  "Awning", "Gliding", "Bay", "Bow", "Specialty", "Entry Door", "Patio Door",
+  "Storm Door", "Screen",
 ];
 const SEED_EXT_COLORS = [
   "White[RBA]", "Dark Bronze", "Canvas", "Sandtone", "Terratone", "Cocoa Bean",

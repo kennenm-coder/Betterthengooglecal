@@ -5,8 +5,10 @@ import Link from "next/link";
 import BottomNav from "@/components/BottomNav";
 import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork, canReviewWriteUps } from "@/lib/roles";
-import { FieldWorkOrder, WriteUpStatus } from "@/lib/types";
+import { FieldWorkOrder, WriteUpStatus, MaterialUnit } from "@/lib/types";
 import { fetchWriteUps, updateWriteUpStatus } from "@/lib/work-order-store";
+import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
+import WriteUpPicker from "@/components/WriteUpPicker";
 import {
   Loader2,
   ShieldX,
@@ -18,6 +20,7 @@ import {
   Eye,
   RotateCcw,
   FileText,
+  Plus,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -39,6 +42,10 @@ export default function WorkOrdersPage() {
 
   const canView = canDoFieldWork(role) || canReviewWriteUps(role);
   const canReview = canReviewWriteUps(role);
+  const canCreate = canDoFieldWork(role);
+
+  const [showPicker, setShowPicker] = useState(false);
+  const [pending, setPending] = useState<{ target: WriteUpTarget; units: MaterialUnit[] } | null>(null);
 
   useEffect(() => {
     if (!canView) return;
@@ -121,13 +128,24 @@ export default function WorkOrdersPage() {
             <Wrench className="w-5 h-5 text-amber-600" />
             <h1 className="text-lg font-semibold">Field Write-Ups</h1>
           </div>
-          <button
-            onClick={() => window.print()}
-            className="hidden md:flex items-center gap-1.5 text-sm text-primary hover:text-foreground"
-          >
-            <Printer className="w-4 h-4" />
-            Print
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => window.print()}
+              className="hidden md:flex items-center gap-1.5 text-sm text-primary hover:text-foreground"
+            >
+              <Printer className="w-4 h-4" />
+              Print
+            </button>
+            {canCreate && (
+              <button
+                onClick={() => setShowPicker(true)}
+                className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-md bg-amber-500 text-white font-medium active:scale-[0.97] transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                <span className="hidden sm:inline">New write-up</span>
+              </button>
+            )}
+          </div>
         </div>
         <div className="flex gap-1 mt-2 overflow-x-auto">
           {FILTERS.map((f) => (
@@ -217,6 +235,28 @@ export default function WorkOrdersPage() {
           </div>
         )}
       </main>
+
+      {showPicker && (
+        <WriteUpPicker
+          onPick={(target, units) => {
+            setShowPicker(false);
+            setPending({ target, units });
+          }}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
+
+      {pending && (
+        <WriteUpModal
+          order={pending.target}
+          units={pending.units}
+          onClose={() => setPending(null)}
+          onSaved={() => {
+            setPending(null);
+            load();
+          }}
+        />
+      )}
 
       <BottomNav />
     </div>

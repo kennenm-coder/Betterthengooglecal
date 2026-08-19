@@ -96,6 +96,120 @@ const emptyProduct: WriteUpNewProduct = {
   frame: "",
 };
 
+// ── Spec catalog ───────────────────────────────────────────────────────────
+// One master list of documentable specs. `kind` drives the value input:
+// measurements use inches + fraction pickers (no typo-prone free text), colors/
+// finish/species/stain get catalog type-ahead, the rest are plain text.
+type SpecKind = "measure" | "color" | "finish" | "species" | "stain" | "text";
+
+const SPEC_CATALOG: { label: string; kind: SpecKind }[] = [
+  { label: "Width", kind: "measure" },
+  { label: "Height", kind: "measure" },
+  { label: "Exterior Color", kind: "color" },
+  { label: "Interior Color", kind: "color" },
+  { label: "Interior Finish", kind: "finish" },
+  { label: "Frame", kind: "text" },
+  { label: "Species", kind: "species" },
+  { label: "Stain", kind: "stain" },
+  { label: "Sub Type / Details", kind: "text" },
+  { label: "Grilles", kind: "text" },
+  { label: "Grille Pattern", kind: "text" },
+  { label: "Glass / Low-E", kind: "text" },
+  { label: "Tempered", kind: "text" },
+  { label: "Screen", kind: "text" },
+  { label: "Hardware / Lock Color", kind: "text" },
+  { label: "Sash Operation", kind: "text" },
+  { label: "Trim / Casing", kind: "text" },
+  { label: "Jamb Depth", kind: "measure" },
+];
+
+const FRACTIONS_16 = [
+  "0", "1/16", "1/8", "3/16", "1/4", "5/16", "3/8", "7/16",
+  "1/2", "9/16", "5/8", "11/16", "3/4", "13/16", "7/8", "15/16",
+];
+
+function specKindOf(label: string): SpecKind {
+  const hit = SPEC_CATALOG.find((s) => s.label.toLowerCase() === label.toLowerCase());
+  if (hit) return hit.kind;
+  const l = label.toLowerCase();
+  if (l.includes("width") || l.includes("height") || l.includes("depth") || l.includes("size")) return "measure";
+  if (l.includes("color") || l.includes("colour")) return "color";
+  if (l.includes("finish")) return "finish";
+  if (l.includes("species")) return "species";
+  if (l.includes("stain")) return "stain";
+  return "text";
+}
+
+/** inches + fraction → display string like `24 1/2"` (empty when blank). */
+function composeMeasure(whole: string, frac: string): string {
+  const w = (whole || "").trim();
+  if (!w) return "";
+  return `${w}${frac && frac !== "0" ? ` ${frac}` : ""}"`;
+}
+
+/** Parse `24 1/2"` back into inches + fraction for editing. */
+function parseMeasure(value: string): { whole: string; frac: string } {
+  const s = (value || "").replace(/["']/g, "").trim();
+  if (!s) return { whole: "", frac: "0" };
+  const parts = s.split(/\s+/);
+  const whole = parts[0] || "";
+  const frac = parts[1] && FRACTIONS_16.includes(parts[1]) ? parts[1] : "0";
+  return { whole, frac };
+}
+
+/** Nearest 1/16 fraction label for a decimal fraction stored on a unit. */
+function fracLabelFromNum(n: number | null | undefined): string {
+  if (!n) return "0";
+  const idx = Math.round(n * 16);
+  return FRACTIONS_16[idx] || "0";
+}
+
+/** One documented spec on a unit — the working shape inside the editor. */
+interface SpecEntry {
+  id: string;
+  label: string;
+  kind: SpecKind;
+  /** Current value on the programmed unit (blank for a manually-added product). */
+  oldValue: string;
+  /** New value for non-measure specs. */
+  newValue: string;
+  /** Inches + fraction for measure specs. */
+  whole: string;
+  frac: string;
+}
+
+function specEntryValue(e: SpecEntry): string {
+  return e.kind === "measure" ? composeMeasure(e.whole, e.frac) : e.newValue.trim();
+}
+
+/** Read a unit's current value for a given spec label. */
+function readCurrentSpec(unit: MaterialUnit, label: string): string {
+  const f = SPEC_FIELDS.find((s) => s.label.toLowerCase() === label.toLowerCase());
+  if (f) return f.read(unit);
+  const l = label.toLowerCase();
+  if (l === "width") return composeMeasure(String(unit.widthWhole || ""), fracLabelFromNum(unit.widthFrac));
+  if (l === "height") return composeMeasure(String(unit.heightWhole || ""), fracLabelFromNum(unit.heightFrac));
+  for (const line of String(unit.specDescription || "").split("\n")) {
+    const idx = line.indexOf(":");
+    if (idx > 0 && line.slice(0, idx).trim().toLowerCase() === l) return line.slice(idx + 1).trim();
+  }
+  return "";
+}
+
+/** Spec labels this unit actually carries (for quick suggestions). */
+function unitSpecLabels(unit: MaterialUnit | null): string[] {
+  if (!unit) return [];
+  const labels = new Set<string>();
+  for (const f of SPEC_FIELDS) if (f.read(unit)) labels.add(f.label);
+  if (unit.widthWhole) labels.add("Width");
+  if (unit.heightWhole) labels.add("Height");
+  for (const line of String(unit.specDescription || "").split("\n")) {
+    const idx = line.indexOf(":");
+    if (idx > 0) labels.add(line.slice(0, idx).trim());
+  }
+  return [...labels];
+}
+
 export default function WriteUpModal({ order, units, initialUnit, onClose, onSaved }: Props) {
   const { user, autoCc } = useAuth();
   const [presets, setPresets] = useState<string[]>([]);
@@ -108,16 +222,15 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [selectedUnit, setSelectedUnit] = useState<string>(initialUnit || WHOLE_JOB);
   const [workItems, setWorkItems] = useState<WriteUpLineItem[]>([]);
-  const [specDrafts, setSpecDrafts] = useState<Record<string, string>>({});
+  const [specEntries, setSpecEntries] = useState<SpecEntry[]>([]);
   const [materialItems, setMaterialItems] = useState<WriteUpMaterialItem[]>([]);
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
   const [notes, setNotes] = useState("");
   const [addProductMode, setAddProductMode] = useState(false);
   const [newUnitNumber, setNewUnitNumber] = useState("");
-  const [newProduct, setNewProduct] = useState<WriteUpNewProduct>(emptyProduct);
+  const [unitType, setUnitType] = useState("");
 
   // Progressive disclosure of optional sections
-  const [showSpec, setShowSpec] = useState(false);
   const [showTrim, setShowTrim] = useState(false);
   const [showPhotos, setShowPhotos] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
@@ -174,16 +287,6 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     selectedUnit === WHOLE_JOB
       ? null
       : unitOptions.find((o) => o.label === selectedUnit)?.unit || null;
-
-  useEffect(() => {
-    if (addProductMode || !activeUnit) {
-      if (!addProductMode) setSpecDrafts({});
-      return;
-    }
-    const next: Record<string, string> = {};
-    for (const f of SPEC_FIELDS) next[f.label] = f.read(activeUnit);
-    setSpecDrafts(next);
-  }, [selectedUnit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Work items ──
   function addWorkItem(label: string, kind: "preset" | "custom") {
@@ -266,21 +369,47 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     setShowSavePrompt(false);
   }
 
+  // The unit label these spec entries belong to (new product # or picked unit).
+  const specUnitLabel = addProductMode
+    ? newUnitNumber.trim()
+    : selectedUnit === WHOLE_JOB
+    ? ""
+    : selectedUnit;
+
   const editorSpecChanges: SpecChange[] = useMemo(() => {
-    if (addProductMode || !activeUnit) return [];
+    if (!specUnitLabel) return [];
     const out: SpecChange[] = [];
-    for (const f of SPEC_FIELDS) {
-      const oldValue = f.read(activeUnit);
-      const newValue = (specDrafts[f.label] ?? "").trim();
-      if (newValue && newValue !== oldValue) {
-        out.push({ unitLabel: selectedUnit, field: f.label, oldValue, newValue });
+    for (const e of specEntries) {
+      const newValue = specEntryValue(e);
+      if (newValue && newValue !== e.oldValue.trim()) {
+        out.push({ unitLabel: specUnitLabel, field: e.label, oldValue: e.oldValue, newValue });
       }
     }
     return out;
-  }, [addProductMode, activeUnit, specDrafts, selectedUnit]);
+  }, [specEntries, specUnitLabel]);
 
   const validNewProduct =
-    addProductMode && newUnitNumber.trim().length > 0 && newProduct.type.trim().length > 0;
+    addProductMode && newUnitNumber.trim().length > 0 && unitType.trim().length > 0;
+
+  // ── Spec-entry editing ──
+  function addSpecEntry(label: string) {
+    const clean = label.trim();
+    if (!clean) return;
+    if (specEntries.some((e) => e.label.toLowerCase() === clean.toLowerCase())) return;
+    const kind = specKindOf(clean);
+    const oldValue = activeUnit ? readCurrentSpec(activeUnit, clean) : "";
+    const seed = kind === "measure" ? parseMeasure(oldValue) : { whole: "", frac: "0" };
+    setSpecEntries((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), label: clean, kind, oldValue, newValue: "", whole: seed.whole, frac: seed.frac },
+    ]);
+  }
+  function updateSpecEntry(id: string, patch: Partial<SpecEntry>) {
+    setSpecEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  }
+  function removeSpecEntry(id: string) {
+    setSpecEntries((prev) => prev.filter((e) => e.id !== id));
+  }
 
   const editorHasContent =
     validNewProduct ||
@@ -294,14 +423,13 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     setEditingKey(null);
     setSelectedUnit(WHOLE_JOB);
     setWorkItems([]);
-    setSpecDrafts({});
+    setSpecEntries([]);
     setMaterialItems([]);
     setPhotos([]);
     setNotes("");
     setAddProductMode(false);
     setNewUnitNumber("");
-    setNewProduct(emptyProduct);
-    setShowSpec(false);
+    setUnitType("");
     setShowTrim(false);
     setShowPhotos(false);
     setShowNotes(false);
@@ -310,13 +438,15 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
 
   function editorToEntry(key: string): BuiltEntry {
     const isNew = addProductMode && validNewProduct;
+    // All documented specs live in specChanges; a manually-added product also
+    // carries a minimal newProduct just to record its type.
     return {
       key,
       unitLabel: isNew ? newUnitNumber.trim() : selectedUnit === WHOLE_JOB ? null : selectedUnit,
       lineItems: workItems,
-      specChanges: isNew ? [] : editorSpecChanges,
+      specChanges: editorSpecChanges,
       materialItems,
-      newProduct: isNew ? { ...newProduct } : null,
+      newProduct: isNew ? { ...emptyProduct, type: unitType.trim() } : null,
       notes: notes.trim(),
       photos,
     };
@@ -347,26 +477,37 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     setMaterialItems(e.materialItems);
     setPhotos(e.photos);
     setNotes(e.notes);
-    setShowSpec(e.specChanges.length > 0);
     setShowTrim(e.materialItems.length > 0);
     setShowPhotos(e.photos.length > 0);
     setShowNotes(!!e.notes);
+
+    // Rebuild spec entries from the stored spec changes.
+    const entries: SpecEntry[] = e.specChanges.map((c) => {
+      const kind = specKindOf(c.field);
+      const m = kind === "measure" ? parseMeasure(c.newValue) : { whole: "", frac: "0" };
+      return {
+        id: crypto.randomUUID(),
+        label: c.field,
+        kind,
+        oldValue: c.oldValue,
+        newValue: kind === "measure" ? "" : c.newValue,
+        whole: m.whole,
+        frac: m.frac,
+      };
+    });
+    setSpecEntries(entries);
+
     if (e.newProduct) {
       setAddProductMode(true);
       setNewUnitNumber(e.unitLabel || "");
-      setNewProduct(e.newProduct);
+      setUnitType(e.newProduct.type || "");
       setSelectedUnit(WHOLE_JOB);
-      setSpecDrafts({});
     } else {
       setAddProductMode(false);
       setNewUnitNumber("");
-      setNewProduct(emptyProduct);
       setSelectedUnit(e.unitLabel ?? WHOLE_JOB);
       const u = unitOptions.find((o) => o.label === e.unitLabel)?.unit || null;
-      const drafts: Record<string, string> = {};
-      if (u) for (const f of SPEC_FIELDS) drafts[f.label] = f.read(u);
-      for (const c of e.specChanges) drafts[c.field] = c.newValue;
-      setSpecDrafts(drafts);
+      setUnitType(u ? String(u.unitType || u.type || u.summarySubType || "") : "");
     }
     setError("");
   }
@@ -385,14 +526,23 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
   function pickUnit(label: string) {
     setAddProductMode(false);
     const existing = entries.find((e) => (e.unitLabel ?? WHOLE_JOB) === label);
-    if (existing && existing.key !== editingKey) editEntry(existing);
-    else setSelectedUnit(label);
+    if (existing && existing.key !== editingKey) {
+      editEntry(existing);
+      return;
+    }
+    setSelectedUnit(label);
+    // Switching units starts a fresh spec sheet for that unit.
+    setSpecEntries([]);
+    const u = unitOptions.find((o) => o.label === label)?.unit || null;
+    setUnitType(u ? String(u.unitType || u.type || u.summarySubType || "") : "");
   }
 
   function startAddProduct() {
     setAddProductMode(true);
     setSelectedUnit(WHOLE_JOB);
-    setSpecDrafts({});
+    setSpecEntries([]);
+    setUnitType("");
+    setNewUnitNumber("");
   }
 
   // ── Draft (de)serialization ──
@@ -496,7 +646,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftReady, entries, selectedUnit, workItems, specDrafts, materialItems, photos, notes, addProductMode, newUnitNumber, newProduct]);
+  }, [draftReady, entries, selectedUnit, workItems, specEntries, materialItems, photos, notes, addProductMode, newUnitNumber, unitType]);
 
   // ── Close guard ──
   const dirty = editorHasContent || entries.length > 0;
@@ -763,27 +913,17 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
               </p>
             )}
 
-            {/* Add-product form — single column */}
+            {/* Add-product — just identity; specs go in the Spec changes section */}
             {addProductMode && (
               <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 space-y-3">
                 <StackedInput label="Unit #" value={newUnitNumber} onChange={setNewUnitNumber} placeholder="101" />
-                <StackedInput label="Product type" value={newProduct.type} onChange={(v) => setNewProduct((p) => ({ ...p, type: v }))} list="wu-types" placeholder="Double Hung" />
-                <StackedInput label="Size (W x H)" value={newProduct.size} onChange={(v) => setNewProduct((p) => ({ ...p, size: v }))} placeholder={'24" x 36"'} />
-                <StackedInput label="Exterior color" value={newProduct.exteriorColor} onChange={(v) => setNewProduct((p) => ({ ...p, exteriorColor: v }))} list="wu-ext" />
-                <StackedInput label="Interior color" value={newProduct.interiorColor} onChange={(v) => setNewProduct((p) => ({ ...p, interiorColor: v }))} list="wu-int" />
-                <StackedInput label="Interior finish" value={newProduct.intFinish} onChange={(v) => setNewProduct((p) => ({ ...p, intFinish: v }))} list="wu-fin" />
-                <StackedInput label="Frame" value={newProduct.frame} onChange={(v) => setNewProduct((p) => ({ ...p, frame: v }))} list="wu-frames" />
-                <StackedInput label="Details" value={newProduct.details} onChange={(v) => setNewProduct((p) => ({ ...p, details: v }))} list="wu-details" />
-                {options && (
-                  <>
-                    <datalist id="wu-types">{options.productTypes.map((v) => <option key={v} value={v} />)}</datalist>
-                    <datalist id="wu-ext">{options.extColors.map((v) => <option key={v} value={v} />)}</datalist>
-                    <datalist id="wu-int">{options.intColors.map((v) => <option key={v} value={v} />)}</datalist>
-                    <datalist id="wu-fin">{options.intFinishes.map((v) => <option key={v} value={v} />)}</datalist>
-                    <datalist id="wu-details">{options.details.map((v) => <option key={v} value={v} />)}</datalist>
-                    <datalist id="wu-frames">{options.frames.map((v) => <option key={v} value={v} />)}</datalist>
-                  </>
-                )}
+                <ComboInput
+                  label="Product type"
+                  value={unitType}
+                  onChange={setUnitType}
+                  options={options?.productTypes || []}
+                  placeholder="Start typing… Double Hung, Storm Door…"
+                />
               </div>
             )}
           </section>
@@ -802,52 +942,49 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
             </div>
           </section>
 
+          {/* Spec changes — document only what changed (or the new product's specs) */}
+          {(activeUnit || addProductMode) && (
+            <section>
+              <SectionLabel>
+                <span className="flex items-center gap-1.5">
+                  <Pencil className="w-3.5 h-3.5" /> Spec changes{specUnitLabel ? ` (${specUnitLabel})` : ""}
+                </span>
+              </SectionLabel>
+              <p className="text-[11px] text-muted mt-0.5">
+                {activeUnit
+                  ? "Pick a spec, see what it is now, enter the new value. Only add what changed."
+                  : "Add the specs for this product — search or type your own."}
+              </p>
+              <div className="mt-2 space-y-2">
+                {specEntries.map((entry) => (
+                  <SpecEntryRow
+                    key={entry.id}
+                    entry={entry}
+                    colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
+                    finishOptions={options?.intFinishes || []}
+                    speciesOptions={trimOptions?.species || []}
+                    stainOptions={trimOptions?.stains || []}
+                    onChange={(patch) => updateSpecEntry(entry.id, patch)}
+                    onRemove={() => removeSpecEntry(entry.id)}
+                  />
+                ))}
+              </div>
+              <SpecAdder
+                onAdd={addSpecEntry}
+                unitLabels={unitSpecLabels(activeUnit)}
+                existing={specEntries.map((e) => e.label)}
+              />
+            </section>
+          )}
+
           {/* Optional details — revealed on demand */}
           <section>
             <div className="grid grid-cols-2 gap-2">
-              {activeUnit && !addProductMode && !showSpec && (
-                <RevealButton icon={Pencil} label="Fix a spec" onClick={() => setShowSpec(true)} />
-              )}
               {!showTrim && <RevealButton icon={Package} label="Trim / material" onClick={() => setShowTrim(true)} />}
               {!showPhotos && <RevealButton icon={Camera} label="Photos" onClick={() => setShowPhotos(true)} />}
               {!showNotes && <RevealButton icon={StickyNote} label="Note" onClick={() => setShowNotes(true)} />}
             </div>
           </section>
-
-          {/* Spec fix */}
-          {showSpec && activeUnit && !addProductMode && (
-            <section>
-              <SectionLabel>
-                <span className="flex items-center gap-1.5">
-                  <Pencil className="w-3.5 h-3.5" /> Fix a spec ({selectedUnit})
-                </span>
-              </SectionLabel>
-              <p className="text-[11px] text-muted mt-0.5">Only change what&apos;s wrong. Blank = leave as-is.</p>
-              <div className="mt-2 space-y-3">
-                {SPEC_FIELDS.map((f) => {
-                  const original = f.read(activeUnit);
-                  const draft = specDrafts[f.label] ?? "";
-                  const changed = draft.trim() && draft.trim() !== original;
-                  return (
-                    <div key={f.label}>
-                      <label className="text-xs text-muted block mb-1">
-                        {f.label}
-                        {original ? <span className="text-muted/70"> · now: {original}</span> : ""}
-                      </label>
-                      <input
-                        value={draft}
-                        onChange={(e) => setSpecDrafts((prev) => ({ ...prev, [f.label]: e.target.value }))}
-                        placeholder={original || "—"}
-                        className={`w-full rounded-lg border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50 ${
-                          changed ? "border-amber-500" : "border-border"
-                        }`}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          )}
 
           {/* Trim / material */}
           {showTrim && (
@@ -1189,6 +1326,156 @@ function PhotoThumb({ blob, onRemove }: { blob: Blob; onRemove: () => void }) {
       <button onClick={onRemove} className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-white">
         <X className="w-4 h-4" />
       </button>
+    </div>
+  );
+}
+
+/* ── Spec adder — search the spec catalog (or the unit's own fields) + custom ── */
+function SpecAdder({
+  onAdd,
+  unitLabels,
+  existing,
+}: {
+  onAdd: (label: string) => void;
+  unitLabels: string[];
+  existing: string[];
+}) {
+  const [q, setQ] = useState("");
+  const query = q.trim().toLowerCase();
+  const taken = new Set(existing.map((s) => s.toLowerCase()));
+  // The unit's own spec fields first, then the master catalog.
+  const pool = [...new Set([...unitLabels, ...SPEC_CATALOG.map((s) => s.label)])];
+  const matches = pool
+    .filter((l) => !taken.has(l.toLowerCase()) && (!query || l.toLowerCase().includes(query)))
+    .slice(0, 8);
+  const exact = pool.some((l) => l.toLowerCase() === query);
+
+  function add(label: string) {
+    onAdd(label);
+    setQ("");
+  }
+
+  return (
+    <div className="mt-2">
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            if (query) add(q.trim());
+          }
+        }}
+        placeholder="Add a spec change — search or type your own…"
+        className="w-full rounded-lg border border-dashed border-amber-500/50 bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+      />
+      {query && (
+        <div className="mt-1 rounded-xl border border-border overflow-hidden">
+          {matches.map((l) => (
+            <button
+              key={l}
+              onClick={() => add(l)}
+              className="w-full text-left px-3 py-2.5 text-sm border-b border-border last:border-b-0 hover:bg-surface flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4 text-muted" />
+              {l}
+            </button>
+          ))}
+          {!exact && (
+            <button
+              onClick={() => add(q.trim())}
+              className="w-full text-left px-3 py-2.5 text-sm bg-amber-500/10 text-amber-700 font-medium flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add “{q.trim()}”
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── One spec-change row — value input adapts to the spec kind ── */
+function SpecEntryRow({
+  entry,
+  colorOptions,
+  finishOptions,
+  speciesOptions,
+  stainOptions,
+  onChange,
+  onRemove,
+}: {
+  entry: SpecEntry;
+  colorOptions: string[];
+  finishOptions: string[];
+  speciesOptions: string[];
+  stainOptions: string[];
+  onChange: (patch: Partial<SpecEntry>) => void;
+  onRemove: () => void;
+}) {
+  const suggest =
+    entry.kind === "color"
+      ? colorOptions
+      : entry.kind === "finish"
+      ? finishOptions
+      : entry.kind === "species"
+      ? speciesOptions
+      : entry.kind === "stain"
+      ? stainOptions
+      : [];
+
+  return (
+    <div className="rounded-xl border border-border bg-surface px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <div className="min-w-0">
+          <span className="text-sm font-semibold">{entry.label}</span>
+          {entry.oldValue ? (
+            <span className="text-[11px] text-muted"> · now: {entry.oldValue}</span>
+          ) : null}
+        </div>
+        <button onClick={onRemove} className="p-1.5 rounded-lg text-muted hover:text-danger shrink-0">
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+
+      {entry.kind === "measure" ? (
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-[11px] text-muted block mb-1">Inches</label>
+            <input
+              inputMode="numeric"
+              value={entry.whole}
+              onChange={(e) => onChange({ whole: e.target.value.replace(/[^0-9]/g, "") })}
+              placeholder="24"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] text-muted block mb-1">Fraction</label>
+            <select
+              value={entry.frac}
+              onChange={(e) => onChange({ frac: e.target.value })}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-base"
+            >
+              {FRACTIONS_16.map((fr) => (
+                <option key={fr} value={fr}>
+                  {fr === "0" ? "—" : fr}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      ) : suggest.length > 0 ? (
+        <ComboInput label="New value" value={entry.newValue} onChange={(v) => onChange({ newValue: v })} options={suggest} placeholder="New value…" />
+      ) : (
+        <input
+          value={entry.newValue}
+          onChange={(e) => onChange({ newValue: e.target.value })}
+          placeholder="New value…"
+          className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+        />
+      )}
     </div>
   );
 }

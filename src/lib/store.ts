@@ -459,6 +459,34 @@ export async function upsertWorkOrders(orders: WorkOrder[]): Promise<boolean> {
   return true;
 }
 
+/**
+ * Search work orders (and imported account rows) by customer name, account
+ * name, order number, or work order number. Backs the "start a write-up"
+ * picker so a field manager can attach a write-up to any existing job/account.
+ */
+export async function searchWorkOrders(query: string, limit = 25): Promise<WorkOrder[]> {
+  const supabase = getSupabase();
+  const q = query.trim();
+  if (!supabase || q.length < 2) return [];
+  // Strip LIKE wildcards and the comma that would break the .or() filter list.
+  const term = q.replace(/[%_,]/g, " ").trim();
+  const like = `%${term}%`;
+  const { data, error } = await supabase
+    .from("work_orders")
+    .select("*")
+    .or(
+      [
+        `customer_name.ilike.${like}`,
+        `account_name.ilike.${like}`,
+        `order_number.ilike.${like}`,
+        `work_order_number.ilike.${like}`,
+      ].join(",")
+    )
+    .limit(limit);
+  if (error || !data) return [];
+  return (data as WorkOrderRow[]).map(rowToWorkOrder);
+}
+
 // --- Material jobs ---
 
 export async function fetchMaterialJobs(): Promise<Map<string, any>> {

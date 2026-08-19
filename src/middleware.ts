@@ -45,12 +45,24 @@ export async function middleware(request: NextRequest) {
   ) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    // Remember where they were headed (e.g. a write-up doc link from an email)
+    // so login can send them back there instead of the home screen.
+    if (pathname !== "/") {
+      url.search = "";
+      url.searchParams.set("redirect", pathname + request.nextUrl.search);
+    }
     return NextResponse.redirect(url);
   }
 
   if (user && pathname.startsWith("/login")) {
+    const dest = request.nextUrl.searchParams.get("redirect");
+    // Honor a same-origin redirect target (path + query); else fall back home.
+    if (dest && dest.startsWith("/") && !dest.startsWith("//")) {
+      return NextResponse.redirect(new URL(dest, request.url));
+    }
     const url = request.nextUrl.clone();
     url.pathname = "/";
+    url.search = "";
     return NextResponse.redirect(url);
   }
 
