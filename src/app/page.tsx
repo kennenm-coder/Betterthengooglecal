@@ -12,7 +12,7 @@ import FilterPanel, { Filters, EMPTY_FILTERS, applyFilters } from "@/components/
 import TimeOffBanner from "@/components/TimeOffBanner";
 import StaleTabTag from "@/components/StaleTabBanner";
 import { useStaleTab } from "@/hooks/useStaleTab";
-import PinModal from "@/components/PinModal";
+import { useAuth } from "@/hooks/useAuth";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO } from "date-fns";
@@ -34,7 +34,8 @@ function CalendarPage() {
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
-  const [showPinModal, setShowPinModal] = useState(false);
+  const { role } = useAuth();
+  const canManageTimeOff = role === "admin" || role === "payroll-admin";
   const { isStale, staleAfter, nextUpdate, isDesktop, dismiss, resetBlock } = useStaleTab();
 
   useEffect(() => {
@@ -150,14 +151,16 @@ function CalendarPage() {
 
           <div className="flex-1" />
 
-          <button
-            onClick={() => setShowPinModal(true)}
-            className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-md bg-rba-green text-white font-medium shrink-0 active:scale-[0.97] transition-all"
-            title="Add Time Off"
-          >
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">Time Off</span>
-          </button>
+          {canManageTimeOff && (
+            <button
+              onClick={() => router.push("/time-off")}
+              className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-md bg-rba-green text-white font-medium shrink-0 active:scale-[0.97] transition-all"
+              title="Add Time Off"
+            >
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Time Off</span>
+            </button>
+          )}
 
           <Link
             href="/settings"
@@ -247,16 +250,6 @@ function CalendarPage() {
         <div className="bg-surface/80 text-muted text-xs text-center py-1 border-b border-border">
           Updating additional appointments…
         </div>
-      )}
-
-      {showPinModal && (
-        <PinModal
-          onSuccess={() => {
-            setShowPinModal(false);
-            router.push("/time-off");
-          }}
-          onClose={() => setShowPinModal(false)}
-        />
       )}
 
       <div className="flex-1 flex flex-col min-h-0">

@@ -675,6 +675,64 @@ export function writeUpsToPlainText(writeUps: FieldWorkOrder[]): string {
   return lines.join("\n").trim();
 }
 
+/**
+ * Delete all photos for a write-up: remove the files from the private bucket
+ * and clear the row's photo list. Admin/field-manager only (enforced by RLS).
+ */
+export async function deleteWriteUpPhotos(
+  id: string,
+  paths: string[]
+): Promise<{ ok: boolean; error: string | null }> {
+  const supabase = getSupabase();
+  if (!supabase) return { ok: false, error: "Not signed in." };
+
+  if (paths.length > 0) {
+    const { error: rmErr } = await supabase.storage.from(PHOTO_BUCKET).remove(paths);
+    if (rmErr) {
+      console.error("deleteWriteUpPhotos storage remove failed:", rmErr);
+      return { ok: false, error: rmErr.message };
+    }
+  }
+
+  const { error } = await supabase
+    .from("field_work_orders")
+    .update({ photos: [], photo_count: 0, photos_uploaded: false })
+    .eq("id", id);
+  if (error) {
+    console.error("deleteWriteUpPhotos row update failed:", error);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, error: null };
+}
+
+/**
+ * Delete a whole write-up (its photos from storage, then the row). Photo
+ * removal is best-effort so a storage hiccup doesn't strand the row.
+ * Admin/field-manager only (enforced by RLS).
+ */
+export async function deleteWriteUp(
+  id: string,
+  photoPaths: string[]
+): Promise<{ ok: boolean; error: string | null }> {
+  const supabase = getSupabase();
+  if (!supabase) return { ok: false, error: "Not signed in." };
+
+  if (photoPaths.length > 0) {
+    try {
+      await supabase.storage.from(PHOTO_BUCKET).remove(photoPaths);
+    } catch {
+      /* best-effort — still delete the row */
+    }
+  }
+
+  const { error } = await supabase.from("field_work_orders").delete().eq("id", id);
+  if (error) {
+    console.error("deleteWriteUp failed:", error);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, error: null };
+}
+
 /** Field-notes inbox the write-up email is addressed to. */
 export const WRITEUP_EMAIL_TO = "fieldnotes@rbanwo.com";
 

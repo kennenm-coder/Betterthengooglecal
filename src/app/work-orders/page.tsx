@@ -6,7 +6,7 @@ import BottomNav from "@/components/BottomNav";
 import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork, canReviewWriteUps } from "@/lib/roles";
 import { FieldWorkOrder, WriteUpStatus, MaterialUnit } from "@/lib/types";
-import { fetchWriteUps, updateWriteUpStatus, writeUpsToPlainText } from "@/lib/work-order-store";
+import { fetchWriteUps, updateWriteUpStatus, writeUpsToPlainText, deleteWriteUpPhotos } from "@/lib/work-order-store";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
 import {
@@ -22,6 +22,8 @@ import {
   Plus,
   Pencil,
   Copy,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -69,6 +71,21 @@ export default function WorkOrdersPage() {
     if (ok) {
       setWriteUps((prev) => prev.map((w) => (w.id === id ? { ...w, status } : w)));
     }
+  }
+
+  async function deletePhotos(w: FieldWorkOrder): Promise<boolean> {
+    const res = await deleteWriteUpPhotos(
+      w.id,
+      w.photos.map((p) => p.path)
+    );
+    if (res.ok) {
+      setWriteUps((prev) =>
+        prev.map((x) => (x.id === w.id ? { ...x, photos: [], photoCount: 0, photosUploaded: false } : x))
+      );
+      return true;
+    }
+    alert(res.error ? `Couldn't delete photos: ${res.error}` : "Couldn't delete photos — try again.");
+    return false;
   }
 
   const visible = useMemo(
@@ -222,6 +239,7 @@ export default function WorkOrdersPage() {
                         canEdit={canEdit}
                         onStatus={setStatus}
                         onEdit={() => setEditing(w)}
+                        onDeletePhotos={() => deletePhotos(w)}
                       />
                     ))}
                   </div>
@@ -296,15 +314,20 @@ function WriteUpRow({
   canEdit,
   onStatus,
   onEdit,
+  onDeletePhotos,
 }: {
   w: FieldWorkOrder;
   canReview: boolean;
   canEdit: boolean;
   onStatus: (id: string, s: WriteUpStatus) => void;
   onEdit: () => void;
+  onDeletePhotos: () => Promise<boolean>;
 }) {
   // Only surface "edited" when it actually differs from creation.
   const wasEdited = !!w.updatedBy && Math.abs(+parseISO(w.updatedAt) - +parseISO(w.createdAt)) > 60000;
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deletingPhotos, setDeletingPhotos] = useState(false);
+  const canDeletePhotos = canEdit && w.status === "closed" && w.photos.length > 0;
   return (
     <div className="px-4 py-3 border-t border-border">
       <div className="flex items-center justify-between gap-2 mb-2">
@@ -446,6 +469,54 @@ function WriteUpRow({
             >
               <RotateCcw className="w-3.5 h-3.5" />
               Reopen
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Delete photos — closed write-ups only, while photos still exist */}
+      {canDeletePhotos && (
+        <div className="mt-2 no-print">
+          {confirmingDelete ? (
+            <div className="rounded-lg border border-danger/40 bg-danger/5 px-3 py-2">
+              <p className="text-xs font-medium text-danger flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Delete {w.photos.length} photo{w.photos.length !== 1 ? "s" : ""}? This can&apos;t be undone.
+              </p>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={deletingPhotos}
+                  className="flex-1 py-2 rounded-lg text-xs font-medium border border-border disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setDeletingPhotos(true);
+                    const ok = await onDeletePhotos();
+                    setDeletingPhotos(false);
+                    if (ok) setConfirmingDelete(false);
+                  }}
+                  disabled={deletingPhotos}
+                  className="flex-1 py-2 rounded-lg text-xs font-semibold bg-danger text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {deletingPhotos ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3.5 h-3.5" />
+                  )}
+                  {deletingPhotos ? "Deleting…" : "Delete photos"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmingDelete(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-danger border border-danger/30 hover:bg-danger/5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete photos ({w.photos.length})
             </button>
           )}
         </div>

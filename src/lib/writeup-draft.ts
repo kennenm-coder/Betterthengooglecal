@@ -8,12 +8,7 @@
 // All calls are best-effort: if IndexedDB is unavailable, they no-op so the
 // write-up flow still works (just without draft recovery).
 
-import {
-  WriteUpLineItem,
-  SpecChange,
-  WriteUpMaterialItem,
-  WriteUpNewProduct,
-} from "./types";
+import { WriteUpLineItem, SpecChange, WriteUpMaterialItem } from "./types";
 
 const DB_NAME = "rba-writeups";
 const DB_VERSION = 1;
@@ -26,13 +21,15 @@ export interface DraftPhoto {
   name: string;
 }
 
-export interface DraftEntry {
-  key: string;
-  unitLabel: string | null;
-  lineItems: WriteUpLineItem[];
+/** One unit block in a draft. Work-to-complete is shared (on the draft). */
+export interface DraftBlock {
+  id: string;
+  isNewProduct: boolean;
+  unitLabel: string;
+  unitType: string;
+  /** Spec entries stored as before/after changes; rehydrated on resume. */
   specChanges: SpecChange[];
   materialItems: WriteUpMaterialItem[];
-  newProduct: WriteUpNewProduct | null;
   notes: string;
   photos: DraftPhoto[];
 }
@@ -40,9 +37,9 @@ export interface DraftEntry {
 export interface WriteUpDraft {
   orderNumber: string;
   updatedAt: string;
-  entries: DraftEntry[];
-  /** The unit currently being edited (not yet added), if any. */
-  editor?: DraftEntry | null;
+  /** Work-to-complete shared across all blocks. */
+  sharedWork: WriteUpLineItem[];
+  blocks: DraftBlock[];
 }
 
 function openDB(): Promise<IDBDatabase | null> {
@@ -128,10 +125,7 @@ export async function loadDraft(orderNumber: string): Promise<WriteUpDraft | nul
 export async function clearDraft(orderNumber: string): Promise<void> {
   const draft = await loadDraft(orderNumber);
   if (draft) {
-    const ids = [
-      ...draft.entries.flatMap((e) => e.photos.map((p) => p.id)),
-      ...(draft.editor?.photos.map((p) => p.id) || []),
-    ];
+    const ids = (draft.blocks || []).flatMap((b) => b.photos.map((p) => p.id));
     for (const id of ids) await deleteDraftPhoto(id);
   }
   const db = await openDB();
