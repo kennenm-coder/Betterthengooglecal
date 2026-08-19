@@ -531,6 +531,26 @@ export async function fetchMaterialJobs(): Promise<Map<string, any>> {
   return jobByPO;
 }
 
+/**
+ * Lightweight fingerprint of the submitted material jobs — id + savedAt for
+ * each, without downloading the full `data` blobs. Used to detect when linked
+ * jobs changed (added, removed, or edited) since the calendar loaded them, so
+ * we can prompt a resync. Any change to a job bumps its savedAt.
+ */
+export async function fetchJobsSignature(): Promise<string> {
+  const supabase = getSupabase();
+  if (!supabase) return "";
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("id, savedAt:data->>savedAt, submitted:data->>submitted");
+  if (error || !data) return "";
+  return (data as { id: string; savedAt: string | null; submitted: string | null }[])
+    .filter((r) => r.submitted === "true")
+    .map((r) => `${r.id}:${r.savedAt || ""}`)
+    .sort()
+    .join("|");
+}
+
 export function enrichWithMaterials(
   orders: WorkOrder[],
   jobByPO: Map<string, any>

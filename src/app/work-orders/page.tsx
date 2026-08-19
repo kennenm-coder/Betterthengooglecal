@@ -6,12 +6,11 @@ import BottomNav from "@/components/BottomNav";
 import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork, canReviewWriteUps } from "@/lib/roles";
 import { FieldWorkOrder, WriteUpStatus, MaterialUnit } from "@/lib/types";
-import { fetchWriteUps, updateWriteUpStatus } from "@/lib/work-order-store";
+import { fetchWriteUps, updateWriteUpStatus, writeUpsToPlainText } from "@/lib/work-order-store";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
 import {
   Loader2,
-  ShieldX,
   Wrench,
   Printer,
   ChevronDown,
@@ -21,6 +20,8 @@ import {
   RotateCcw,
   FileText,
   Plus,
+  Pencil,
+  Copy,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -40,12 +41,16 @@ export default function WorkOrdersPage() {
   const [filter, setFilter] = useState<Filter>("open");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const canView = canDoFieldWork(role) || canReviewWriteUps(role);
+  // Everyone allowlisted can view write-ups (closed ≠ field work done, so all
+  // staff need visibility). Editing/reviewing stays gated.
+  const canView = true;
   const canReview = canReviewWriteUps(role);
   const canCreate = canDoFieldWork(role);
+  const canEdit = canDoFieldWork(role);
 
   const [showPicker, setShowPicker] = useState(false);
   const [pending, setPending] = useState<{ target: WriteUpTarget; units: MaterialUnit[] } | null>(null);
+  const [editing, setEditing] = useState<FieldWorkOrder | null>(null);
 
   useEffect(() => {
     if (!canView) return;
@@ -86,26 +91,6 @@ export default function WorkOrdersPage() {
       <div className="flex flex-col h-full">
         <div className="flex-1 flex items-center justify-center">
           <Loader2 className="w-8 h-8 text-primary animate-spin" />
-        </div>
-        <BottomNav />
-      </div>
-    );
-  }
-
-  if (!canView) {
-    return (
-      <div className="flex flex-col h-full">
-        <header className="bg-background border-b border-border px-4 py-3">
-          <h1 className="text-lg font-semibold">Field Write-Ups</h1>
-        </header>
-        <div className="flex-1 flex items-center justify-center p-4">
-          <div className="text-center space-y-3">
-            <ShieldX className="w-12 h-12 text-muted mx-auto" />
-            <p className="font-medium">No access</p>
-            <p className="text-sm text-muted">
-              Field write-ups are limited to field managers and office staff.
-            </p>
-          </div>
         </div>
         <BottomNav />
       </div>
@@ -182,6 +167,8 @@ export default function WorkOrdersPage() {
             {groups.map(([orderNumber, items]) => {
               const first = items[0];
               const isOpen = expanded.has(orderNumber);
+              const allItems = items.flatMap((w) => w.lineItems);
+              const doneItems = allItems.filter((li) => li.completed).length;
               return (
                 <div key={orderNumber} className="rounded-xl border border-border bg-surface overflow-hidden">
                   <div className="flex items-stretch no-print">
@@ -200,6 +187,12 @@ export default function WorkOrdersPage() {
                         <p className="font-semibold truncate">{first.customerName || "—"}</p>
                         <p className="text-xs text-muted truncate">
                           #{orderNumber} · {items.length} write-up{items.length !== 1 ? "s" : ""}
+                          {allItems.length > 0 && (
+                            <span className={doneItems === allItems.length ? "text-green-600 font-medium" : ""}>
+                              {" · "}
+                              {doneItems}/{allItems.length} done
+                            </span>
+                          )}
                           {first.address ? ` · ${first.address}` : ""}
                         </p>
                       </div>
@@ -209,6 +202,7 @@ export default function WorkOrdersPage() {
                         <ChevronRight className="w-5 h-5 text-muted shrink-0" />
                       )}
                     </button>
+                    <CopyWriteUpButton text={writeUpsToPlainText(items)} />
                     <Link
                       href={`/work-orders/${encodeURIComponent(orderNumber)}`}
                       className="flex items-center gap-1.5 px-3 border-l border-border text-amber-600 shrink-0"
@@ -225,7 +219,9 @@ export default function WorkOrdersPage() {
                         key={w.id}
                         w={w}
                         canReview={canReview}
+                        canEdit={canEdit}
                         onStatus={setStatus}
+                        onEdit={() => setEditing(w)}
                       />
                     ))}
                   </div>
@@ -258,6 +254,25 @@ export default function WorkOrdersPage() {
         />
       )}
 
+      {editing && (
+        <WriteUpModal
+          order={{
+            orderNumber: editing.orderNumber,
+            workOrderNumber: editing.workOrderNumber,
+            customerName: editing.customerName,
+            address: editing.address,
+            materialJob: null,
+          }}
+          units={[]}
+          editWriteUp={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            load();
+          }}
+        />
+      )}
+
       <BottomNav />
     </div>
   );
@@ -278,12 +293,18 @@ function StatusPill({ status }: { status: WriteUpStatus }) {
 function WriteUpRow({
   w,
   canReview,
+  canEdit,
   onStatus,
+  onEdit,
 }: {
   w: FieldWorkOrder;
   canReview: boolean;
+  canEdit: boolean;
   onStatus: (id: string, s: WriteUpStatus) => void;
+  onEdit: () => void;
 }) {
+  // Only surface "edited" when it actually differs from creation.
+  const wasEdited = !!w.updatedBy && Math.abs(+parseISO(w.updatedAt) - +parseISO(w.createdAt)) > 60000;
   return (
     <div className="px-4 py-3 border-t border-border">
       <div className="flex items-center justify-between gap-2 mb-2">
@@ -291,9 +312,25 @@ function WriteUpRow({
           <span className="text-sm font-semibold">{w.unitLabel || "Whole job"}</span>
           <StatusPill status={w.status} />
         </div>
-        <span className="text-[11px] text-muted">
-          {w.createdByName || w.createdBy} · {format(parseISO(w.createdAt), "MMM d, h:mm a")}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-muted text-right">
+            {w.createdByName || w.createdBy} · {format(parseISO(w.createdAt), "MMM d, h:mm a")}
+            {wasEdited && (
+              <span className="block text-[10px]">
+                edited {format(parseISO(w.updatedAt), "MMM d, h:mm a")} by {w.updatedByName || w.updatedBy}
+              </span>
+            )}
+          </span>
+          {canEdit && (
+            <button
+              onClick={onEdit}
+              className="p-1.5 rounded-lg text-muted hover:text-amber-600 no-print shrink-0"
+              title="Edit write-up"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {w.newProduct && (
@@ -317,12 +354,19 @@ function WriteUpRow({
         <ul className="mb-2 space-y-1">
           {w.lineItems.map((li, i) => (
             <li key={i} className="text-sm flex items-start gap-2">
-              <span
-                className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${
-                  li.kind === "preset" ? "bg-amber-500" : "bg-primary"
-                }`}
-              />
-              <span>{li.label}</span>
+              {li.completed ? (
+                <Check className="w-3.5 h-3.5 mt-0.5 text-green-600 shrink-0" />
+              ) : (
+                <span
+                  className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${
+                    li.kind === "preset" ? "bg-amber-500" : "bg-primary"
+                  }`}
+                />
+              )}
+              <span className={li.completed ? "line-through text-muted" : ""}>
+                {li.label}
+                {li.notes ? <span className="text-muted"> — {li.notes}</span> : null}
+              </span>
             </li>
           ))}
         </ul>
@@ -407,5 +451,43 @@ function WriteUpRow({
         </div>
       )}
     </div>
+  );
+}
+
+/** Copies the plain-text write-up to the clipboard, for the internal system. */
+function CopyWriteUpButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Fallback for older/insecure contexts
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      } catch {
+        /* give up silently */
+      }
+      document.body.removeChild(ta);
+    }
+  }
+  return (
+    <button
+      onClick={copy}
+      className={`flex items-center gap-1.5 px-3 border-l border-border shrink-0 ${copied ? "text-green-600" : "text-muted hover:text-foreground"}`}
+      title="Copy write-up text for the internal system"
+    >
+      {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+      <span className="text-xs font-semibold hidden sm:inline">{copied ? "Copied" : "Copy"}</span>
+    </button>
   );
 }

@@ -136,6 +136,8 @@ export interface WriteUpLineItem {
   kind: "preset" | "custom";
   label: string;
   notes?: string;
+  /** Marked done during an edit. Closing a write-up completes all items. */
+  completed?: boolean;
 }
 
 /** A field correction to a unit's product spec, shown as an overlay in the app. */
@@ -210,6 +212,9 @@ export interface FieldWorkOrder {
   createdByName: string;
   createdAt: string;
   updatedAt: string;
+  /** Who last edited this write-up after submission (empty if never edited). */
+  updatedBy: string;
+  updatedByName: string;
 }
 
 export type ViewMode = "day" | "week" | "list";

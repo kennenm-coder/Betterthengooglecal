@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { FieldWorkOrder } from "@/lib/types";
-import { fetchWriteUpsForOrder, getSignedPhotoUrl } from "@/lib/work-order-store";
+import { fetchWriteUpsForOrder, getSignedPhotoUrl, writeUpsToPlainText } from "@/lib/work-order-store";
+import { downloadWriteUpZip } from "@/lib/writeup-export";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork, canReviewWriteUps } from "@/lib/roles";
-import { ArrowLeft, Loader2, Printer, Wrench, ShieldX } from "lucide-react";
+import { ArrowLeft, Loader2, Printer, Wrench, Download, Copy, Check } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
 // Work-order accent — the install-instructions doc's green (#6DB344) reskinned
@@ -17,16 +17,18 @@ const ACCENT_TEXT = "#A16207"; // small text (vendor, etc.) for print contrast
 export default function WorkOrderDocPage() {
   const params = useParams();
   const router = useRouter();
-  const { role, loading: authLoading } = useAuth();
+  const { loading: authLoading } = useAuth();
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [downloading, setDownloading] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const orderNumber = decodeURIComponent(String(params.order || ""));
-  const canView = canDoFieldWork(role) || canReviewWriteUps(role);
+  // Everyone allowlisted can view a write-up doc (read/print/download).
 
   useEffect(() => {
-    if (!canView || !orderNumber) return;
+    if (!orderNumber) return;
     fetchWriteUpsForOrder(orderNumber).then(async (w) => {
       // Newest issues first, whole-job entries last.
       w.sort((a, b) => (a.unitLabel || "~").localeCompare(b.unitLabel || "~"));
@@ -40,24 +42,12 @@ export default function WorkOrderDocPage() {
       );
       setPhotoUrls(Object.fromEntries(entries.filter(([, u]) => u)));
     });
-  }, [canView, orderNumber]);
+  }, [orderNumber]);
 
   if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center h-screen">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  if (!canView) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen gap-3">
-        <ShieldX className="w-12 h-12 text-muted" />
-        <p className="font-medium">No access</p>
-        <button onClick={() => router.back()} className="text-primary underline text-sm">
-          Go back
-        </button>
       </div>
     );
   }
@@ -80,6 +70,47 @@ export default function WorkOrderDocPage() {
   const totalPcs = materials.reduce((s, m) => s + (m.qty || 0), 0);
   const openCount = writeUps.filter((w) => w.status !== "closed").length;
 
+  async function handleCopy() {
+    const text = writeUpsToPlainText(writeUps);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        /* give up silently */
+      }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  async function handleDownload() {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      await downloadWriteUpZip({
+        orderNumber: first.orderNumber || orderNumber,
+        customerName: first.customerName || "",
+        address: first.address || "",
+        workOrderNumber: first.workOrderNumber || "",
+        writeUps,
+        photoUrls,
+      });
+    } catch {
+      alert("Sorry — the download couldn't be built. Please try again.");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   const thStyle = "px-2.5 py-1.5 text-[10px] font-bold tracking-wider uppercase text-white text-left";
   const tdStyle = "px-2.5 py-2 text-xs border-b border-border";
 
@@ -99,14 +130,35 @@ export default function WorkOrderDocPage() {
           <ArrowLeft className="w-4 h-4" />
           Back
         </button>
-        <button
-          onClick={() => window.print()}
-          className="flex items-center gap-1.5 text-sm font-medium text-white px-3 py-1.5 rounded-lg"
-          style={{ background: ACCENT_TEXT }}
-        >
-          <Printer className="w-4 h-4" />
-          Print
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleCopy}
+            className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border disabled:opacity-60"
+            style={{ borderColor: copied ? "#16a34a" : ACCENT_TEXT, color: copied ? "#16a34a" : ACCENT_TEXT }}
+            title="Copy write-up text for the internal system"
+          >
+            {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button
+            onClick={handleDownload}
+            disabled={downloading}
+            className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border disabled:opacity-60"
+            style={{ borderColor: ACCENT_TEXT, color: ACCENT_TEXT }}
+            title="Download the write-up PDF and all photos as a zip"
+          >
+            {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            {downloading ? "Preparing…" : "Download"}
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 text-sm font-medium text-white px-3 py-1.5 rounded-lg"
+            style={{ background: ACCENT_TEXT }}
+          >
+            <Printer className="w-4 h-4" />
+            Print
+          </button>
+        </div>
       </div>
 
       <div className="max-w-[900px] mx-auto px-4 py-6">
@@ -150,6 +202,9 @@ export default function WorkOrderDocPage() {
               <span>{w.unitLabel || "Whole job"}</span>
               <span className="opacity-80 normal-case font-medium">
                 {w.createdByName || w.createdBy} · {format(parseISO(w.createdAt), "M/d/yy")}
+                {w.updatedBy && Math.abs(+parseISO(w.updatedAt) - +parseISO(w.createdAt)) > 60000
+                  ? ` · edited ${format(parseISO(w.updatedAt), "M/d/yy")} by ${w.updatedByName || w.updatedBy}`
+                  : ""}
                 {w.status === "closed" ? " · CLOSED" : ""}
               </span>
             </div>
@@ -184,11 +239,15 @@ export default function WorkOrderDocPage() {
                   <ul className="space-y-1">
                     {w.lineItems.map((li, i) => (
                       <li key={i} className="text-sm flex items-start gap-2">
-                        <span
-                          className="mt-1.5 w-1.5 h-1.5 rounded-full shrink-0"
-                          style={{ background: ACCENT }}
-                        />
-                        <span>{li.label}</span>
+                        {li.completed ? (
+                          <span className="mt-0.5 text-[13px] leading-none text-green-700 shrink-0">✓</span>
+                        ) : (
+                          <span
+                            className="mt-1.5 w-1.5 h-1.5 rounded-full shrink-0"
+                            style={{ background: ACCENT }}
+                          />
+                        )}
+                        <span className={li.completed ? "line-through text-muted" : ""}>{li.label}</span>
                       </li>
                     ))}
                   </ul>

@@ -393,6 +393,8 @@ interface FieldWorkOrderRow {
   created_by_name: string | null;
   created_at: string;
   updated_at: string;
+  updated_by: string | null;
+  updated_by_name: string | null;
 }
 
 function rowToWriteUp(row: FieldWorkOrderRow): FieldWorkOrder {
@@ -417,6 +419,8 @@ function rowToWriteUp(row: FieldWorkOrderRow): FieldWorkOrder {
     createdByName: row.created_by_name || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    updatedBy: row.updated_by || "",
+    updatedByName: row.updated_by_name || "",
   };
 }
 
@@ -560,6 +564,115 @@ export async function submitWriteUpBatch(
     onProgress?.(++done, entries.length);
   }
   return { created, error: null };
+}
+
+// ─── Edit an existing write-up ──────────────────────────────────────────────
+
+export interface UpdateWriteUpInput {
+  /** Order number, used for the storage path of any newly-added photos. */
+  orderNumber: string;
+  unitLabel: string | null;
+  lineItems: WriteUpLineItem[];
+  specChanges: SpecChange[];
+  materialItems: WriteUpMaterialItem[];
+  newProduct?: WriteUpNewProduct | null;
+  notes: string;
+  status: WriteUpStatus;
+  /** Existing photos to keep (already uploaded — have a storage path). */
+  keepPhotos: WriteUpPhoto[];
+  /** New photo blobs to upload and append. */
+  newPhotoFiles: Blob[];
+  updatedBy: string;
+  updatedByName: string;
+}
+
+/**
+ * Update a submitted write-up in place. Uploads any new photos, keeps the ones
+ * the editor retained, and stamps who edited it (updated_by / updated_at).
+ */
+export async function updateWriteUp(
+  id: string,
+  input: UpdateWriteUpInput
+): Promise<{ ok: boolean; error: string | null }> {
+  const supabase = getSupabase();
+  if (!supabase) return { ok: false, error: "Not signed in." };
+
+  const photos: WriteUpPhoto[] = [...input.keepPhotos];
+  for (let i = 0; i < input.newPhotoFiles.length; i++) {
+    const blob = await compressImage(input.newPhotoFiles[i]);
+    const path = await uploadWriteUpPhoto(input.orderNumber, input.unitLabel, blob, photos.length + 1);
+    if (path) photos.push({ path, name: `${input.unitLabel || "Whole job"} photo ${photos.length + 1}` });
+  }
+
+  const { error } = await supabase
+    .from("field_work_orders")
+    .update({
+      unit_label: input.unitLabel,
+      line_items: input.lineItems,
+      spec_changes: input.specChanges,
+      material_items: input.materialItems,
+      photos,
+      photo_count: photos.length,
+      new_product: input.newProduct || null,
+      notes: input.notes || "",
+      status: input.status,
+      updated_by: input.updatedBy || null,
+      updated_by_name: input.updatedByName || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error("updateWriteUp failed:", error);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, error: null };
+}
+
+/**
+ * Plain-text version of a job's write-ups — for pasting into the internal
+ * system's details tab (what the service tech reads on their phone). Work items
+ * show done/not-done so partial completion carries over.
+ */
+export function writeUpsToPlainText(writeUps: FieldWorkOrder[]): string {
+  if (!writeUps.length) return "";
+  const first = writeUps[0];
+  const lines: string[] = [];
+  lines.push(`FIELD WRITE-UP — ${first.customerName || ""} (#${first.orderNumber})`.trim());
+  if (first.address) lines.push(first.address);
+  lines.push("");
+
+  for (const w of writeUps) {
+    lines.push(`${w.unitLabel || "Whole job"}${w.status === "closed" ? "  [CLOSED]" : ""}`);
+    if (w.newProduct) {
+      lines.push(
+        `  Added product: ${w.newProduct.type || "—"}${w.newProduct.size ? ` ${w.newProduct.size}` : ""}`
+      );
+    }
+    if (w.lineItems.length) {
+      lines.push("  Work to complete:");
+      for (const li of w.lineItems) {
+        lines.push(`   [${li.completed ? "x" : " "}] ${li.label}${li.notes ? ` — ${li.notes}` : ""}`);
+      }
+    }
+    if (w.specChanges.length) {
+      lines.push("  Spec corrections:");
+      for (const c of w.specChanges) {
+        lines.push(`   - ${c.field}: ${c.oldValue || "—"} -> ${c.newValue}`);
+      }
+    }
+    if (w.materialItems.length) {
+      lines.push("  Materials:");
+      for (const m of w.materialItems) {
+        lines.push(
+          `   - ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${m.lengths ? ` (${m.lengths})` : ""}${m.vendor ? ` [${m.vendor}]` : ""}`
+        );
+      }
+    }
+    if (w.notes) lines.push(`  Notes: ${w.notes}`);
+    lines.push("");
+  }
+  return lines.join("\n").trim();
 }
 
 /** Field-notes inbox the write-up email is addressed to. */

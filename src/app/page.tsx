@@ -28,7 +28,8 @@ export default function CalendarPageWrapper() {
 }
 
 function CalendarPage() {
-  const { orders, loading, loadingBackground, refresh, ensureDateLoaded } = useData();
+  const { orders, loading, loadingBackground, refresh, ensureDateLoaded, linkedJobsStale, resyncLinkedJobs } = useData();
+  const [resyncingJobs, setResyncingJobs] = useState(false);
   const searchParams = useSearchParams();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
@@ -223,6 +224,24 @@ function CalendarPage() {
       </header>
 
       <TimeOffBanner requests={timeOffRequests} date={currentDate} />
+
+      {linkedJobsStale && (
+        <button
+          onClick={async () => {
+            setResyncingJobs(true);
+            try {
+              await resyncLinkedJobs();
+            } finally {
+              setResyncingJobs(false);
+            }
+          }}
+          disabled={resyncingJobs}
+          className="w-full bg-amber-500/15 text-amber-700 text-xs font-medium py-2 px-4 border-b border-amber-500/30 flex items-center justify-center gap-2 active:bg-amber-500/25 disabled:opacity-60"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${resyncingJobs ? "animate-spin" : ""}`} />
+          {resyncingJobs ? "Resyncing linked jobs…" : "Linked jobs changed — tap to resync"}
+        </button>
+      )}
 
       {loadingBackground && (
         <div className="bg-surface/80 text-muted text-xs text-center py-1 border-b border-border">
