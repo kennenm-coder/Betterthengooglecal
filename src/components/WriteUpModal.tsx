@@ -22,6 +22,8 @@ import {
   UnitOptions,
   fetchTrimOptions,
   TrimOptions,
+  fetchPartsCatalog,
+  PartsCatalogItem,
   lengthsToQty,
   SPEC_FIELDS,
   unitLabelOf,
@@ -100,7 +102,20 @@ interface WuUnit {
   /** Programmed unit label, or the typed unit # for a new product. */
   unitLabel: string;
   unitType: string;
+  /** Opt-in: only when checked does the spec-entry field show / save. */
+  hasSpecChange: boolean;
   specEntries: SpecEntry[];
+}
+
+/** A part to order on an issue (from the catalog or custom). */
+interface PartItem {
+  key: string;
+  name: string;
+  productType?: string;
+  qty: number;
+  custom?: boolean;
+  /** Which affected units need this part; empty = all affected units. */
+  unitKeys: string[];
 }
 
 /** A work-to-complete item — its own materials + photos, references the units
@@ -109,8 +124,9 @@ interface WuIssue {
   id: string;
   label: string;
   note: string;
-  /** "Something needs ordered" flag + what. */
+  /** "Something needs ordered" flag → parts + notes. */
   needsOrdering: boolean;
+  parts: PartItem[];
   orderingNotes: string;
   unitKeys: string[];
   materials: WriteUpMaterialItem[];
@@ -268,6 +284,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const [catalog, setCatalog] = useState<CatalogPickItem[]>([]);
   const [options, setOptions] = useState<UnitOptions | null>(null);
   const [trimOptions, setTrimOptions] = useState<TrimOptions | null>(null);
+  const [partsCatalog, setPartsCatalog] = useState<PartsCatalogItem[]>([]);
 
   // CREATE (flat model): background + notes, units, per-unit specs live on the
   // units, work-to-complete issues, one material list, one photo set.
@@ -311,7 +328,26 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     fetchCatalogPickItems().then(setCatalog).catch(() => setCatalog([]));
     fetchUnitOptions().then(setOptions).catch(() => setOptions(null));
     fetchTrimOptions().then(setTrimOptions).catch(() => setTrimOptions(null));
+    fetchPartsCatalog().then(setPartsCatalog).catch(() => setPartsCatalog([]));
   }, []);
+
+  // Self-heal: if the parts catalog came back empty (e.g. the first fetch fired
+  // before the auth session was ready → RLS returned 0 rows), retry a couple of
+  // times so the picker fills in without needing a page reload.
+  useEffect(() => {
+    if (partsCatalog.length > 0) return;
+    let tries = 0;
+    const t = setInterval(() => {
+      tries += 1;
+      fetchPartsCatalog()
+        .then((rows) => {
+          if (rows.length > 0) setPartsCatalog(rows);
+        })
+        .catch(() => {});
+      if (tries >= 3) clearInterval(t);
+    }, 2000);
+    return () => clearInterval(t);
+  }, [partsCatalog.length]);
 
   useEffect(() => {
     if (isEditing) return; // edit mode doesn't use the local draft system
@@ -394,6 +430,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       isNewProduct: opts.isNewProduct,
       unitLabel: opts.unitLabel,
       unitType: u ? String(u.unitType || u.type || u.summarySubType || "") : "",
+      hasSpecChange: false,
       specEntries: [],
     };
   }
@@ -425,7 +462,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
 
   // ── Work to complete (create): issues that reference affected units ──
   function makeIssue(): WuIssue {
-    return { id: crypto.randomUUID(), label: "", note: "", needsOrdering: false, orderingNotes: "", unitKeys: [], materials: [], photos: [] };
+    return { id: crypto.randomUUID(), label: "", note: "", needsOrdering: false, parts: [], orderingNotes: "", unitKeys: [], materials: [], photos: [] };
   }
   function addIssue() {
     setIssues((prev) => [...prev, makeIssue()]);
@@ -565,7 +602,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     editNote.trim().length > 0;
   const createHasContent =
     validIssues.length > 0 ||
-    validUnits.some((u) => u.specEntries.some((e) => specEntryValue(e).length > 0)) ||
+    validUnits.some((u) => u.hasSpecChange && u.specEntries.some((e) => specEntryValue(e).length > 0)) ||
     issues.some((it) => it.materials.length > 0 || it.photos.length > 0) ||
     background.trim().length > 0 ||
     financingNotes.trim().length > 0 ||
@@ -603,7 +640,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         isNewProduct: u.isNewProduct,
         unitType: u.unitType.trim(),
         tasks: [],
-        specs: specChangesOf(u.specEntries, label),
+        specs: u.hasSpecChange ? specChangesOf(u.specEntries, label) : [],
         materials: [],
         photos: [],
         notes: "",
@@ -619,11 +656,31 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       const task: WriteUpLineItem = { kind: "custom", label: it.label.trim(), notes: noteBits.join(" · ") || undefined };
       const keys = it.unitKeys.filter((k) => byKey.has(k));
       const targets = keys.length === 0 ? [whole()] : keys.map((k) => byKey.get(k)!);
+      const partToMaterial = (p: PartItem): WriteUpMaterialItem => ({
+        item: p.productType ? `${p.name.trim()} (${p.productType})` : p.name.trim(),
+        color: "",
+        species: "",
+        qty: p.qty > 0 ? p.qty : 1,
+        unit: "EA",
+        lengths: "",
+        vendor: "",
+        custom: p.custom,
+      });
+      // Parts checked for specific units go on each of those units' rows; the
+      // rest (no units checked = all affected) go on the item's first target.
+      const namedParts = it.needsOrdering ? it.parts.filter((p) => p.name.trim()) : [];
+      const generalParts: PartItem[] = [];
+      for (const p of namedParts) {
+        const valid = (p.unitKeys || []).filter((k) => byKey.has(k));
+        if (valid.length === 0) generalParts.push(p);
+        else for (const k of valid) byKey.get(k)!.materials.push(partToMaterial(p));
+      }
+      const generalPartMaterials = generalParts.map(partToMaterial);
       targets.forEach((a, idx) => {
         a.tasks.push(task);
         // Attach this item's materials + photos to just its first target (no dupes).
         if (idx === 0) {
-          a.materials.push(...it.materials);
+          a.materials.push(...generalPartMaterials, ...it.materials);
           a.photos.push(...it.photos.map((p) => p.blob));
         }
       });
@@ -668,6 +725,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         isNewProduct: u.isNewProduct,
         unitLabel: u.unitLabel,
         unitType: u.unitType,
+        hasSpecChange: u.hasSpecChange ?? (u.specChanges?.length > 0),
         specEntries: specEntriesFromChanges(u.specChanges),
       }))
     );
@@ -678,6 +736,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         label: it.label,
         note: it.note,
         needsOrdering: !!it.needsOrdering,
+        parts: (it.parts || []).map((p) => ({ key: p.key, name: p.name, productType: p.productType, qty: p.qty, custom: p.custom, unitKeys: p.unitKeys || [] })),
         orderingNotes: it.orderingNotes || "",
         unitKeys: it.unitKeys,
         materials: it.materials || [],
@@ -711,6 +770,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         isNewProduct: u.isNewProduct,
         unitLabel: u.unitLabel,
         unitType: u.unitType,
+        hasSpecChange: u.hasSpecChange,
         specChanges: u.specEntries.map((e) => ({ unitLabel: unitLabelOfWu(u), field: e.label, oldValue: e.oldValue, newValue: specEntryValue(e) })),
       })),
       issues: issues.map((it) => ({
@@ -718,6 +778,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         label: it.label,
         note: it.note,
         needsOrdering: it.needsOrdering,
+        parts: it.parts.map((p) => ({ key: p.key, name: p.name, productType: p.productType, qty: p.qty, custom: p.custom, unitKeys: p.unitKeys })),
         orderingNotes: it.orderingNotes,
         unitKeys: it.unitKeys,
         materials: it.materials,
@@ -1108,7 +1169,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 </div>
               </section>
 
-              {/* 2. Units affected */}
+              {/* 2. Units affected — pick units, opt into spec changes per unit */}
               <section>
                 <SectionLabel step={2}>Units affected</SectionLabel>
                 <p className="text-[11px] text-muted mt-0.5">Tap the units on this job, or add one that isn&apos;t loaded.</p>
@@ -1128,59 +1189,66 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                     <Plus className="w-4 h-4" /> Add unit manually
                   </button>
                 </div>
-                {wuUnits.some((u) => u.isNewProduct) && (
+                {wuUnits.length > 0 && (
                   <div className="mt-3 space-y-2">
-                    {wuUnits
-                      .filter((u) => u.isNewProduct)
-                      .map((u) => (
-                        <div key={u.key} className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-semibold text-amber-700">Manual unit</span>
+                    {wuUnits.map((u) => (
+                      <div
+                        key={u.key}
+                        className={`rounded-xl border p-3 space-y-2 ${
+                          u.isNewProduct ? "border-amber-500/40 bg-amber-500/5" : "border-border bg-surface/40"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-semibold">{unitTitle(u)}</span>
+                          {u.isNewProduct && (
                             <button onClick={() => removeUnit(u.key)} className="p-1 rounded text-muted hover:text-danger">
                               <X className="w-4 h-4" />
                             </button>
-                          </div>
-                          <StackedInput label="Unit #" value={u.unitLabel} onChange={(v) => updateUnit(u.key, { unitLabel: v })} placeholder="101" />
-                          <ComboInput
-                            label="Product type"
-                            value={u.unitType}
-                            onChange={(v) => updateUnit(u.key, { unitType: v })}
-                            options={options?.productTypes || []}
-                            placeholder="Double Hung…"
-                          />
+                          )}
                         </div>
-                      ))}
+                        {u.isNewProduct && (
+                          <>
+                            <StackedInput label="Unit #" value={u.unitLabel} onChange={(v) => updateUnit(u.key, { unitLabel: v })} placeholder="101" />
+                            <ComboInput
+                              label="Product type"
+                              value={u.unitType}
+                              onChange={(v) => updateUnit(u.key, { unitType: v })}
+                              options={options?.productTypes || []}
+                              placeholder="Double Hung…"
+                            />
+                          </>
+                        )}
+                        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={u.hasSpecChange}
+                            onChange={(e) => updateUnit(u.key, { hasSpecChange: e.target.checked })}
+                            className="w-4 h-4 accent-amber-500"
+                          />
+                          Spec change needed on this unit
+                        </label>
+                        {u.hasSpecChange && (
+                          <div className="pt-1">
+                            <UnitSpecSection
+                              unit={unitObjFor(u)}
+                              specEntries={u.specEntries}
+                              onChange={(entries) => updateUnit(u.key, { specEntries: entries })}
+                              colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
+                              finishOptions={options?.intFinishes || []}
+                              speciesOptions={trimOptions?.species || []}
+                              stainOptions={trimOptions?.stains || []}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
               </section>
 
-              {/* 3. Spec changes per unit */}
-              {wuUnits.length > 0 && (
-                <section>
-                  <SectionLabel step={3}>Spec changes</SectionLabel>
-                  <p className="text-[11px] text-muted mt-0.5">Only for units whose specs are wrong — leave blank otherwise.</p>
-                  <div className="mt-2 space-y-3">
-                    {wuUnits.map((u) => (
-                      <div key={u.key} className="rounded-xl border border-border bg-surface/40 p-3">
-                        <div className="text-sm font-semibold mb-2">{unitTitle(u)}</div>
-                        <UnitSpecSection
-                          unit={unitObjFor(u)}
-                          specEntries={u.specEntries}
-                          onChange={(entries) => updateUnit(u.key, { specEntries: entries })}
-                          colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
-                          finishOptions={options?.intFinishes || []}
-                          speciesOptions={trimOptions?.species || []}
-                          stainOptions={trimOptions?.stains || []}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-
-              {/* 4. Work to complete (issues) */}
+              {/* 3. Work to complete (issues) */}
               <section>
-                <SectionLabel step={4}>Work to complete</SectionLabel>
+                <SectionLabel step={3}>Work to complete</SectionLabel>
                 <div className="mt-2 space-y-3">
                   {issues.map((it, idx) => (
                     <IssueCard
@@ -1192,6 +1260,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                       unitTitle={unitTitle}
                       canRemove={issues.length > 1}
                       catalog={catalog}
+                      partsCatalog={partsCatalog}
                       colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
                       speciesOptions={trimOptions?.species || []}
                       onUpdate={(patch) => updateIssue(it.id, patch)}
@@ -1632,6 +1701,7 @@ function IssueCard({
   unitTitle,
   canRemove,
   catalog,
+  partsCatalog,
   colorOptions,
   speciesOptions,
   onUpdate,
@@ -1648,6 +1718,7 @@ function IssueCard({
   unitTitle: (u: WuUnit) => string;
   canRemove: boolean;
   catalog: CatalogPickItem[];
+  partsCatalog: PartsCatalogItem[];
   colorOptions: string[];
   speciesOptions: string[];
   onUpdate: (patch: Partial<WuIssue>) => void;
@@ -1698,33 +1769,7 @@ function IssueCard({
         />
       </div>
 
-      {/* Ordering notes — flag anything that needs ordered */}
-      <div>
-        <button
-          onClick={() => onUpdate({ needsOrdering: !issue.needsOrdering })}
-          className="flex items-center gap-2 text-sm"
-        >
-          <span
-            className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
-              issue.needsOrdering ? "bg-amber-500 border-amber-500 text-white" : "border-border text-transparent"
-            }`}
-          >
-            <Check className="w-3.5 h-3.5" />
-          </span>
-          Something needs ordered
-        </button>
-        {issue.needsOrdering && (
-          <textarea
-            value={issue.orderingNotes}
-            onChange={(e) => onUpdate({ orderingNotes: e.target.value })}
-            rows={2}
-            placeholder="What needs ordered…"
-            className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-          />
-        )}
-      </div>
-
-      {/* Affects which units */}
+      {/* Affects which units — right under what needs done */}
       <div>
         <span className="text-xs font-bold text-muted uppercase tracking-wide">Affects</span>
         {affectedUnits.length === 0 ? (
@@ -1750,9 +1795,240 @@ function IssueCard({
         speciesOptions={speciesOptions}
       />
 
+      {/* Ordering — flag anything that needs ordered (lives with materials) */}
+      <div>
+        <button
+          onClick={() => onUpdate({ needsOrdering: !issue.needsOrdering })}
+          className="flex items-center gap-2 text-sm"
+        >
+          <span
+            className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
+              issue.needsOrdering ? "bg-amber-500 border-amber-500 text-white" : "border-border text-transparent"
+            }`}
+          >
+            <Check className="w-3.5 h-3.5" />
+          </span>
+          Something needs ordered
+        </button>
+        {issue.needsOrdering && (
+          <div className="mt-2 space-y-3">
+            <PartsPicker
+              parts={issue.parts}
+              catalog={partsCatalog}
+              affectedUnits={affectedUnits.filter((u) => issue.unitKeys.length === 0 || issue.unitKeys.includes(u.key))}
+              unitTitle={unitTitle}
+              onChange={(parts) => onUpdate({ parts })}
+            />
+            <div>
+              <span className="text-xs font-bold text-muted uppercase tracking-wide">Ordering notes</span>
+              <textarea
+                value={issue.orderingNotes}
+                onChange={(e) => onUpdate({ orderingNotes: e.target.value })}
+                rows={2}
+                placeholder="Anything else about what needs ordered…"
+                className="w-full mt-1 rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Photos for this item */}
       <PhotoSection photos={issue.photos} onOpenCamera={onOpenCamera} onUpload={onUpload} onRemove={onRemovePhoto} />
     </section>
+  );
+}
+
+/* ── Parts needed picker — type-ahead over the parts catalog, grouped by
+ *    product type, with custom entries and per-part quantity. ── */
+function PartsPicker({
+  parts,
+  catalog,
+  affectedUnits,
+  unitTitle,
+  onChange,
+}: {
+  parts: PartItem[];
+  catalog: PartsCatalogItem[];
+  affectedUnits: WuUnit[];
+  unitTitle: (u: WuUnit) => string;
+  onChange: (parts: PartItem[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const q = query.trim().toLowerCase();
+
+  // Product types on the affected units — used to surface the most likely
+  // parts first (a double-hung write-up leads with double-hung parts).
+  const relevantTypes = useMemo(
+    () => new Set(affectedUnits.map((u) => u.unitType.trim().toLowerCase()).filter(Boolean)),
+    [affectedUnits]
+  );
+
+  const label = (c: PartsCatalogItem) =>
+    c.position ? `${c.category} — ${c.partName} · ${c.position}` : `${c.category} — ${c.partName}`;
+
+  const groups = useMemo(() => {
+    const filtered = catalog.filter((c) => {
+      if (!q) return true;
+      return (
+        c.productType.toLowerCase().includes(q) ||
+        c.category.toLowerCase().includes(q) ||
+        c.partName.toLowerCase().includes(q) ||
+        (c.position || "").toLowerCase().includes(q)
+      );
+    });
+    const byType = new Map<string, PartsCatalogItem[]>();
+    for (const c of filtered) {
+      const arr = byType.get(c.productType) || [];
+      arr.push(c);
+      byType.set(c.productType, arr);
+    }
+    return [...byType.entries()].sort((a, b) => {
+      const ar = relevantTypes.has(a[0].toLowerCase()) ? 0 : 1;
+      const br = relevantTypes.has(b[0].toLowerCase()) ? 0 : 1;
+      return ar - br || a[0].localeCompare(b[0]);
+    });
+  }, [catalog, q, relevantTypes]);
+
+  function addPart(name: string, productType?: string, custom?: boolean) {
+    onChange([...parts, { key: crypto.randomUUID(), name, productType, qty: 1, custom, unitKeys: [] }]);
+    setQuery("");
+    setOpen(false);
+  }
+  function setQty(key: string, qty: number) {
+    onChange(parts.map((p) => (p.key === key ? { ...p, qty: Math.max(1, qty) } : p)));
+  }
+  function setUnits(key: string, unitKeys: string[]) {
+    onChange(parts.map((p) => (p.key === key ? { ...p, unitKeys } : p)));
+  }
+  function toggleUnit(key: string, unitKey: string) {
+    onChange(
+      parts.map((p) =>
+        p.key === key
+          ? { ...p, unitKeys: p.unitKeys.includes(unitKey) ? p.unitKeys.filter((k) => k !== unitKey) : [...p.unitKeys, unitKey] }
+          : p
+      )
+    );
+  }
+  function removePart(key: string) {
+    onChange(parts.filter((p) => p.key !== key));
+  }
+
+  return (
+    <div>
+      <span className="text-xs font-bold text-muted uppercase tracking-wide">Parts needed</span>
+
+      {parts.length > 0 && (
+        <div className="mt-2 space-y-2">
+          {parts.map((p) => (
+            <div key={p.key} className="rounded-lg border border-border bg-background px-2.5 py-2 space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm truncate">{p.name}</div>
+                  {p.productType && <div className="text-[11px] text-muted truncate">{p.productType}</div>}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setQty(p.key, p.qty - 1)}
+                    className="w-7 h-7 rounded-md border border-border text-muted flex items-center justify-center"
+                  >
+                    −
+                  </button>
+                  <input
+                    inputMode="numeric"
+                    value={p.qty}
+                    onChange={(e) => setQty(p.key, parseInt(e.target.value, 10) || 1)}
+                    className="w-10 text-center rounded-md border border-border bg-background py-1 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setQty(p.key, p.qty + 1)}
+                    className="w-7 h-7 rounded-md border border-border text-muted flex items-center justify-center"
+                  >
+                    +
+                  </button>
+                </div>
+                <button type="button" onClick={() => removePart(p.key)} className="p-1 rounded text-muted hover:text-danger shrink-0">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              {affectedUnits.length > 0 && (
+                <div>
+                  <span className="text-[11px] text-muted">For</span>
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    <UnitChip
+                      active={p.unitKeys.length === 0}
+                      label="All units"
+                      onClick={() => setUnits(p.key, [])}
+                    />
+                    {affectedUnits.map((u) => (
+                      <UnitChip
+                        key={u.key}
+                        active={p.unitKeys.includes(u.key)}
+                        label={unitTitle(u)}
+                        onClick={() => toggleUnit(p.key, u.key)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="relative mt-2">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder={catalog.length ? "Search parts, or type a custom part…" : "Type a part…"}
+          className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+        />
+        {open && (
+          <div className="absolute z-20 left-0 right-0 mt-1 rounded-xl border border-border bg-background shadow-lg max-h-72 overflow-y-auto">
+            {q && (
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  addPart(query.trim(), undefined, true);
+                }}
+                className="w-full text-left px-3 py-2.5 text-sm font-medium text-amber-600 border-b border-border flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add custom: &ldquo;{query.trim()}&rdquo;
+              </button>
+            )}
+            {groups.map(([type, items]) => (
+              <div key={type}>
+                <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-muted bg-surface sticky top-0">
+                  {type}
+                </div>
+                {items.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      addPart(label(c), c.productType);
+                    }}
+                    className="w-full text-left px-3 py-2.5 text-sm hover:bg-surface border-b border-border last:border-b-0"
+                  >
+                    {label(c)}
+                  </button>
+                ))}
+              </div>
+            ))}
+            {groups.length === 0 && !q && (
+              <div className="px-3 py-3 text-sm text-muted">No parts catalog loaded — type a custom part above.</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

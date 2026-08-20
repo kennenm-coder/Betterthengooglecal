@@ -288,6 +288,44 @@ export async function fetchTrimOptions(): Promise<TrimOptions> {
   return _trimOptsCache;
 }
 
+// ─── Parts catalog (Andersen replacement parts) ─────────────────────────────
+
+export interface PartsCatalogItem {
+  id: string;
+  productType: string;
+  category: string;
+  partName: string;
+  position: string | null;
+}
+
+let _partsCache: PartsCatalogItem[] | null = null;
+
+export async function fetchPartsCatalog(): Promise<PartsCatalogItem[]> {
+  if (_partsCache) return _partsCache;
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("parts_catalog")
+    .select("id, product_type, category, part_name, position")
+    .eq("active", true)
+    .order("product_type", { ascending: true })
+    .order("category", { ascending: true });
+  if (error || !data) return [];
+  const mapped = (data as Record<string, unknown>[]).map((r) => ({
+    id: String(r.id),
+    productType: String(r.product_type || ""),
+    category: String(r.category || ""),
+    partName: String(r.part_name || ""),
+    position: (r.position as string) || null,
+  }));
+  // Only cache a non-empty result. An empty read (e.g. fetched before the
+  // session/role is ready → RLS returns 0 rows with no error) must NOT be
+  // cached, or the catalog stays blank for the whole page load. Returning it
+  // uncached lets the next open retry once auth is resolved.
+  if (mapped.length > 0) _partsCache = mapped;
+  return mapped;
+}
+
 /**
  * Count total pieces from a trim "lengths" entry so quantity isn't double-typed
  * — matches the material-list maker's `N@len` format.

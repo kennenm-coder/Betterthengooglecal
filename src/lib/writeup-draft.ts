@@ -27,8 +27,20 @@ export interface DraftUnit {
   isNewProduct: boolean;
   unitLabel: string;
   unitType: string;
+  /** Whether the user opted this unit into spec corrections. */
+  hasSpecChange: boolean;
   /** Spec entries stored as before/after changes; rehydrated on resume. */
   specChanges: SpecChange[];
+}
+
+/** A part flagged as needing ordered on an issue. */
+export interface DraftPart {
+  key: string;
+  name: string;
+  productType?: string;
+  qty: number;
+  custom?: boolean;
+  unitKeys: string[];
 }
 
 /** A work-to-complete item in a draft — its own materials/photos + unit keys. */
@@ -37,6 +49,7 @@ export interface DraftIssue {
   label: string;
   note: string;
   needsOrdering: boolean;
+  parts: DraftPart[];
   orderingNotes: string;
   unitKeys: string[];
   materials: WriteUpMaterialItem[];
