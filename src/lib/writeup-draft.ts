@@ -8,7 +8,7 @@
 // All calls are best-effort: if IndexedDB is unavailable, they no-op so the
 // write-up flow still works (just without draft recovery).
 
-import { WriteUpLineItem, SpecChange, WriteUpMaterialItem } from "./types";
+import { SpecChange, WriteUpMaterialItem } from "./types";
 
 const DB_NAME = "rba-writeups";
 const DB_VERSION = 1;
@@ -21,25 +21,36 @@ export interface DraftPhoto {
   name: string;
 }
 
-/** One unit block in a draft. Work-to-complete is shared (on the draft). */
-export interface DraftBlock {
-  id: string;
+/** An affected unit in a draft (identity + its spec corrections). */
+export interface DraftUnit {
+  key: string;
   isNewProduct: boolean;
   unitLabel: string;
   unitType: string;
   /** Spec entries stored as before/after changes; rehydrated on resume. */
   specChanges: SpecChange[];
-  materialItems: WriteUpMaterialItem[];
-  notes: string;
+}
+
+/** A work-to-complete item in a draft — its own materials/photos + unit keys. */
+export interface DraftIssue {
+  id: string;
+  label: string;
+  note: string;
+  needsOrdering: boolean;
+  orderingNotes: string;
+  unitKeys: string[];
+  materials: WriteUpMaterialItem[];
   photos: DraftPhoto[];
 }
 
 export interface WriteUpDraft {
   orderNumber: string;
   updatedAt: string;
-  /** Work-to-complete shared across all blocks. */
-  sharedWork: WriteUpLineItem[];
-  blocks: DraftBlock[];
+  background: string;
+  financingNotes: string;
+  paintStainNotes: string;
+  units: DraftUnit[];
+  issues: DraftIssue[];
 }
 
 function openDB(): Promise<IDBDatabase | null> {
@@ -125,7 +136,7 @@ export async function loadDraft(orderNumber: string): Promise<WriteUpDraft | nul
 export async function clearDraft(orderNumber: string): Promise<void> {
   const draft = await loadDraft(orderNumber);
   if (draft) {
-    const ids = (draft.blocks || []).flatMap((b) => b.photos.map((p) => p.id));
+    const ids = (draft.issues || []).flatMap((it) => (it.photos || []).map((p) => p.id));
     for (const id of ids) await deleteDraftPhoto(id);
   }
   const db = await openDB();

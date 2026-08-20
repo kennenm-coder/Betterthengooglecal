@@ -34,7 +34,6 @@ import {
 } from "@/lib/work-order-store";
 import {
   WriteUpDraft,
-  DraftBlock,
   saveDraft,
   loadDraft,
   clearDraft,
@@ -84,22 +83,42 @@ interface LocalPhoto {
   path?: string;
 }
 
-/** One unit in the write-up. Work-to-complete is shared across all blocks;
- *  everything else (specs, trim, photos, notes) is per-unit. */
-type ProgrammedUnit = { label: string; unit: MaterialUnit };
-interface UnitBlock {
-  id: string;
-  /** true = manually-added product (not on the job). */
+
+// ── Issue-first model (create) ──────────────────────────────────────────────
+// Flat model (matches the old spreadsheet):
+//   1. Background + financing + paint/stain notes
+//   2. Units affected (picked or added manually) — a top-level list
+//   3. Spec changes per unit
+//   4. Work to complete (issues) — each references which units it affects
+//   5. Trim / material — one list
+//   6. Photos — one set
+
+/** A unit affected by this write-up: identity + its spec corrections. */
+interface WuUnit {
+  key: string;
   isNewProduct: boolean;
-  /** Programmed unit label, or the typed unit # for a new product; "" = whole job. */
+  /** Programmed unit label, or the typed unit # for a new product. */
   unitLabel: string;
-  /** Product type (new product only). */
   unitType: string;
   specEntries: SpecEntry[];
-  materialItems: WriteUpMaterialItem[];
-  notes: string;
+}
+
+/** A work-to-complete item — its own materials + photos, references the units
+ *  it affects (empty = whole job). */
+interface WuIssue {
+  id: string;
+  label: string;
+  note: string;
+  /** "Something needs ordered" flag + what. */
+  needsOrdering: boolean;
+  orderingNotes: string;
+  unitKeys: string[];
+  materials: WriteUpMaterialItem[];
   photos: LocalPhoto[];
 }
+
+/** Where the camera / upload is currently adding photos. */
+type PhotoTarget = { kind: "edit" } | { kind: "issue"; issueId: string } | null;
 
 const emptyProduct: WriteUpNewProduct = {
   type: "",
@@ -242,7 +261,7 @@ function specEntriesFromChanges(changes: SpecChange[]): SpecEntry[] {
   });
 }
 
-export default function WriteUpModal({ order, units, initialUnit, onClose, onSaved, editWriteUp }: Props) {
+export default function WriteUpModal({ order, units, onClose, onSaved, editWriteUp }: Props) {
   const { user, autoCc } = useAuth();
   const isEditing = !!editWriteUp;
   const [presets, setPresets] = useState<string[]>([]);
@@ -250,12 +269,22 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
   const [options, setOptions] = useState<UnitOptions | null>(null);
   const [trimOptions, setTrimOptions] = useState<TrimOptions | null>(null);
 
-  // Shared work-to-complete (applies to every unit block below).
-  const [sharedWork, setSharedWork] = useState<WriteUpLineItem[]>([]);
-  // Per-unit blocks — each its own specs / trim / photos / notes.
-  const [blocks, setBlocks] = useState<UnitBlock[]>([]);
-  // Which block the camera / upload is currently adding photos to.
-  const [photoTarget, setPhotoTarget] = useState<string | null>(null);
+  // CREATE (flat model): background + notes, units, per-unit specs live on the
+  // units, work-to-complete issues, one material list, one photo set.
+  const [background, setBackground] = useState("");
+  const [financingNotes, setFinancingNotes] = useState("");
+  const [paintStainNotes, setPaintStainNotes] = useState("");
+  const [wuUnits, setWuUnits] = useState<WuUnit[]>([]);
+  const [issues, setIssues] = useState<WuIssue[]>([]);
+  const [showSummary, setShowSummary] = useState(false);
+  const [photoTarget, setPhotoTarget] = useState<PhotoTarget>(null);
+  // EDIT: a single existing row loaded as a flat per-unit form.
+  const [editWork, setEditWork] = useState<WriteUpLineItem[]>([]);
+  const [editSpecs, setEditSpecs] = useState<SpecEntry[]>([]);
+  const [editMaterials, setEditMaterials] = useState<WriteUpMaterialItem[]>([]);
+  const [editPhotos, setEditPhotos] = useState<LocalPhoto[]>([]);
+  const [editNote, setEditNote] = useState("");
+  const [editUnitLabel, setEditUnitLabel] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -289,10 +318,17 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     let cancelled = false;
     loadDraft(order.orderNumber).then((d) => {
       if (cancelled) return;
-      if (d && Array.isArray(d.blocks) && d.blocks.length > 0) {
+      const hasContent =
+        d &&
+        ((d.issues && d.issues.some((it) => it.label.trim() || it.materials?.length || it.photos?.length)) ||
+          (d.units && d.units.length > 0) ||
+          d.background?.trim() ||
+          d.financingNotes?.trim() ||
+          d.paintStainNotes?.trim());
+      if (hasContent) {
         setPendingDraft(d);
       } else {
-        seedFirstBlock();
+        setIssues([makeIssue()]);
         setDraftReady(true);
       }
     });
@@ -302,7 +338,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order.orderNumber, isEditing]);
 
-  // Edit mode: load the existing write-up into one block (incl. its photos).
+  // Edit mode: load the existing write-up (one unit) into the flat form.
   useEffect(() => {
     if (!editWriteUp) return;
     let cancelled = false;
@@ -322,22 +358,12 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
         }
       }
       if (cancelled) return;
-      const u = unitOptions.find((o) => o.label === editWriteUp.unitLabel)?.unit || null;
-      setSharedWork(editWriteUp.lineItems);
-      setBlocks([
-        {
-          id: crypto.randomUUID(),
-          isNewProduct: !!editWriteUp.newProduct,
-          unitLabel: editWriteUp.unitLabel || "",
-          unitType:
-            editWriteUp.newProduct?.type ||
-            (u ? String(u.unitType || u.type || u.summarySubType || "") : ""),
-          specEntries: specEntriesFromChanges(editWriteUp.specChanges),
-          materialItems: editWriteUp.materialItems,
-          notes: editWriteUp.notes,
-          photos: loaded,
-        },
-      ]);
+      setEditWork(editWriteUp.lineItems);
+      setEditSpecs(specEntriesFromChanges(editWriteUp.specChanges));
+      setEditMaterials(editWriteUp.materialItems);
+      setEditNote(editWriteUp.notes);
+      setEditPhotos(loaded);
+      setEditUnitLabel(editWriteUp.unitLabel || "");
       setStatus(editWriteUp.status);
       setDraftReady(true);
     })();
@@ -360,108 +386,129 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     return opts;
   }, [units]);
 
-  // ── Shared work-to-complete ──
-  function addWorkItem(label: string, kind: "preset" | "custom") {
-    const v = label.trim();
-    if (!v) return;
-    if (sharedWork.some((w) => w.label.toLowerCase() === v.toLowerCase())) return;
-    setSharedWork((prev) => [...prev, { kind, label: v }]);
-  }
-  function removeWorkItem(i: number) {
-    setSharedWork((prev) => prev.filter((_, j) => j !== i));
-  }
-  function setWorkItemNotes(i: number, notes: string | undefined) {
-    setSharedWork((prev) => prev.map((w, j) => (j === i ? { ...w, notes } : w)));
-  }
-  function toggleWorkItemComplete(i: number) {
-    setSharedWork((prev) => prev.map((w, j) => (j === i ? { ...w, completed: !w.completed } : w)));
-  }
-
-  // Setting status controls bulk completion: closing marks all work done.
-  function changeStatus(s: WriteUpStatus) {
-    setStatus(s);
-    if (s === "closed") {
-      setSharedWork((prev) => prev.map((w) => ({ ...w, completed: true })));
-    }
-  }
-
-  // ── Unit blocks ──
-  function makeBlock(opts: { isNewProduct: boolean; unitLabel: string }): UnitBlock {
-    const u = opts.isNewProduct
-      ? null
-      : unitOptions.find((o) => o.label === opts.unitLabel)?.unit || null;
+  // ── Units affected (create): top-level list + per-unit specs ──
+  function makeWuUnit(opts: { isNewProduct: boolean; unitLabel: string }): WuUnit {
+    const u = opts.isNewProduct ? null : unitOptions.find((o) => o.label === opts.unitLabel)?.unit || null;
     return {
-      id: crypto.randomUUID(),
+      key: crypto.randomUUID(),
       isNewProduct: opts.isNewProduct,
       unitLabel: opts.unitLabel,
       unitType: u ? String(u.unitType || u.type || u.summarySubType || "") : "",
       specEntries: [],
-      materialItems: [],
-      notes: "",
-      photos: [],
     };
   }
-  function seedFirstBlock() {
-    const label = initialUnit && unitOptions.some((o) => o.label === initialUnit) ? initialUnit : "";
-    setBlocks([makeBlock({ isNewProduct: false, unitLabel: label })]);
+  function toggleUnit(label: string) {
+    const existing = wuUnits.find((u) => !u.isNewProduct && u.unitLabel === label);
+    if (existing) {
+      setWuUnits((prev) => prev.filter((u) => u.key !== existing.key));
+      setIssues((is) => is.map((it) => ({ ...it, unitKeys: it.unitKeys.filter((k) => k !== existing.key) })));
+    } else {
+      setWuUnits((prev) => [...prev, makeWuUnit({ isNewProduct: false, unitLabel: label })]);
+    }
   }
-  function addUnitBlock(opts: { isNewProduct: boolean; unitLabel: string }) {
-    setBlocks((prev) => [...prev, makeBlock(opts)]);
+  function addManualUnit() {
+    setWuUnits((prev) => [...prev, makeWuUnit({ isNewProduct: true, unitLabel: "" })]);
   }
-  function updateBlock(id: string, patch: Partial<UnitBlock>) {
-    setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)));
+  function updateUnit(key: string, patch: Partial<WuUnit>) {
+    setWuUnits((prev) => prev.map((u) => (u.key === key ? { ...u, ...patch } : u)));
   }
-  function removeBlock(id: string) {
-    setBlocks((prev) => {
-      const b = prev.find((x) => x.id === id);
-      if (b) for (const p of b.photos) deleteDraftPhoto(p.id);
+  function removeUnit(key: string) {
+    setWuUnits((prev) => prev.filter((u) => u.key !== key));
+    setIssues((is) => is.map((it) => ({ ...it, unitKeys: it.unitKeys.filter((k) => k !== key) })));
+  }
+  function unitObjFor(u: WuUnit): MaterialUnit | null {
+    if (u.isNewProduct || !u.unitLabel) return null;
+    return unitOptions.find((o) => o.label === u.unitLabel)?.unit || null;
+  }
+  const unitTitle = (u: WuUnit) =>
+    u.isNewProduct ? (u.unitLabel.trim() ? `Unit ${u.unitLabel.trim()}` : "New product") : u.unitLabel || "Whole job";
+
+  // ── Work to complete (create): issues that reference affected units ──
+  function makeIssue(): WuIssue {
+    return { id: crypto.randomUUID(), label: "", note: "", needsOrdering: false, orderingNotes: "", unitKeys: [], materials: [], photos: [] };
+  }
+  function addIssue() {
+    setIssues((prev) => [...prev, makeIssue()]);
+  }
+  function updateIssue(id: string, patch: Partial<WuIssue>) {
+    setIssues((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  }
+  function removeIssue(id: string) {
+    setIssues((prev) => {
+      const it = prev.find((x) => x.id === id);
+      if (it) for (const p of it.photos) deleteDraftPhoto(p.id);
       return prev.filter((x) => x.id !== id);
     });
   }
-  function unitForBlock(b: UnitBlock): MaterialUnit | null {
-    if (b.isNewProduct || !b.unitLabel) return null;
-    return unitOptions.find((o) => o.label === b.unitLabel)?.unit || null;
+  function toggleIssueUnit(issueId: string, unitKey: string) {
+    setIssues((prev) =>
+      prev.map((it) => {
+        if (it.id !== issueId) return it;
+        const has = it.unitKeys.includes(unitKey);
+        return { ...it, unitKeys: has ? it.unitKeys.filter((k) => k !== unitKey) : [...it.unitKeys, unitKey] };
+      })
+    );
   }
 
-  // ── Photos (targeting a specific block) ──
-  async function addPhotosToBlock(blockId: string | null, files: File[], fromCamera = false) {
-    if (!blockId) return;
-    const added: LocalPhoto[] = files.map((f) => ({
-      id: crypto.randomUUID(),
-      name: f.name || "photo",
-      blob: f,
-    }));
-    for (const a of added) putDraftPhoto(a.id, a.blob);
-    setBlocks((prev) =>
-      prev.map((b) => (b.id === blockId ? { ...b, photos: [...b.photos, ...added] } : b))
-    );
-    if (fromCamera) {
-      setCameraPhotoIds((prev) => {
-        const next = new Set(prev);
-        for (const a of added) next.add(a.id);
-        return next;
-      });
-    }
+  // ── Edit-mode work items ──
+  function addWorkItem(label: string, kind: "preset" | "custom") {
+    const v = label.trim();
+    if (!v) return;
+    if (editWork.some((w) => w.label.toLowerCase() === v.toLowerCase())) return;
+    setEditWork((prev) => [...prev, { kind, label: v }]);
   }
-  function removePhotoFromBlock(blockId: string, photoId: string) {
-    setBlocks((prev) =>
-      prev.map((b) => (b.id === blockId ? { ...b, photos: b.photos.filter((p) => p.id !== photoId) } : b))
-    );
+  function removeWorkItem(i: number) {
+    setEditWork((prev) => prev.filter((_, j) => j !== i));
+  }
+  function setWorkItemNotes(i: number, notes: string | undefined) {
+    setEditWork((prev) => prev.map((w, j) => (j === i ? { ...w, notes } : w)));
+  }
+  function toggleWorkItemComplete(i: number) {
+    setEditWork((prev) => prev.map((w, j) => (j === i ? { ...w, completed: !w.completed } : w)));
+  }
+  function changeStatus(s: WriteUpStatus) {
+    setStatus(s);
+    if (s === "closed") setEditWork((prev) => prev.map((w) => ({ ...w, completed: true })));
+  }
+  const editUnit =
+    unitOptions.find((o) => o.label === editUnitLabel)?.unit || null;
+
+  // ── Photos (edit = the row's photos; create = per work-item) ──
+  function untrackCamera(photoId: string) {
     setCameraPhotoIds((prev) => {
       if (!prev.has(photoId)) return prev;
-      const next = new Set(prev);
-      next.delete(photoId);
-      return next;
+      const n = new Set(prev);
+      n.delete(photoId);
+      return n;
     });
+  }
+  async function addPhotosTo(target: PhotoTarget, files: File[], fromCamera = false) {
+    if (!target) return;
+    const added: LocalPhoto[] = files.map((f) => ({ id: crypto.randomUUID(), name: f.name || "photo", blob: f }));
+    for (const a of added) putDraftPhoto(a.id, a.blob);
+    if (target.kind === "edit") {
+      setEditPhotos((prev) => [...prev, ...added]);
+    } else {
+      setIssues((prev) => prev.map((it) => (it.id === target.issueId ? { ...it, photos: [...it.photos, ...added] } : it)));
+    }
+    if (fromCamera) setCameraPhotoIds((prev) => { const n = new Set(prev); added.forEach((a) => n.add(a.id)); return n; });
+  }
+  function removeEditPhoto(photoId: string) {
+    setEditPhotos((prev) => prev.filter((p) => p.id !== photoId));
+    untrackCamera(photoId);
     deleteDraftPhoto(photoId);
   }
-  function openCameraForBlock(blockId: string) {
-    setPhotoTarget(blockId);
+  function removeIssuePhoto(issueId: string, photoId: string) {
+    setIssues((prev) => prev.map((it) => (it.id === issueId ? { ...it, photos: it.photos.filter((p) => p.id !== photoId) } : it)));
+    untrackCamera(photoId);
+    deleteDraftPhoto(photoId);
+  }
+  function openCamera(target: PhotoTarget) {
+    setPhotoTarget(target);
     setShowCamera(true);
   }
 
-  const allPhotos = blocks.flatMap((b) => b.photos);
-  /** Camera photos taken this session that the user hasn't saved to the roll. */
+  const allPhotos = isEditing ? editPhotos : issues.flatMap((it) => it.photos);
   const unsavedCameraPhotos = allPhotos.filter((p) => cameraPhotoIds.has(p.id));
 
   function photoToFile(p: LocalPhoto): File {
@@ -469,10 +516,6 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       ? p.blob
       : new File([p.blob], p.name || "photo.jpg", { type: p.blob.type || "image/jpeg" });
   }
-
-  /** Save every camera photo to the device in one action — the iOS/Android share
-   *  sheet accepts multiple files and offers "Save N Images" to the camera roll.
-   *  Falls back to individual downloads on browsers without file sharing. */
   async function saveAllToDevice() {
     const files = unsavedCameraPhotos.map(photoToFile);
     if (files.length === 0) return;
@@ -495,110 +538,191 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       }
       setCameraPhotoIds(new Set());
     } catch {
-      /* user cancelled the share sheet — keep them unsaved so they can retry */
+      /* cancelled */
     }
     setShowSavePrompt(false);
   }
 
-  // ── Derived: per-block spec changes + submit inputs ──
-  function blockSpecChanges(b: UnitBlock): SpecChange[] {
-    const label = b.isNewProduct ? b.unitLabel.trim() : b.unitLabel;
+  // ── Derived ──
+  function specChangesOf(entries: SpecEntry[], label: string): SpecChange[] {
     const out: SpecChange[] = [];
-    for (const e of b.specEntries) {
-      const newValue = specEntryValue(e);
-      if (newValue && newValue !== e.oldValue.trim()) {
-        out.push({ unitLabel: label, field: e.label, oldValue: e.oldValue, newValue });
-      }
+    for (const e of entries) {
+      const v = specEntryValue(e);
+      if (v && v !== e.oldValue.trim()) out.push({ unitLabel: label, field: e.label, oldValue: e.oldValue, newValue: v });
     }
     return out;
   }
-  function blockHasContent(b: UnitBlock): boolean {
-    return (
-      (b.isNewProduct && b.unitType.trim().length > 0) ||
-      b.specEntries.some((e) => specEntryValue(e).length > 0) ||
-      b.materialItems.length > 0 ||
-      b.photos.length > 0 ||
-      b.notes.trim().length > 0
-    );
-  }
-  /** Blocks complete enough to save (a new product needs a # and a type). */
-  const validBlocks = blocks.filter((b) =>
-    b.isNewProduct ? b.unitLabel.trim().length > 0 && b.unitType.trim().length > 0 : true
-  );
-  function blockToInput(b: UnitBlock): WriteUpEntryInput {
-    return {
-      unitLabel: b.isNewProduct ? b.unitLabel.trim() || null : b.unitLabel || null,
-      lineItems: sharedWork,
-      specChanges: blockSpecChanges(b),
-      materialItems: b.materialItems,
-      newProduct: b.isNewProduct ? { ...emptyProduct, type: b.unitType.trim() } : null,
-      notes: b.notes.trim(),
-      photoFiles: b.photos.map((p) => p.blob),
-    };
-  }
+  const unitLabelOfWu = (u: WuUnit) => (u.isNewProduct ? u.unitLabel.trim() : u.unitLabel);
+  const unitValid = (u: WuUnit) => (u.isNewProduct ? u.unitLabel.trim().length > 0 && u.unitType.trim().length > 0 : true);
+  const validUnits = wuUnits.filter(unitValid);
+  const validIssues = issues.filter((it) => it.label.trim().length > 0);
 
-  const editorHasContent =
-    validBlocks.length > 0 && (sharedWork.length > 0 || validBlocks.some(blockHasContent));
+  const editHasContent =
+    editWork.length > 0 ||
+    editSpecs.some((e) => specEntryValue(e).length > 0) ||
+    editMaterials.length > 0 ||
+    editPhotos.length > 0 ||
+    editNote.trim().length > 0;
+  const createHasContent =
+    validIssues.length > 0 ||
+    validUnits.some((u) => u.specEntries.some((e) => specEntryValue(e).length > 0)) ||
+    issues.some((it) => it.materials.length > 0 || it.photos.length > 0) ||
+    background.trim().length > 0 ||
+    financingNotes.trim().length > 0 ||
+    paintStainNotes.trim().length > 0;
+  const editorHasContent = isEditing ? editHasContent : createHasContent;
 
-  // ── Draft (de)serialization ──
-  function blockToDraft(b: UnitBlock): DraftBlock {
-    return {
-      id: b.id,
-      isNewProduct: b.isNewProduct,
-      unitLabel: b.unitLabel,
-      unitType: b.unitType,
-      specChanges: b.specEntries.map((e) => ({
-        unitLabel: b.unitLabel,
-        field: e.label,
-        oldValue: e.oldValue,
-        newValue: specEntryValue(e),
-      })),
-      materialItems: b.materialItems,
-      notes: b.notes,
-      photos: b.photos.map((p) => ({ id: p.id, name: p.name })),
-    };
-  }
-  async function blockFromDraft(d: DraftBlock): Promise<UnitBlock> {
-    const ph: LocalPhoto[] = [];
-    for (const p of d.photos) {
-      const blob = await getDraftPhoto(p.id);
-      if (blob) ph.push({ id: p.id, name: p.name, blob });
+  /** Fan out to one row per affected unit, plus a whole-job row that carries
+   *  general work, the background/notes, the material list, and the photos. */
+  function buildInputs(): WriteUpEntryInput[] {
+    interface Agg {
+      unitLabel: string | null;
+      isNewProduct: boolean;
+      unitType: string;
+      tasks: WriteUpLineItem[];
+      specs: SpecChange[];
+      materials: WriteUpMaterialItem[];
+      photos: Blob[];
+      notes: string;
     }
-    return {
-      id: d.id,
-      isNewProduct: d.isNewProduct,
-      unitLabel: d.unitLabel,
-      unitType: d.unitType,
-      specEntries: specEntriesFromChanges(d.specChanges),
-      materialItems: d.materialItems,
-      notes: d.notes,
-      photos: ph,
+    const byKey = new Map<string, Agg>();
+    const WHOLE = "__whole__";
+    const whole = (): Agg => {
+      let a = byKey.get(WHOLE);
+      if (!a) {
+        a = { unitLabel: null, isNewProduct: false, unitType: "", tasks: [], specs: [], materials: [], photos: [], notes: "" };
+        byKey.set(WHOLE, a);
+      }
+      return a;
     };
+    // One row per affected unit — captures its spec changes.
+    for (const u of validUnits) {
+      const label = unitLabelOfWu(u);
+      byKey.set(u.key, {
+        unitLabel: label || null,
+        isNewProduct: u.isNewProduct,
+        unitType: u.unitType.trim(),
+        tasks: [],
+        specs: specChangesOf(u.specEntries, label),
+        materials: [],
+        photos: [],
+        notes: "",
+      });
+    }
+    // Issues → tasks (+ their own materials/photos) onto their affected units,
+    // or the whole-job bucket.
+    for (const it of validIssues) {
+      const noteBits = [
+        it.note.trim(),
+        it.needsOrdering && it.orderingNotes.trim() ? `NEEDS ORDERED: ${it.orderingNotes.trim()}` : it.needsOrdering ? "NEEDS ORDERED" : "",
+      ].filter(Boolean);
+      const task: WriteUpLineItem = { kind: "custom", label: it.label.trim(), notes: noteBits.join(" · ") || undefined };
+      const keys = it.unitKeys.filter((k) => byKey.has(k));
+      const targets = keys.length === 0 ? [whole()] : keys.map((k) => byKey.get(k)!);
+      targets.forEach((a, idx) => {
+        a.tasks.push(task);
+        // Attach this item's materials + photos to just its first target (no dupes).
+        if (idx === 0) {
+          a.materials.push(...it.materials);
+          a.photos.push(...it.photos.map((p) => p.blob));
+        }
+      });
+    }
+    // Background + notes go on the whole-job row.
+    const noteParts = [
+      background.trim(),
+      financingNotes.trim() ? `Financing notes: ${financingNotes.trim()}` : "",
+      paintStainNotes.trim() ? `Paint & stain notes: ${paintStainNotes.trim()}` : "",
+    ].filter(Boolean);
+    if (noteParts.length) whole().notes = noteParts.join("\n\n");
+    return [...byKey.values()]
+      .filter((a) => a.tasks.length || a.specs.length || a.materials.length || a.photos.length || a.notes.trim())
+      .map((a) => ({
+        unitLabel: a.unitLabel,
+        lineItems: a.tasks,
+        specChanges: a.specs,
+        materialItems: a.materials,
+        newProduct: a.isNewProduct ? { ...emptyProduct, type: a.unitType } : null,
+        notes: a.notes,
+        photoFiles: a.photos,
+      }));
+  }
+
+  // ── Draft (de)serialization ── (create only)
+  async function photosFromDraft(refs: { id: string; name: string }[]): Promise<LocalPhoto[]> {
+    const out: LocalPhoto[] = [];
+    for (const p of refs) {
+      const blob = await getDraftPhoto(p.id);
+      if (blob) out.push({ id: p.id, name: p.name, blob });
+    }
+    return out;
   }
   async function resumeDraft() {
     if (!pendingDraft) return;
-    setSharedWork(pendingDraft.sharedWork || []);
-    const restored = await Promise.all((pendingDraft.blocks || []).map(blockFromDraft));
-    setBlocks(restored.length > 0 ? restored : [makeBlock({ isNewProduct: false, unitLabel: "" })]);
+    setBackground(pendingDraft.background || "");
+    setFinancingNotes(pendingDraft.financingNotes || "");
+    setPaintStainNotes(pendingDraft.paintStainNotes || "");
+    setWuUnits(
+      (pendingDraft.units || []).map((u) => ({
+        key: u.key,
+        isNewProduct: u.isNewProduct,
+        unitLabel: u.unitLabel,
+        unitType: u.unitType,
+        specEntries: specEntriesFromChanges(u.specChanges),
+      }))
+    );
+    const dIssues = pendingDraft.issues || [];
+    const restored = await Promise.all(
+      dIssues.map(async (it) => ({
+        id: it.id,
+        label: it.label,
+        note: it.note,
+        needsOrdering: !!it.needsOrdering,
+        orderingNotes: it.orderingNotes || "",
+        unitKeys: it.unitKeys,
+        materials: it.materials || [],
+        photos: await photosFromDraft(it.photos || []),
+      }))
+    );
+    setIssues(restored.length > 0 ? restored : [makeIssue()]);
     setPendingDraft(null);
     setDraftReady(true);
   }
   async function discardDraft() {
     await clearDraft(order.orderNumber);
     setPendingDraft(null);
-    setSharedWork([]);
-    seedFirstBlock();
+    setBackground("");
+    setFinancingNotes("");
+    setPaintStainNotes("");
+    setWuUnits([]);
+    setIssues([makeIssue()]);
     setDraftReady(true);
   }
-
-  /** Snapshot the current write-up as a draft (or null if truly empty). */
   function buildDraftNow(): WriteUpDraft | null {
-    if (sharedWork.length === 0 && !blocks.some(blockHasContent)) return null;
+    if (!createHasContent) return null;
     return {
       orderNumber: order.orderNumber,
       updatedAt: new Date().toISOString(),
-      sharedWork,
-      blocks: blocks.map(blockToDraft),
+      background,
+      financingNotes,
+      paintStainNotes,
+      units: wuUnits.map((u) => ({
+        key: u.key,
+        isNewProduct: u.isNewProduct,
+        unitLabel: u.unitLabel,
+        unitType: u.unitType,
+        specChanges: u.specEntries.map((e) => ({ unitLabel: unitLabelOfWu(u), field: e.label, oldValue: e.oldValue, newValue: specEntryValue(e) })),
+      })),
+      issues: issues.map((it) => ({
+        id: it.id,
+        label: it.label,
+        note: it.note,
+        needsOrdering: it.needsOrdering,
+        orderingNotes: it.orderingNotes,
+        unitKeys: it.unitKeys,
+        materials: it.materials,
+        photos: it.photos.map((p) => ({ id: p.id, name: p.name })),
+      })),
     };
   }
 
@@ -645,7 +769,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftReady, sharedWork, blocks]);
+  }, [draftReady, issues, wuUnits, background, financingNotes, paintStainNotes]);
 
   // ── Close guard ──
   const dirty = editorHasContent;
@@ -660,23 +784,21 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
 
   async function saveChanges() {
     if (!editWriteUp || saving) return;
-    const block = blocks[0];
-    if (!block) return;
     setSaving(true);
     setError("");
-    const input = blockToInput(block);
-    const keepPhotos: WriteUpPhoto[] = block.photos
+    const label = editWriteUp.newProduct ? editUnitLabel.trim() : editUnitLabel;
+    const keepPhotos: WriteUpPhoto[] = editPhotos
       .filter((p) => p.path)
       .map((p) => ({ path: p.path!, name: p.name }));
-    const newPhotoFiles = block.photos.filter((p) => !p.path).map((p) => p.blob);
+    const newPhotoFiles = editPhotos.filter((p) => !p.path).map((p) => p.blob);
     const res = await updateWriteUp(editWriteUp.id, {
       orderNumber: order.orderNumber || editWriteUp.orderNumber,
-      unitLabel: input.unitLabel,
-      lineItems: sharedWork,
-      specChanges: input.specChanges,
-      materialItems: block.materialItems,
-      newProduct: input.newProduct,
-      notes: block.notes.trim(),
+      unitLabel: editUnitLabel.trim() || null,
+      lineItems: editWork,
+      specChanges: specChangesOf(editSpecs, label),
+      materialItems: editMaterials,
+      newProduct: editWriteUp.newProduct,
+      notes: editNote.trim(),
       status,
       keepPhotos,
       newPhotoFiles,
@@ -719,12 +841,8 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
   }
 
   async function submitWriteUp(sendEmail: boolean) {
-    if (validBlocks.length === 0) {
-      setError("Add at least one unit before submitting.");
-      return;
-    }
-    if (sharedWork.length === 0 && !validBlocks.some(blockHasContent)) {
-      setError("Add some work, a spec, a photo, or a note first.");
+    if (validIssues.length === 0) {
+      setError("Add at least one issue with a description and a scope.");
       return;
     }
 
@@ -739,7 +857,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       createdBy: user?.email || "",
       createdByName: user?.email?.split("@")[0] || "",
     };
-    const inputs: WriteUpEntryInput[] = validBlocks.map(blockToInput);
+    const inputs: WriteUpEntryInput[] = buildInputs();
 
     const { created, error: saveError } = await submitWriteUpBatch(ctx, inputs, (done, total) =>
       setProgress({ done, total })
@@ -771,7 +889,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
     onClose();
   }
 
-  const totalUnits = validBlocks.length;
+  const totalUnits = buildInputs().length;
 
   return (
     <div
@@ -829,7 +947,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
       {showCamera && (
         <CameraCapture
           onDone={(files) => {
-            if (files.length) addPhotosToBlock(photoTarget, files, true);
+            if (files.length) addPhotosTo(photoTarget, files, true);
           }}
           onClose={() => {
             setShowCamera(false);
@@ -866,7 +984,7 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
             </p>
             <p className="text-xs text-muted mt-0.5">
               Saved {new Date(pendingDraft.updatedAt).toLocaleString()} ·{" "}
-              {(pendingDraft.blocks?.length ?? 0)} unit(s)
+              {(pendingDraft.issues?.length ?? 0)} issue(s)
             </p>
             <div className="flex gap-2 mt-2.5">
               <button onClick={resumeDraft} className="flex-1 py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold">
@@ -901,67 +1019,212 @@ export default function WriteUpModal({ order, units, initialUnit, onClose, onSav
             </section>
           )}
 
-          {/* Work to complete — shared across every unit below */}
-          <section>
-            <SectionLabel step={isEditing ? undefined : 1}>What needs done?</SectionLabel>
-            {!isEditing && (
-              <p className="text-[11px] text-muted mt-0.5">
-                Applies to every unit below. Add the units it covers underneath.
-              </p>
-            )}
-            <div className="mt-3">
-              <WorkNeeded
-                presets={presets}
-                items={sharedWork}
-                onAdd={addWorkItem}
-                onRemove={removeWorkItem}
-                onNotes={setWorkItemNotes}
-                allowComplete={isEditing}
-                onToggleComplete={toggleWorkItemComplete}
+          {isEditing ? (
+            /* ── Edit: one existing unit, flat form ── */
+            <>
+              <section>
+                <SectionLabel>What needs done? — {editUnitLabel || "Whole job"}</SectionLabel>
+                <div className="mt-3">
+                  <WorkNeeded
+                    presets={presets}
+                    items={editWork}
+                    onAdd={addWorkItem}
+                    onRemove={removeWorkItem}
+                    onNotes={setWorkItemNotes}
+                    allowComplete
+                    onToggleComplete={toggleWorkItemComplete}
+                  />
+                </div>
+              </section>
+              <UnitSpecSection
+                unit={editUnit}
+                specEntries={editSpecs}
+                onChange={setEditSpecs}
+                colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
+                finishOptions={options?.intFinishes || []}
+                speciesOptions={trimOptions?.species || []}
+                stainOptions={trimOptions?.stains || []}
               />
-            </div>
-          </section>
+              <MaterialSection
+                materials={editMaterials}
+                onChange={setEditMaterials}
+                catalog={catalog}
+                colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
+                speciesOptions={trimOptions?.species || []}
+              />
+              <PhotoSection
+                photos={editPhotos}
+                onOpenCamera={() => openCamera({ kind: "edit" })}
+                onUpload={(files) => addPhotosTo({ kind: "edit" }, files)}
+                onRemove={removeEditPhoto}
+              />
+              <section>
+                <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
+                  <StickyNote className="w-3.5 h-3.5" /> Note
+                </span>
+                <textarea
+                  value={editNote}
+                  onChange={(e) => setEditNote(e.target.value)}
+                  rows={2}
+                  placeholder="Anything else the office should know…"
+                  className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-3 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                />
+              </section>
+            </>
+          ) : (
+            /* ── Create: flat top-level flow ── */
+            <>
+              {/* 1. What's wrong + notes */}
+              <section className="space-y-3">
+                <div>
+                  <SectionLabel step={1}>What&apos;s wrong?</SectionLabel>
+                  <textarea
+                    value={background}
+                    onChange={(e) => setBackground(e.target.value)}
+                    rows={3}
+                    placeholder="Overall situation — e.g. the original windows were stained the wrong color…"
+                    className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-3 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted block mb-1">Financing notes</label>
+                  <textarea
+                    value={financingNotes}
+                    onChange={(e) => setFinancingNotes(e.target.value)}
+                    rows={2}
+                    placeholder="Optional…"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted block mb-1">Paint &amp; stain notes</label>
+                  <textarea
+                    value={paintStainNotes}
+                    onChange={(e) => setPaintStainNotes(e.target.value)}
+                    rows={2}
+                    placeholder="Optional…"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                  />
+                </div>
+              </section>
 
-          {/* Units — each with its own specs / trim / photos / notes */}
-          {blocks.map((block) => (
-            <UnitBlockEditor
-              key={block.id}
-              block={block}
-              unit={unitForBlock(block)}
-              productTypes={options?.productTypes || []}
-              catalog={catalog}
-              colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
-              finishOptions={options?.intFinishes || []}
-              speciesOptions={trimOptions?.species || []}
-              stainOptions={trimOptions?.stains || []}
-              canRemove={!isEditing && blocks.length > 1}
-              onChange={(patch) => updateBlock(block.id, patch)}
-              onRemove={() => removeBlock(block.id)}
-              onOpenCamera={() => openCameraForBlock(block.id)}
-              onUpload={(files) => addPhotosToBlock(block.id, files)}
-              onRemovePhoto={(pid) => removePhotoFromBlock(block.id, pid)}
-            />
-          ))}
+              {/* 2. Units affected */}
+              <section>
+                <SectionLabel step={2}>Units affected</SectionLabel>
+                <p className="text-[11px] text-muted mt-0.5">Tap the units on this job, or add one that isn&apos;t loaded.</p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {unitOptions.map((o) => (
+                    <UnitChip
+                      key={o.label}
+                      active={wuUnits.some((u) => !u.isNewProduct && u.unitLabel === o.label)}
+                      label={o.label}
+                      onClick={() => toggleUnit(o.label)}
+                    />
+                  ))}
+                  <button
+                    onClick={addManualUnit}
+                    className="px-3 py-2.5 rounded-lg text-sm font-medium border border-dashed border-amber-500/50 text-amber-600 flex items-center gap-1"
+                  >
+                    <Plus className="w-4 h-4" /> Add unit manually
+                  </button>
+                </div>
+                {wuUnits.some((u) => u.isNewProduct) && (
+                  <div className="mt-3 space-y-2">
+                    {wuUnits
+                      .filter((u) => u.isNewProduct)
+                      .map((u) => (
+                        <div key={u.key} className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-amber-700">Manual unit</span>
+                            <button onClick={() => removeUnit(u.key)} className="p-1 rounded text-muted hover:text-danger">
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                          <StackedInput label="Unit #" value={u.unitLabel} onChange={(v) => updateUnit(u.key, { unitLabel: v })} placeholder="101" />
+                          <ComboInput
+                            label="Product type"
+                            value={u.unitType}
+                            onChange={(v) => updateUnit(u.key, { unitType: v })}
+                            options={options?.productTypes || []}
+                            placeholder="Double Hung…"
+                          />
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </section>
 
-          {/* Global batch-save of camera photos across all units */}
-          {unsavedCameraPhotos.length > 0 && (
-            <button
-              onClick={() => setShowSavePrompt(true)}
-              className="w-full py-3 rounded-xl border border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-2 active:bg-amber-500/10"
-            >
-              <ImagePlus className="w-4 h-4" />
-              Save {unsavedCameraPhotos.length} photo{unsavedCameraPhotos.length !== 1 ? "s" : ""} to camera roll
-            </button>
-          )}
+              {/* 3. Spec changes per unit */}
+              {wuUnits.length > 0 && (
+                <section>
+                  <SectionLabel step={3}>Spec changes</SectionLabel>
+                  <p className="text-[11px] text-muted mt-0.5">Only for units whose specs are wrong — leave blank otherwise.</p>
+                  <div className="mt-2 space-y-3">
+                    {wuUnits.map((u) => (
+                      <div key={u.key} className="rounded-xl border border-border bg-surface/40 p-3">
+                        <div className="text-sm font-semibold mb-2">{unitTitle(u)}</div>
+                        <UnitSpecSection
+                          unit={unitObjFor(u)}
+                          specEntries={u.specEntries}
+                          onChange={(entries) => updateUnit(u.key, { specEntries: entries })}
+                          colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
+                          finishOptions={options?.intFinishes || []}
+                          speciesOptions={trimOptions?.species || []}
+                          stainOptions={trimOptions?.stains || []}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
 
-          {/* Add another unit (creation only) */}
-          {!isEditing && (
-            <AddUnitPicker
-              programmedUnits={unitOptions}
-              usedLabels={blocks.map((b) => b.unitLabel)}
-              onAddUnit={(label) => addUnitBlock({ isNewProduct: false, unitLabel: label })}
-              onAddProduct={() => addUnitBlock({ isNewProduct: true, unitLabel: "" })}
-            />
+              {/* 4. Work to complete (issues) */}
+              <section>
+                <SectionLabel step={4}>Work to complete</SectionLabel>
+                <div className="mt-2 space-y-3">
+                  {issues.map((it, idx) => (
+                    <IssueCard
+                      key={it.id}
+                      issue={it}
+                      index={idx}
+                      presets={presets}
+                      affectedUnits={wuUnits}
+                      unitTitle={unitTitle}
+                      canRemove={issues.length > 1}
+                      catalog={catalog}
+                      colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
+                      speciesOptions={trimOptions?.species || []}
+                      onUpdate={(patch) => updateIssue(it.id, patch)}
+                      onRemove={() => removeIssue(it.id)}
+                      onToggleUnit={(unitKey) => toggleIssueUnit(it.id, unitKey)}
+                      onOpenCamera={() => openCamera({ kind: "issue", issueId: it.id })}
+                      onUpload={(files) => addPhotosTo({ kind: "issue", issueId: it.id }, files)}
+                      onRemovePhoto={(pid) => removeIssuePhoto(it.id, pid)}
+                    />
+                  ))}
+                </div>
+                <button
+                  onClick={addIssue}
+                  className="w-full mt-3 py-3 rounded-xl border-2 border-dashed border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-4 h-4" /> Add another work item
+                </button>
+              </section>
+
+              {unsavedCameraPhotos.length > 0 && (
+                <button
+                  onClick={() => setShowSavePrompt(true)}
+                  className="w-full py-3 rounded-xl border border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-2 active:bg-amber-500/10"
+                >
+                  <ImagePlus className="w-4 h-4" />
+                  Save {unsavedCameraPhotos.length} photo{unsavedCameraPhotos.length !== 1 ? "s" : ""} to camera roll
+                </button>
+              )}
+
+              {buildInputs().length > 0 && (
+                <UnitSummary open={showSummary} onToggle={() => setShowSummary((v) => !v)} inputs={buildInputs()} />
+              )}
+            </>
           )}
 
 
@@ -1212,67 +1475,193 @@ function WorkNeeded({
   );
 }
 
-/* ── One unit block: its own specs / trim / photos / notes ── */
-function UnitBlockEditor({
-  block,
+
+/* ── Reusable: photos grid + take/upload ── */
+function PhotoSection({
+  photos,
+  onOpenCamera,
+  onUpload,
+  onRemove,
+}: {
+  photos: LocalPhoto[];
+  onOpenCamera: () => void;
+  onUpload: (files: File[]) => void;
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <div>
+      <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
+        <Camera className="w-3.5 h-3.5" /> Photos
+      </span>
+      {photos.length > 0 && (
+        <div className="grid grid-cols-3 gap-2 mt-2">
+          {photos.map((p) => (
+            <PhotoThumb key={p.id} blob={p.blob} onRemove={() => onRemove(p.id)} />
+          ))}
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2 mt-2">
+        <button
+          type="button"
+          onClick={onOpenCamera}
+          className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-border text-sm font-medium text-muted active:bg-surface"
+        >
+          <Camera className="w-4 h-4" /> Take photos
+        </button>
+        <label className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-border text-sm font-medium text-muted cursor-pointer active:bg-surface">
+          <ImagePlus className="w-4 h-4" /> Upload
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              if (files.length) onUpload(files);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+/* ── Reusable: a unit's spec corrections ── */
+function UnitSpecSection({
   unit,
-  productTypes,
-  catalog,
+  specEntries,
+  onChange,
   colorOptions,
   finishOptions,
   speciesOptions,
   stainOptions,
-  canRemove,
-  onChange,
-  onRemove,
-  onOpenCamera,
-  onUpload,
-  onRemovePhoto,
 }: {
-  block: UnitBlock;
   unit: MaterialUnit | null;
-  productTypes: string[];
-  catalog: CatalogPickItem[];
+  specEntries: SpecEntry[];
+  onChange: (entries: SpecEntry[]) => void;
   colorOptions: string[];
   finishOptions: string[];
   speciesOptions: string[];
   stainOptions: string[];
-  canRemove: boolean;
-  onChange: (patch: Partial<UnitBlock>) => void;
-  onRemove: () => void;
-  onOpenCamera: () => void;
-  onUpload: (files: File[]) => void;
-  onRemovePhoto: (photoId: string) => void;
 }) {
-  const specEntries = block.specEntries;
   function addSpec(label: string) {
     const clean = label.trim();
     if (!clean || specEntries.some((e) => e.label.toLowerCase() === clean.toLowerCase())) return;
     const kind = specKindOf(clean);
     const oldValue = unit ? readCurrentSpec(unit, clean) : "";
     const seed = kind === "measure" ? parseMeasure(oldValue) : { whole: "", frac: "0" };
-    onChange({
-      specEntries: [
-        ...specEntries,
-        { id: crypto.randomUUID(), label: clean, kind, oldValue, newValue: "", whole: seed.whole, frac: seed.frac },
-      ],
-    });
+    onChange([
+      ...specEntries,
+      { id: crypto.randomUUID(), label: clean, kind, oldValue, newValue: "", whole: seed.whole, frac: seed.frac },
+    ]);
   }
-  const updateSpec = (id: string, patch: Partial<SpecEntry>) =>
-    onChange({ specEntries: specEntries.map((e) => (e.id === id ? { ...e, ...patch } : e)) });
-  const removeSpec = (id: string) => onChange({ specEntries: specEntries.filter((e) => e.id !== id) });
-
-  const title = block.isNewProduct
-    ? block.unitLabel.trim()
-      ? `Unit ${block.unitLabel.trim()}`
-      : "New product"
-    : block.unitLabel || "Whole job";
-
   return (
-    <section className="rounded-2xl border border-border bg-surface/40 p-3 space-y-4">
+    <div>
+      <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
+        <Pencil className="w-3.5 h-3.5" /> Spec changes
+      </span>
+      <div className="mt-2 space-y-2">
+        {specEntries.map((entry) => (
+          <SpecEntryRow
+            key={entry.id}
+            entry={entry}
+            colorOptions={colorOptions}
+            finishOptions={finishOptions}
+            speciesOptions={speciesOptions}
+            stainOptions={stainOptions}
+            onChange={(patch) => onChange(specEntries.map((e) => (e.id === entry.id ? { ...e, ...patch } : e)))}
+            onRemove={() => onChange(specEntries.filter((e) => e.id !== entry.id))}
+          />
+        ))}
+      </div>
+      <SpecAdder onAdd={addSpec} unitLabels={unitSpecLabels(unit)} existing={specEntries.map((e) => e.label)} />
+    </div>
+  );
+}
+
+/* ── Reusable: trim / material list ── */
+function MaterialSection({
+  materials,
+  onChange,
+  catalog,
+  colorOptions,
+  speciesOptions,
+}: {
+  materials: WriteUpMaterialItem[];
+  onChange: (m: WriteUpMaterialItem[]) => void;
+  catalog: CatalogPickItem[];
+  colorOptions: string[];
+  speciesOptions: string[];
+}) {
+  return (
+    <div>
+      <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
+        <Package className="w-3.5 h-3.5" /> Trim / material
+      </span>
+      {materials.length > 0 && (
+        <div className="mt-2 space-y-2">
+          {materials.map((m, i) => (
+            <div key={i} className="flex items-center justify-between gap-2 px-3 py-3 rounded-xl bg-surface border border-border">
+              <div className="min-w-0 text-sm">
+                <span className="font-semibold">
+                  {m.qty} {m.unit} · {m.item}
+                </span>
+                <span className="text-muted">
+                  {[m.color, m.species, m.lengths, m.vendor].filter(Boolean).map((s) => ` · ${s}`).join("")}
+                </span>
+              </div>
+              <button onClick={() => onChange(materials.filter((_, j) => j !== i))} className="p-2 rounded-lg text-muted hover:text-danger shrink-0">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <MaterialAdder catalog={catalog} colorOptions={colorOptions} speciesOptions={speciesOptions} onAdd={(m) => onChange([...materials, m])} />
+    </div>
+  );
+}
+
+/* ── One work-to-complete item: description + which affected units it hits ── */
+function IssueCard({
+  issue,
+  index,
+  presets,
+  affectedUnits,
+  unitTitle,
+  canRemove,
+  catalog,
+  colorOptions,
+  speciesOptions,
+  onUpdate,
+  onRemove,
+  onToggleUnit,
+  onOpenCamera,
+  onUpload,
+  onRemovePhoto,
+}: {
+  issue: WuIssue;
+  index: number;
+  presets: string[];
+  affectedUnits: WuUnit[];
+  unitTitle: (u: WuUnit) => string;
+  canRemove: boolean;
+  catalog: CatalogPickItem[];
+  colorOptions: string[];
+  speciesOptions: string[];
+  onUpdate: (patch: Partial<WuIssue>) => void;
+  onRemove: () => void;
+  onToggleUnit: (unitKey: string) => void;
+  onOpenCamera: () => void;
+  onUpload: (files: File[]) => void;
+  onRemovePhoto: (id: string) => void;
+}) {
+  return (
+    <section className="rounded-2xl border border-border bg-surface/40 p-3 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-bold flex items-center gap-1.5">
-          <Package className="w-4 h-4 text-amber-600" /> {title}
+          <Wrench className="w-4 h-4 text-amber-600" /> Item {index + 1}
         </span>
         {canRemove && (
           <button onClick={onRemove} className="p-1.5 rounded-lg text-muted hover:text-danger">
@@ -1281,179 +1670,141 @@ function UnitBlockEditor({
         )}
       </div>
 
-      {block.isNewProduct && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 space-y-3">
-          <StackedInput label="Unit #" value={block.unitLabel} onChange={(v) => onChange({ unitLabel: v })} placeholder="101" />
-          <ComboInput
-            label="Product type"
-            value={block.unitType}
-            onChange={(v) => onChange({ unitType: v })}
-            options={productTypes}
-            placeholder="Start typing… Double Hung, Storm Door…"
-          />
-        </div>
-      )}
-
-      {/* Spec changes */}
       <div>
-        <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
-          <Pencil className="w-3.5 h-3.5" /> Spec changes
-        </span>
-        <div className="mt-2 space-y-2">
-          {specEntries.map((entry) => (
-            <SpecEntryRow
-              key={entry.id}
-              entry={entry}
-              colorOptions={colorOptions}
-              finishOptions={finishOptions}
-              speciesOptions={speciesOptions}
-              stainOptions={stainOptions}
-              onChange={(patch) => updateSpec(entry.id, patch)}
-              onRemove={() => removeSpec(entry.id)}
-            />
-          ))}
-        </div>
-        <SpecAdder onAdd={addSpec} unitLabels={unitSpecLabels(unit)} existing={specEntries.map((e) => e.label)} />
-      </div>
-
-      {/* Trim / material */}
-      <div>
-        <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
-          <Package className="w-3.5 h-3.5" /> Trim / material
-        </span>
-        {block.materialItems.length > 0 && (
-          <div className="mt-2 space-y-2">
-            {block.materialItems.map((m, i) => (
-              <div key={i} className="flex items-center justify-between gap-2 px-3 py-3 rounded-xl bg-surface border border-border">
-                <div className="min-w-0 text-sm">
-                  <span className="font-semibold">
-                    {m.qty} {m.unit} · {m.item}
-                  </span>
-                  <span className="text-muted">
-                    {[m.color, m.species, m.lengths, m.vendor].filter(Boolean).map((s) => ` · ${s}`).join("")}
-                  </span>
-                </div>
-                <button
-                  onClick={() => onChange({ materialItems: block.materialItems.filter((_, j) => j !== i) })}
-                  className="p-2 rounded-lg text-muted hover:text-danger shrink-0"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
+        <input
+          value={issue.label}
+          onChange={(e) => onUpdate({ label: e.target.value })}
+          placeholder="What needs done? e.g. Redo caulking, Reinstall unit…"
+          className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+        />
+        {!issue.label.trim() && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {presets.slice(0, 6).map((p) => (
+              <button
+                key={p}
+                onClick={() => onUpdate({ label: p })}
+                className="px-3 py-1.5 rounded-full text-sm font-medium border border-border bg-surface text-foreground hover:border-amber-400"
+              >
+                {p}
+              </button>
             ))}
           </div>
         )}
-        <MaterialAdder
-          catalog={catalog}
-          colorOptions={colorOptions}
-          speciesOptions={speciesOptions}
-          onAdd={(m) => onChange({ materialItems: [...block.materialItems, m] })}
+        <input
+          value={issue.note}
+          onChange={(e) => onUpdate({ note: e.target.value })}
+          placeholder="Optional detail…"
+          className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50"
         />
       </div>
 
-      {/* Photos */}
+      {/* Ordering notes — flag anything that needs ordered */}
       <div>
-        <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
-          <Camera className="w-3.5 h-3.5" /> Photos
-        </span>
-        {block.photos.length > 0 && (
-          <div className="grid grid-cols-3 gap-2 mt-2">
-            {block.photos.map((p) => (
-              <PhotoThumb key={p.id} blob={p.blob} onRemove={() => onRemovePhoto(p.id)} />
-            ))}
-          </div>
-        )}
-        <div className="grid grid-cols-2 gap-2 mt-2">
-          <button
-            type="button"
-            onClick={onOpenCamera}
-            className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-border text-sm font-medium text-muted cursor-pointer active:bg-surface"
+        <button
+          onClick={() => onUpdate({ needsOrdering: !issue.needsOrdering })}
+          className="flex items-center gap-2 text-sm"
+        >
+          <span
+            className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
+              issue.needsOrdering ? "bg-amber-500 border-amber-500 text-white" : "border-border text-transparent"
+            }`}
           >
-            <Camera className="w-4 h-4" /> Take photos
-          </button>
-          <label className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-border text-sm font-medium text-muted cursor-pointer active:bg-surface">
-            <ImagePlus className="w-4 h-4" /> Upload
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                const files = Array.from(e.target.files || []);
-                if (files.length) onUpload(files);
-                e.target.value = "";
-              }}
-            />
-          </label>
-        </div>
+            <Check className="w-3.5 h-3.5" />
+          </span>
+          Something needs ordered
+        </button>
+        {issue.needsOrdering && (
+          <textarea
+            value={issue.orderingNotes}
+            onChange={(e) => onUpdate({ orderingNotes: e.target.value })}
+            rows={2}
+            placeholder="What needs ordered…"
+            className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+          />
+        )}
       </div>
 
-      {/* Notes */}
+      {/* Affects which units */}
       <div>
-        <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
-          <StickyNote className="w-3.5 h-3.5" /> Note
-        </span>
-        <textarea
-          value={block.notes}
-          onChange={(e) => onChange({ notes: e.target.value })}
-          rows={2}
-          placeholder="Anything specific to this unit…"
-          className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-3 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-        />
+        <span className="text-xs font-bold text-muted uppercase tracking-wide">Affects</span>
+        {affectedUnits.length === 0 ? (
+          <p className="text-xs text-muted mt-1">
+            No units added yet — this counts as a whole-job item. Add units up top to attach them.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2 mt-2">
+            <UnitChip active={issue.unitKeys.length === 0} label="Whole job" onClick={() => onUpdate({ unitKeys: [] })} />
+            {affectedUnits.map((u) => (
+              <UnitChip key={u.key} active={issue.unitKeys.includes(u.key)} label={unitTitle(u)} onClick={() => onToggleUnit(u.key)} />
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* Materials for this item */}
+      <MaterialSection
+        materials={issue.materials}
+        onChange={(m) => onUpdate({ materials: m })}
+        catalog={catalog}
+        colorOptions={colorOptions}
+        speciesOptions={speciesOptions}
+      />
+
+      {/* Photos for this item */}
+      <PhotoSection photos={issue.photos} onOpenCamera={onOpenCamera} onUpload={onUpload} onRemove={onRemovePhoto} />
     </section>
   );
 }
 
-/* ── Add-unit picker: pick a programmed unit, whole job, or a new product ── */
-function AddUnitPicker({
-  programmedUnits,
-  usedLabels,
-  onAddUnit,
-  onAddProduct,
+/* ── Review-by-unit summary (from the fanned-out inputs) ── */
+function UnitSummary({
+  open,
+  onToggle,
+  inputs,
 }: {
-  programmedUnits: ProgrammedUnit[];
-  usedLabels: string[];
-  onAddUnit: (label: string) => void;
-  onAddProduct: () => void;
+  open: boolean;
+  onToggle: () => void;
+  inputs: WriteUpEntryInput[];
 }) {
-  const [open, setOpen] = useState(false);
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="w-full py-3 rounded-xl border-2 border-dashed border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-2"
-      >
-        <Plus className="w-4 h-4" />
-        Add a unit
-      </button>
-    );
-  }
   return (
-    <div className="rounded-xl border border-border p-3">
-      <p className="text-xs text-muted mb-2">Add a unit this work applies to:</p>
-      <div className="flex flex-wrap gap-2">
-        <UnitChip active={false} label="Whole job" onClick={() => { onAddUnit(""); setOpen(false); }} />
-        {programmedUnits.map((o) => (
-          <UnitChip
-            key={o.label}
-            active={false}
-            added={usedLabels.includes(o.label)}
-            label={o.label}
-            onClick={() => { onAddUnit(o.label); setOpen(false); }}
-          />
-        ))}
-        <button
-          onClick={() => { onAddProduct(); setOpen(false); }}
-          className="px-3 py-2.5 rounded-lg text-sm font-medium border border-dashed border-amber-500/50 text-amber-600 flex items-center gap-1"
-        >
-          <Plus className="w-4 h-4" />
-          Add product
-        </button>
-      </div>
-      <button onClick={() => setOpen(false)} className="mt-2 text-xs text-muted">
-        Cancel
+    <div className="rounded-xl border border-border">
+      <button onClick={onToggle} className="w-full flex items-center justify-between px-3 py-2.5 text-sm font-semibold">
+        <span>Review by unit ({inputs.length})</span>
+        <span className="text-xs text-muted">{open ? "Hide" : "Show"}</span>
       </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          {inputs.map((inp, i) => (
+            <div key={i} className="rounded-lg bg-surface border border-border p-2.5">
+              <div className="text-sm font-semibold">
+                {inp.unitLabel || "Whole job"}
+                {inp.newProduct?.type ? ` · ${inp.newProduct.type}` : ""}
+              </div>
+              {inp.lineItems.length > 0 && (
+                <ul className="mt-1 text-xs space-y-0.5">
+                  {inp.lineItems.map((li, j) => (
+                    <li key={j}>
+                      • {li.label}
+                      {li.notes ? ` — ${li.notes}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {inp.specChanges.length > 0 && (
+                <div className="mt-1 text-xs text-muted">
+                  {inp.specChanges.map((c, j) => (
+                    <div key={j}>
+                      {c.field}: {c.oldValue || "—"} → {c.newValue}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {inp.materialItems.length > 0 && <div className="mt-1 text-xs text-muted">{inp.materialItems.length} material line(s)</div>}
+              {inp.photoFiles.length > 0 && <div className="mt-1 text-xs text-muted">{inp.photoFiles.length} photo(s)</div>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

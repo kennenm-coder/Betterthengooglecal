@@ -36,6 +36,15 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
+  // Dev harness pages (/dev-*) skip the auth redirect. Safe in production: the
+  // page component itself returns null unless NODE_ENV === "development", so on
+  // Vercel these routes render a blank page with no data. (NODE_ENV is not
+  // reliably "development" inside the Next 16 middleware runtime, so we can't
+  // gate here — we gate in the page component instead.)
+  if (pathname.startsWith("/dev-")) {
+    return supabaseResponse;
+  }
+
   if (
     !user &&
     !pathname.startsWith("/login") &&
