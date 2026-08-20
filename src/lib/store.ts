@@ -550,6 +550,17 @@ export async function fetchMaterialJobs(): Promise<Map<string, any>> {
 export async function fetchJobsSignature(): Promise<string> {
   const supabase = getSupabase();
   if (!supabase) return "";
+  // Cheap path: one tiny scalar ("<count>:<newest savedAt>") via a DB function
+  // (migration 012). Detects any add/edit/delete without pulling every row.
+  const { data, error } = await supabase.rpc("jobs_signature");
+  if (!error && typeof data === "string") return data;
+  // Fallback until migration 012 is applied: the old per-row scan still works.
+  return fetchJobsSignatureFallback();
+}
+
+async function fetchJobsSignatureFallback(): Promise<string> {
+  const supabase = getSupabase();
+  if (!supabase) return "";
   const { data, error } = await supabase
     .from("jobs")
     .select("id, savedAt:data->>savedAt, submitted:data->>submitted");
