@@ -116,8 +116,8 @@ function JobTile({
   return (
     <button
       onClick={onTap}
-      className={`w-full text-left rounded-md px-2.5 py-1.5 text-white text-sm transition-all active:scale-[0.98] ${
-        matched ? "bg-install" : "bg-amber-600"
+      className={`w-full text-left rounded-md px-2.5 py-1.5 text-sm transition-all active:scale-[0.98] ${
+        matched ? "bg-install text-install-text" : "bg-amber-600 text-white"
       }`}
     >
       <div className="font-medium truncate">

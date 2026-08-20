@@ -136,8 +136,20 @@ export interface WriteUpLineItem {
   kind: "preset" | "custom";
   label: string;
   notes?: string;
-  /** Marked done during an edit. Closing a write-up completes all items. */
+  /** Field-installed. Distinct from `reviewed` — this means the work is
+   *  physically done. Closing a write-up completes all items. */
   completed?: boolean;
+  /** Office-reviewed: someone checked this item and uploaded it to the system.
+   *  When every item is reviewed, the write-up moves In Review → Open. */
+  reviewed?: boolean;
+  /** Who reviewed it + when (shown in the Write-Ups tab, not the PDF). */
+  reviewedBy?: string;
+  reviewedByName?: string;
+  reviewedAt?: string;
+  /** Stable 1-based number of the source issue within its write-up submission.
+   *  Shared across every unit this issue fans out to, so the doc/PDF can show
+   *  one number per work item. Absent on write-ups created before numbering. */
+  seq?: number;
 }
 
 /** A field correction to a unit's product spec, shown as an overlay in the app. */
@@ -186,10 +198,18 @@ export interface WriteUpNewProduct {
   frame: string;
 }
 
-export type WriteUpStatus = "open" | "in_review" | "closed";
+// Lifecycle order: draft → in_review → open → closed.
+//  • draft     — saved but not submitted (read-only to everyone until submitted)
+//  • in_review — submitted; office reviews each work item (marks it reviewed)
+//  • open       — all work items reviewed; an approved work order for the field
+//  • closed     — work installed and the write-up marked closed
+export type WriteUpStatus = "draft" | "in_review" | "open" | "closed";
 
 export interface FieldWorkOrder {
   id: string;
+  /** Shared id for all per-unit rows created in the same submission (null on
+   *  rows created before batching — grouped by created time as a fallback). */
+  batchId: string | null;
   orderNumber: string;
   workOrderNumber: string;
   jobId: string | null;

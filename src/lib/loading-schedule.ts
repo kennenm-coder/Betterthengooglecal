@@ -25,9 +25,16 @@ export const SLOT_TIMES = {
 
 export type LoadingShift = "early" | "regular";
 
+/** Appointment types that go on the loading sheet — installers run JIPs
+ *  (services) the same as installs, so both are included. */
+export const LOADING_TYPES = ["Install", "Service"];
+
 export interface LoadingRow {
-  /** Work order id — stable key for toggling. */
+  /** Work order id — stable key for toggling/removing. */
   id: string;
+  /** Work order type ("Install" | "Service") — shown so a service that
+   *  shouldn't be loaded can be spotted and removed. */
+  type: string;
   /** Crew / installer name. */
   crew: string;
   /** Customer / job name. */
@@ -91,18 +98,19 @@ export function extractCity(address: string): string {
  * the top MAX_EARLY_BIRD (that have coordinates) default to the early bird slot.
  */
 export function buildLoadingRows(orders: WorkOrder[], date: Date): LoadingRow[] {
-  const installs = getOrdersForDay(orders, date).filter(
-    (o) => o.workOrderType === "Install"
+  const appts = getOrdersForDay(orders, date).filter((o) =>
+    LOADING_TYPES.includes(o.workOrderType)
   );
 
-  const rows: LoadingRow[] = installs.map((o) => {
+  const rows: LoadingRow[] = appts.map((o) => {
     const hasCoords = o.latitude != null && o.longitude != null;
     const distanceMi = hasCoords
       ? haversineMiles(HOME_OFFICE, { lat: o.latitude as number, lng: o.longitude as number })
       : null;
     return {
       id: o.id,
-      crew: o.installer || o.primaryResource || "Unassigned",
+      type: o.workOrderType,
+      crew: o.installer || o.primaryResource || o.serviceRep || "Unassigned",
       job: o.customerName || "—",
       location: extractCity(o.address),
       distanceMi,

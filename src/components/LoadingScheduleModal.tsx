@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { addDays, format } from "date-fns";
-import { X, Download, Truck, Sunrise, Info } from "lucide-react";
+import { X, Download, Truck, Sunrise, Info, Trash2 } from "lucide-react";
 import { useData } from "./DataProvider";
 import {
   LoadingRow,
@@ -55,6 +55,10 @@ export default function LoadingScheduleModal({ onClose }: { onClose: () => void 
     );
   }
 
+  function removeRow(id: string) {
+    setRows((prev) => (prev ? prev.filter((r) => r.id !== id) : prev));
+  }
+
   const ordered = rows ? sortedForRender(rows) : [];
 
   return (
@@ -101,7 +105,7 @@ export default function LoadingScheduleModal({ onClose }: { onClose: () => void 
 
           {rows && rows.length === 0 && (
             <p className="text-sm text-muted text-center py-6">
-              No installs scheduled for {format(date, "EEEE, MMM d")}.
+              No installs or services scheduled for {format(date, "EEEE, MMM d")}.
             </p>
           )}
 
@@ -142,6 +146,11 @@ export default function LoadingScheduleModal({ onClose }: { onClose: () => void 
                         <div className="flex items-center gap-1.5">
                           {early && <Sunrise className="w-3.5 h-3.5 text-amber-600 shrink-0" />}
                           <span className="text-sm font-medium truncate">{r.crew}</span>
+                          {r.type === "Service" && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-service/15 text-service font-semibold shrink-0">
+                              Service
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-muted truncate">
                           {r.job}
@@ -172,6 +181,13 @@ export default function LoadingScheduleModal({ onClose }: { onClose: () => void 
                           Regular
                         </button>
                       </div>
+                      <button
+                        onClick={() => removeRow(r.id)}
+                        className="p-1.5 rounded-lg text-muted hover:text-danger hover:bg-danger/10 transition-colors shrink-0"
+                        title="Remove from schedule"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   );
                 })}

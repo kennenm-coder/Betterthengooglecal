@@ -3,6 +3,7 @@
 // are dynamically imported so they only load when the user hits Download.
 
 import type { FieldWorkOrder } from "./types";
+import { groupWriteUpSections, padSeq, type SectionMaterialLine } from "./writeup-sections";
 
 export interface WriteUpExportInput {
   orderNumber: string;
@@ -18,6 +19,7 @@ const GOLD: [number, number, number] = [234, 179, 8];
 const DARK: [number, number, number] = [26, 26, 26];
 const MUTED: [number, number, number] = [110, 110, 110];
 const BLACK: [number, number, number] = [17, 17, 17];
+const GREEN: [number, number, number] = [21, 128, 61];
 
 function slug(s: string): string {
   return (s || "").replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "file";
@@ -113,9 +115,10 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     M,
     { size: 10, color: MUTED }
   );
+  const sections = groupWriteUpSections(input.writeUps);
   const openCount = input.writeUps.filter((w) => w.status !== "closed").length;
   line(
-    `${openCount} open issue${openCount !== 1 ? "s" : ""} · ${input.writeUps.length} write-up${input.writeUps.length !== 1 ? "s" : ""}`,
+    `${openCount} open issue${openCount !== 1 ? "s" : ""} · ${sections.length} write-up${sections.length !== 1 ? "s" : ""}`,
     M,
     { size: 9, color: MUTED, gap: 14 }
   );
@@ -124,110 +127,18 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
   doc.line(M, y, M + contentW, y);
   y += 16;
 
-  // ── Per write-up ──
-  for (const w of input.writeUps) {
-    ensure(40);
-    setFill(DARK);
-    doc.rect(M, y, contentW, 18, "F");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
-    setColor([255, 255, 255]);
-    doc.text((w.unitLabel || "Whole job").toUpperCase(), M + 6, y + 12.5);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    const meta = `${w.createdByName || w.createdBy || ""} · ${new Date(w.createdAt).toLocaleDateString()}${w.status === "closed" ? " · CLOSED" : ""}`;
-    doc.text(meta, M + contentW - 6, y + 12.5, { align: "right" });
-    y += 26;
-
-    if (w.newProduct) {
-      line("ADDED PRODUCT (not in original order)", M, { size: 8, bold: true, color: MUTED, gap: 12 });
-      line(`${w.newProduct.type || "—"}${w.newProduct.size ? ` · ${w.newProduct.size}` : ""}`, M, { size: 10, bold: true });
-    }
-
-    if (w.lineItems.length > 0) {
-      line("WORK TO COMPLETE", M, { size: 8, bold: true, color: MUTED, gap: 12 });
-      for (const li of w.lineItems) {
-        const mark = li.completed ? "[x]" : "[ ]";
-        wrapped(`${mark}  ${li.label}${li.notes ? ` — ${li.notes}` : ""}`, M + 4, contentW - 4, { size: 10 });
-      }
-    }
-
-    if (w.specChanges.length > 0) {
-      line("SPEC CORRECTIONS", M, { size: 8, bold: true, color: MUTED, gap: 12 });
-      for (const c of w.specChanges) {
-        wrapped(`${c.field}:  ${c.oldValue || "—"}  →  ${c.newValue}`, M + 4, contentW - 4, { size: 10 });
-      }
-    }
-
-    if (w.notes) {
-      line("NOTES", M, { size: 8, bold: true, color: MUTED, gap: 12 });
-      wrapped(w.notes, M + 4, contentW - 4, { size: 10 });
-    }
-
-    const photoThumbs = w.photos
-      .map((p) => thumbs.get(p.path))
-      .filter((t): t is string => !!t);
-    if (photoThumbs.length > 0) {
-      line(`PHOTOS (${w.photos.length}) — full-resolution in the zip`, M, { size: 8, bold: true, color: MUTED, gap: 12 });
-      const cols = 4;
-      const gap = 6;
-      const cw = (contentW - gap * (cols - 1)) / cols;
-      let col = 0;
-      let rowTop = y;
-      let rowH = 0;
-      for (let i = 0; i < photoThumbs.length; i++) {
-        if (col === 0) {
-          ensure(cw + gap); // reserve a row (thumbnails are capped near square)
-          rowTop = y;
-          rowH = 0;
-        }
-        const data = photoThumbs[i];
-        let iw = cw;
-        let ih = cw;
-        try {
-          const props = doc.getImageProperties(data);
-          const aspect = props.height / props.width;
-          ih = cw * aspect;
-          if (ih > cw) {
-            ih = cw;
-            iw = cw / aspect;
-          }
-        } catch {
-          /* fall back to square */
-        }
-        const x = M + col * (cw + gap);
-        try {
-          doc.addImage(data, "JPEG", x, rowTop, iw, ih);
-        } catch {
-          /* skip an image jsPDF can't decode */
-        }
-        rowH = Math.max(rowH, ih);
-        col++;
-        if (col === cols || i === photoThumbs.length - 1) {
-          col = 0;
-          y = rowTop + rowH + gap;
-        }
-      }
-    } else if (w.photos.length > 0) {
-      line(`Photos: ${w.photos.length} (included in the zip)`, M, { size: 9, color: MUTED });
-    }
-    y += 8;
-  }
-
-  // ── Combined material list ──
-  const materials = input.writeUps.flatMap((w) => w.materialItems.map((m) => ({ ...m, unitLabel: w.unitLabel })));
-  if (materials.length > 0) {
+  // Draws one material table (its own QTY total) for a write-up section.
+  function materialTable(materials: SectionMaterialLine[], totalPcs: number) {
     ensure(30);
     const cols = [
-      { label: "QTY", w: 48 },
-      { label: "Unit", w: 48 },
-      { label: "Item", w: 130 },
-      { label: "Color", w: 78 },
-      { label: "Species", w: 66 },
-      { label: "Lengths", w: 92 },
-      { label: "Vendor", w: contentW - 48 - 48 - 130 - 78 - 66 - 92 },
+      { label: `QTY: ${totalPcs}`, w: 56 },
+      { label: "Unit", w: 46 },
+      { label: "Item", w: 126 },
+      { label: "Color", w: 74 },
+      { label: "Species", w: 62 },
+      { label: "Lengths", w: 88 },
+      { label: "Vendor", w: contentW - 56 - 46 - 126 - 74 - 62 - 88 },
     ];
-    // header row
     setFill(DARK);
     doc.rect(M, y, contentW, 16, "F");
     doc.setFont("helvetica", "bold");
@@ -243,15 +154,7 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     doc.setFontSize(8.5);
     for (const m of materials) {
       ensure(14);
-      const cells = [
-        `${m.qty} ${m.unit}`,
-        m.unitLabel || "—",
-        m.item || "—",
-        m.color || "—",
-        m.species || "—",
-        m.lengths || "—",
-        m.vendor || "—",
-      ];
+      const cells = [`${m.qty} ${m.unit}`, m.unitLabel || "—", m.item || "—", m.color || "—", m.species || "—", m.lengths || "—", m.vendor || "—"];
       x = M + 4;
       for (let i = 0; i < cols.length; i++) {
         setColor(i === 0 ? BLACK : MUTED);
@@ -265,6 +168,114 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
       doc.line(M, y, M + contentW, y);
       y += 2;
     }
+  }
+
+  // Draws a thumbnail grid for a section's photos.
+  function photoGrid(photos: FieldWorkOrder["photos"]) {
+    const photoThumbs = photos.map((p) => thumbs.get(p.path)).filter((t): t is string => !!t);
+    if (photoThumbs.length === 0) {
+      if (photos.length > 0) line(`Photos: ${photos.length} (included in the zip)`, M, { size: 9, color: MUTED });
+      return;
+    }
+    line(`PHOTOS (${photos.length}) — full-resolution in the zip`, M, { size: 8, bold: true, color: MUTED, gap: 12 });
+    const cols = 4;
+    const gap = 6;
+    const cw = (contentW - gap * (cols - 1)) / cols;
+    let col = 0;
+    let rowTop = y;
+    let rowH = 0;
+    for (let i = 0; i < photoThumbs.length; i++) {
+      if (col === 0) {
+        ensure(cw + gap);
+        rowTop = y;
+        rowH = 0;
+      }
+      const data = photoThumbs[i];
+      let iw = cw;
+      let ih = cw;
+      try {
+        const props = doc.getImageProperties(data);
+        const aspect = props.height / props.width;
+        ih = cw * aspect;
+        if (ih > cw) {
+          ih = cw;
+          iw = cw / aspect;
+        }
+      } catch {
+        /* fall back to square */
+      }
+      const x = M + col * (cw + gap);
+      try {
+        doc.addImage(data, "JPEG", x, rowTop, iw, ih);
+      } catch {
+        /* skip an image jsPDF can't decode */
+      }
+      rowH = Math.max(rowH, ih);
+      col++;
+      if (col === cols || i === photoThumbs.length - 1) {
+        col = 0;
+        y = rowTop + rowH + gap;
+      }
+    }
+  }
+
+  // ── One block per write-up submission ──
+  for (const sec of sections) {
+    ensure(40);
+    setFill(DARK);
+    doc.rect(M, y, contentW, 18, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    setColor([255, 255, 255]);
+    doc.text(`WRITE-UP ${sec.index} OF ${sections.length}`, M + 6, y + 12.5);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    const edited = sec.updatedByName ? ` · edited by ${sec.updatedByName}` : "";
+    const meta = `${sec.createdByName} · ${new Date(sec.createdAt).toLocaleDateString()}${edited}${sec.status === "closed" ? " · CLOSED" : ""}`;
+    doc.text(meta, M + contentW - 6, y + 12.5, { align: "right" });
+    y += 26;
+
+    for (const np of sec.newProducts) {
+      line(`ADDED PRODUCT (not in original order)${np.unitLabel ? ` · ${np.unitLabel}` : ""}`, M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      line(`${np.product.type || "—"}${np.product.size ? ` · ${np.product.size}` : ""}`, M, { size: 10, bold: true });
+    }
+
+    if (sec.outstanding.length > 0 || sec.completed.length > 0) {
+      line("WORK TO COMPLETE", M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      for (const it of sec.outstanding) {
+        const units = it.units.length ? `  —  ${it.units.join(", ")}` : "";
+        const note = it.notes ? ` (${it.notes})` : "";
+        wrapped(`${padSeq(it.seq)}   ${it.label}${units}${note}`, M + 4, contentW - 4, { size: 10 });
+      }
+      if (sec.completed.length > 0) {
+        line("COMPLETED", M, { size: 8, bold: true, color: GREEN, gap: 12 });
+        for (const it of sec.completed) {
+          const units = it.units.length ? `  —  ${it.units.join(", ")}` : "";
+          wrapped(`${padSeq(it.seq)}   [x] ${it.label}${units}`, M + 4, contentW - 4, { size: 10, color: MUTED });
+        }
+      }
+    }
+
+    if (sec.specChanges.length > 0) {
+      line("SPEC CORRECTIONS", M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      for (const c of sec.specChanges) {
+        const u = c.unitLabel ? `${c.unitLabel} · ` : "";
+        wrapped(`${u}${c.field}:  ${c.oldValue || "—"}  →  ${c.newValue}`, M + 4, contentW - 4, { size: 10 });
+      }
+    }
+
+    for (const n of sec.notes) {
+      line(`NOTES${n.unitLabel ? ` · ${n.unitLabel}` : ""}`, M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      wrapped(n.text, M + 4, contentW - 4, { size: 10 });
+    }
+
+    photoGrid(sec.photos);
+
+    if (sec.materials.length > 0) {
+      y += 4;
+      materialTable(sec.materials, sec.totalPcs);
+    }
+    y += 12;
   }
 
   // ── Footer page numbers ──

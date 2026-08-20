@@ -1,7 +1,7 @@
 "use client";
 
 import { WorkOrder, TimeOffRequest } from "@/lib/types";
-import { getOrdersForWeek, typeColor, formatTime } from "@/lib/calendar-utils";
+import { getOrdersForWeek, typeColor, typeTileText, formatTime } from "@/lib/calendar-utils";
 import { lastFirst, crewName, sortByStartTime, extractCity } from "@/lib/format-utils";
 import { format, startOfWeek, addDays, isToday } from "date-fns";
 import { useMemo } from "react";
@@ -102,9 +102,9 @@ export default function WeekView({
                     <button
                       key={order.id}
                       onClick={() => onSelectOrder(order)}
-                      className={`w-full text-left rounded-md px-3 py-2 text-white text-sm transition-all active:scale-[0.98] ${typeColor(
+                      className={`w-full text-left rounded-md px-3 py-2 text-sm transition-all active:scale-[0.98] ${typeColor(
                         order.workOrderType
-                      )}`}
+                      )} ${typeTileText(order.workOrderType)}`}
                     >
                       <div className="font-medium truncate">
                         {lastFirst(order.customerName)} - {order.orderNumber}

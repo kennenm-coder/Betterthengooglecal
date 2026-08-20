@@ -1,7 +1,7 @@
 "use client";
 
 import { WorkOrder, MaterialJobData, MaterialUnit } from "@/lib/types";
-import { formatTime, formatDateShort, typeColor } from "@/lib/calendar-utils";
+import { formatTime, formatDateShort, typeColor, typeTileText } from "@/lib/calendar-utils";
 import CopyButton from "./CopyButton";
 import {
   Phone,
@@ -107,6 +107,7 @@ export default function JobCard({
   const fieldWorker = canDoFieldWork(role);
   const router = useRouter();
   const typeBg = typeColor(order.workOrderType);
+  const typeText = typeTileText(order.workOrderType);
   const multiDay = isMultiDay(order);
   const mat = order.materialJob;
 
@@ -173,7 +174,7 @@ export default function JobCard({
               </div>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                 <span
-                  className={`text-xs font-medium px-2 py-0.5 rounded-full text-white ${typeBg}`}
+                  className={`text-xs font-medium px-2 py-0.5 rounded-full ${typeBg} ${typeText}`}
                 >
                   {order.workOrderType}
                 </span>

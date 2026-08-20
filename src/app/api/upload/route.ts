@@ -343,7 +343,27 @@ export async function POST(request: NextRequest) {
     // overwrites the old values.
     const existingRows = await fetchExistingOrders(orders.map((o) => o.id));
     const addedOrders = orders.filter((o) => !existingRows.has(o.id));
-    const updatedOrders = orders.filter((o) => existingRows.has(o.id));
+
+    // Only surface updated orders whose SCHEDULED DATE actually changed. Every
+    // import re-uploads the full dataset, so without this filter every existing
+    // order counts as "updated" — thousands of no-op rows. We keep only the
+    // orders whose Scheduled Start/End moved, and only the date changes on them.
+    const rescheduledOrders = orders
+      .filter((o) => existingRows.has(o.id))
+      .map((o) => {
+        const dateChanges = computeOrderChanges(existingRows.get(o.id)!, o).filter(
+          (c) => c.isDate
+        );
+        return {
+          workOrderNumber: o.workOrderNumber,
+          customerName: o.customerName,
+          scheduledStart: o.scheduledStart,
+          action: "updated" as const,
+          changes: dateChanges,
+        };
+      })
+      .filter((o) => o.changes.length > 0)
+      .sort((a, b) => b.changes.length - a.changes.length);
 
     const upserted = await upsertToSupabase(orders);
 
@@ -353,9 +373,9 @@ export async function POST(request: NextRequest) {
       await writeImportLog({
         format,
         source,
-        total_count: orders.length,
+        total_count: addedOrders.length + rescheduledOrders.length,
         added_count: addedOrders.length,
-        updated_count: updatedOrders.length,
+        updated_count: rescheduledOrders.length,
         orders: [
           ...addedOrders.map((o) => ({
             workOrderNumber: o.workOrderNumber,
@@ -363,17 +383,7 @@ export async function POST(request: NextRequest) {
             scheduledStart: o.scheduledStart,
             action: "added" as const,
           })),
-          // Updated orders that actually changed a tracked field come first, so
-          // the (capped) stored list keeps the entries worth reading.
-          ...updatedOrders
-            .map((o) => ({
-              workOrderNumber: o.workOrderNumber,
-              customerName: o.customerName,
-              scheduledStart: o.scheduledStart,
-              action: "updated" as const,
-              changes: computeOrderChanges(existingRows.get(o.id)!, o),
-            }))
-            .sort((a, b) => b.changes.length - a.changes.length),
+          ...rescheduledOrders,
         ],
       });
     } catch (logErr) {

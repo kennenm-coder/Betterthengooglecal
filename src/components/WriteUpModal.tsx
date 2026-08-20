@@ -647,13 +647,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       });
     }
     // Issues → tasks (+ their own materials/photos) onto their affected units,
-    // or the whole-job bucket.
-    for (const it of validIssues) {
+    // or the whole-job bucket. Each issue gets a stable 1-based number (seq)
+    // shared across every unit it fans out to, so the doc/PDF number it once.
+    validIssues.forEach((it, issueIdx) => {
       const noteBits = [
         it.note.trim(),
         it.needsOrdering && it.orderingNotes.trim() ? `NEEDS ORDERED: ${it.orderingNotes.trim()}` : it.needsOrdering ? "NEEDS ORDERED" : "",
       ].filter(Boolean);
-      const task: WriteUpLineItem = { kind: "custom", label: it.label.trim(), notes: noteBits.join(" · ") || undefined };
+      const task: WriteUpLineItem = { kind: "custom", label: it.label.trim(), notes: noteBits.join(" · ") || undefined, seq: issueIdx + 1 };
       const keys = it.unitKeys.filter((k) => byKey.has(k));
       const targets = keys.length === 0 ? [whole()] : keys.map((k) => byKey.get(k)!);
       const partToMaterial = (p: PartItem): WriteUpMaterialItem => ({
@@ -684,7 +685,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
           a.photos.push(...it.photos.map((p) => p.blob));
         }
       });
-    }
+    });
     // Background + notes go on the whole-job row.
     const noteParts = [
       background.trim(),
@@ -901,9 +902,13 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     onClose();
   }
 
-  async function submitWriteUp(sendEmail: boolean) {
-    if (validIssues.length === 0) {
+  async function submitWriteUp(sendEmail: boolean, startStatus: WriteUpStatus = "in_review") {
+    if (startStatus !== "draft" && validIssues.length === 0) {
       setError("Add at least one issue with a description and a scope.");
+      return;
+    }
+    if (startStatus === "draft" && !createHasContent) {
+      setError("Nothing to save yet — add some detail first.");
       return;
     }
 
@@ -917,6 +922,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       address: order.address,
       createdBy: user?.email || "",
       createdByName: user?.email?.split("@")[0] || "",
+      status: startStatus,
     };
     const inputs: WriteUpEntryInput[] = buildInputs();
 
@@ -1008,7 +1014,12 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       {showCamera && (
         <CameraCapture
           onDone={(files) => {
-            if (files.length) addPhotosTo(photoTarget, files, true);
+            if (files.length) {
+              addPhotosTo(photoTarget, files, true);
+              // Back on the write-up screen, ask whether to also save the shots
+              // to the camera roll (they're already attached to the write-up).
+              setShowSavePrompt(true);
+            }
           }}
           onClose={() => {
             setShowCamera(false);
@@ -1065,15 +1076,15 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             <section>
               <SectionLabel>Status</SectionLabel>
               <div className="flex gap-2 mt-2">
-                {(["open", "in_review", "closed"] as WriteUpStatus[]).map((s) => (
+                {(["draft", "in_review", "open", "closed"] as WriteUpStatus[]).map((s) => (
                   <button
                     key={s}
                     onClick={() => changeStatus(s)}
-                    className={`flex-1 py-2.5 rounded-lg text-sm font-medium border transition-colors ${
+                    className={`flex-1 py-2.5 rounded-lg text-xs font-medium border transition-colors ${
                       status === s ? "bg-amber-500 border-amber-500 text-white" : "border-border text-muted"
                     }`}
                   >
-                    {s === "in_review" ? "In review" : s === "closed" ? "Closed" : "Open"}
+                    {{ draft: "Draft", in_review: "In review", open: "Open", closed: "Closed" }[s]}
                   </button>
                 ))}
               </div>
@@ -1363,34 +1374,34 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             <>
               <div className="flex gap-2">
                 <button
-                  onClick={() => submitWriteUp(false)}
-                  disabled={submitting || totalUnits === 0}
+                  onClick={() => submitWriteUp(false, "draft")}
+                  disabled={submitting || !editorHasContent}
                   className="shrink-0 px-4 py-4 rounded-xl border-2 border-amber-500 text-amber-600 font-semibold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.99] transition-transform"
-                  title="Save the write-up without opening email"
+                  title="Save as a draft — not yet submitted for review"
                 >
                   <Check className="w-5 h-5" />
-                  Save
+                  Save draft
                 </button>
                 <button
-                  onClick={() => submitWriteUp(true)}
+                  onClick={() => submitWriteUp(true, "in_review")}
                   disabled={submitting || totalUnits === 0}
                   className="flex-1 py-4 rounded-xl bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.99] transition-transform"
                 >
                   {submitting ? (
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
-                      {progress ? `Uploading ${progress.done}/${progress.total}…` : "Saving…"}
+                      {progress ? `Uploading ${progress.done}/${progress.total}…` : "Submitting…"}
                     </>
                   ) : (
                     <>
                       <Send className="w-5 h-5" />
-                      Save &amp; Email ({totalUnits})
+                      Submit &amp; Email ({totalUnits})
                     </>
                   )}
                 </button>
               </div>
               <p className="text-[11px] text-muted text-center mt-1.5">
-                Auto-saves a draft as you go · <strong>Save</strong> posts it to Write-Ups.
+                <strong>Save draft</strong> keeps it as a draft · <strong>Submit</strong> sends it for review.
               </p>
             </>
           )}

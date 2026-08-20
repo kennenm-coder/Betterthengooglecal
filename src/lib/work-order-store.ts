@@ -412,6 +412,7 @@ export async function getSignedPhotoUrl(path: string, expiresIn = 604800): Promi
 
 interface FieldWorkOrderRow {
   id: string;
+  batch_id: string | null;
   order_number: string;
   work_order_number: string | null;
   job_id: string | null;
@@ -438,6 +439,7 @@ interface FieldWorkOrderRow {
 function rowToWriteUp(row: FieldWorkOrderRow): FieldWorkOrder {
   return {
     id: row.id,
+    batchId: row.batch_id || null,
     orderNumber: row.order_number || "",
     workOrderNumber: row.work_order_number || "",
     jobId: row.job_id,
@@ -479,6 +481,10 @@ export interface NewWriteUp {
   notes: string;
   createdBy?: string;
   createdByName?: string;
+  /** Shared id tying this row to the other units in the same submission. */
+  batchId?: string | null;
+  /** Starting status — "draft" (saved) or "in_review" (submitted). */
+  status?: WriteUpStatus;
 }
 
 export interface CreateWriteUpResult {
@@ -496,6 +502,7 @@ export async function createWriteUp(input: NewWriteUp): Promise<CreateWriteUpRes
     .from("field_work_orders")
     .insert({
       order_number: input.orderNumber,
+      batch_id: input.batchId || null,
       work_order_number: input.workOrderNumber || null,
       job_id: input.jobId || null,
       customer_name: input.customerName || null,
@@ -508,7 +515,7 @@ export async function createWriteUp(input: NewWriteUp): Promise<CreateWriteUpRes
       photo_count: input.photos.length,
       new_product: input.newProduct || null,
       notes: input.notes || "",
-      status: "open",
+      status: input.status || "in_review",
       created_by: input.createdBy || null,
       created_by_name: input.createdByName || null,
     })
@@ -546,6 +553,8 @@ export interface SubmitContext {
   address?: string;
   createdBy?: string;
   createdByName?: string;
+  /** "draft" (Save draft) or "in_review" (Submit). Defaults to in_review. */
+  status?: WriteUpStatus;
 }
 
 export interface SubmitBatchResult {
@@ -565,6 +574,9 @@ export async function submitWriteUpBatch(
   onProgress?: (done: number, total: number) => void
 ): Promise<SubmitBatchResult> {
   const created: FieldWorkOrder[] = [];
+  // One shared id for every row in this submission, so the doc/PDF can render
+  // it as a single write-up section separate from other write-ups on the job.
+  const batchId = crypto.randomUUID();
   let done = 0;
   for (const e of entries) {
     const photos: WriteUpPhoto[] = [];
@@ -578,6 +590,7 @@ export async function submitWriteUpBatch(
     }
     const { writeUp, error } = await createWriteUp({
       orderNumber: ctx.orderNumber,
+      batchId,
       workOrderNumber: ctx.workOrderNumber,
       jobId: ctx.jobId,
       customerName: ctx.customerName,
@@ -591,6 +604,7 @@ export async function submitWriteUpBatch(
       notes: e.notes,
       createdBy: ctx.createdBy,
       createdByName: ctx.createdByName,
+      status: ctx.status || "in_review",
     });
     if (writeUp) {
       created.push(writeUp);
@@ -901,10 +915,12 @@ export async function fetchOpenWriteUpCounts(): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
   const supabase = getSupabase();
   if (!supabase) return counts;
+  // Actionable write-ups only: submitted and not yet closed. Drafts (not
+  // submitted) and closed ones don't warrant a calendar badge.
   const { data, error } = await supabase
     .from("field_work_orders")
     .select("order_number, status")
-    .neq("status", "closed");
+    .in("status", ["in_review", "open"]);
   if (error || !data) return counts;
   for (const row of data as { order_number: string }[]) {
     counts.set(row.order_number, (counts.get(row.order_number) || 0) + 1);
@@ -919,5 +935,22 @@ export async function updateWriteUpStatus(id: string, status: WriteUpStatus): Pr
     .from("field_work_orders")
     .update({ status, updated_at: new Date().toISOString() })
     .eq("id", id);
+  if (!error) invalidateWriteUpsCache();
   return !error;
+}
+
+/** Persist a row's line items (used to mark work items reviewed/completed). */
+export async function updateWriteUpLineItems(id: string, lineItems: WriteUpLineItem[]): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase) return false;
+  const { error } = await supabase
+    .from("field_work_orders")
+    .update({ line_items: lineItems, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) {
+    console.error("updateWriteUpLineItems failed:", error);
+    return false;
+  }
+  invalidateWriteUpsCache();
+  return true;
 }

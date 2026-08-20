@@ -14,6 +14,9 @@
   --install: #1a73e8;
   --service: #e8710a;
   --jsv: #9334e6;
+  --install-text: #ffffff;
+  --service-text: #ffffff;
+  --jsv-text: #ffffff;
   --rba-green: #4a7c2e;
   --rba-green-light: #e8f5e0;
 }
@@ -32,6 +35,9 @@
   --color-install: var(--install);
   --color-service: var(--service);
   --color-jsv: var(--jsv);
+  --color-install-text: var(--install-text);
+  --color-service-text: var(--service-text);
+  --color-jsv-text: var(--jsv-text);
   --color-rba-green: var(--rba-green);
   --color-rba-green-light: var(--rba-green-light);
   --font-sans: var(--font-geist-sans);

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { FieldWorkOrder } from "@/lib/types";
 import { fetchWriteUpsForOrder, getSignedPhotoUrl, writeUpsToPlainText } from "@/lib/work-order-store";
+import { groupWriteUpSections, padSeq } from "@/lib/writeup-sections";
 import { downloadWriteUpZip } from "@/lib/writeup-export";
 import { useAuth } from "@/hooks/useAuth";
 import { ArrowLeft, Loader2, Printer, Wrench, Download, Copy, Check } from "lucide-react";
@@ -64,10 +65,7 @@ export default function WorkOrderDocPage() {
   }
 
   const first = writeUps[0];
-  const materials = writeUps.flatMap((w) =>
-    w.materialItems.map((m) => ({ ...m, unitLabel: w.unitLabel }))
-  );
-  const totalPcs = materials.reduce((s, m) => s + (m.qty || 0), 0);
+  const sections = groupWriteUpSections(writeUps);
   const openCount = writeUps.filter((w) => w.status !== "closed").length;
 
   async function handleCopy() {
@@ -174,8 +172,8 @@ export default function WorkOrderDocPage() {
                 Field Work Order
               </div>
               <div className="text-xs text-muted mt-2">
-                {openCount} open issue{openCount !== 1 ? "s" : ""} · {writeUps.length} write-up
-                {writeUps.length !== 1 ? "s" : ""}
+                {openCount} open issue{openCount !== 1 ? "s" : ""} · {sections.length} write-up
+                {sections.length !== 1 ? "s" : ""}
               </div>
               <div className="text-[11px] font-semibold mt-1" style={{ color: ACCENT_TEXT }}>
                 ISSUES TO FIX — NOT A NEW INSTALL
@@ -192,76 +190,104 @@ export default function WorkOrderDocPage() {
           </div>
         </div>
 
-        {/* Per write-up: work to complete + spec corrections + notes */}
-        {writeUps.map((w) => (
-          <div key={w.id} className="mb-5">
+        {/* One block per write-up submission — numbered, with its own materials */}
+        {sections.map((sec) => (
+          <div key={sec.key} className="mb-8">
+            {/* Section header */}
             <div
               className="text-white text-[11px] font-bold tracking-wider uppercase px-3.5 py-1.5 flex items-center justify-between"
               style={{ background: "#1a1a1a" }}
             >
-              <span>{w.unitLabel || "Whole job"}</span>
+              <span>Write-up {sec.index} of {sections.length}</span>
               <span className="opacity-80 normal-case font-medium">
-                {w.createdByName || w.createdBy} · {format(parseISO(w.createdAt), "M/d/yy")}
-                {w.updatedBy && Math.abs(+parseISO(w.updatedAt) - +parseISO(w.createdAt)) > 60000
-                  ? ` · edited ${format(parseISO(w.updatedAt), "M/d/yy")} by ${w.updatedByName || w.updatedBy}`
-                  : ""}
-                {w.status === "closed" ? " · CLOSED" : ""}
+                {sec.createdByName} · {format(parseISO(sec.createdAt), "M/d/yy")}
+                {sec.updatedByName ? ` · edited ${format(parseISO(sec.updatedAt), "M/d/yy")} by ${sec.updatedByName}` : ""}
+                {sec.status === "closed" ? " · CLOSED" : ""}
               </span>
             </div>
-            <div className="border-b-2 px-3.5 py-3 space-y-2" style={{ borderColor: ACCENT }}>
-              {w.newProduct && (
-                <div>
+            <div className="border-b-2 px-3.5 py-3 space-y-3" style={{ borderColor: ACCENT }}>
+              {/* Added products */}
+              {sec.newProducts.map((np, i) => (
+                <div key={i}>
                   <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">
-                    Added product (not in original order)
+                    Added product (not in original order){np.unitLabel ? ` · ${np.unitLabel}` : ""}
                   </div>
                   <div className="text-sm">
-                    <span className="font-bold">{w.newProduct.type || "—"}</span>
-                    {w.newProduct.size ? ` · ${w.newProduct.size}` : ""}
+                    <span className="font-bold">{np.product.type || "—"}</span>
+                    {np.product.size ? ` · ${np.product.size}` : ""}
                   </div>
                   <div className="text-xs text-muted">
                     {[
-                      w.newProduct.exteriorColor && `Ext: ${w.newProduct.exteriorColor}`,
-                      w.newProduct.interiorColor && `Int: ${w.newProduct.interiorColor}`,
-                      w.newProduct.intFinish && `Finish: ${w.newProduct.intFinish}`,
-                      w.newProduct.details && w.newProduct.details,
-                      w.newProduct.frame && `Frame: ${w.newProduct.frame}`,
+                      np.product.exteriorColor && `Ext: ${np.product.exteriorColor}`,
+                      np.product.interiorColor && `Int: ${np.product.interiorColor}`,
+                      np.product.intFinish && `Finish: ${np.product.intFinish}`,
+                      np.product.details,
+                      np.product.frame && `Frame: ${np.product.frame}`,
                     ]
                       .filter(Boolean)
                       .join(" · ")}
                   </div>
                 </div>
-              )}
-              {w.lineItems.length > 0 && (
+              ))}
+
+              {/* Work to complete — numbered, completed items collected below */}
+              {(sec.outstanding.length > 0 || sec.completed.length > 0) && (
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">
                     Work to complete
                   </div>
-                  <ul className="space-y-1">
-                    {w.lineItems.map((li, i) => (
-                      <li key={i} className="text-sm flex items-start gap-2">
-                        {li.completed ? (
-                          <span className="mt-0.5 text-[13px] leading-none text-green-700 shrink-0">✓</span>
-                        ) : (
-                          <span
-                            className="mt-1.5 w-1.5 h-1.5 rounded-full shrink-0"
-                            style={{ background: ACCENT }}
-                          />
-                        )}
-                        <span className={li.completed ? "line-through text-muted" : ""}>{li.label}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  {sec.outstanding.length > 0 ? (
+                    <ul className="space-y-1.5">
+                      {sec.outstanding.map((it) => (
+                        <li key={it.seq} className="text-sm flex items-start gap-2">
+                          <span className="font-mono text-xs font-bold shrink-0 mt-0.5" style={{ color: ACCENT_TEXT }}>
+                            {padSeq(it.seq)}
+                          </span>
+                          <span className="flex-1">
+                            {it.label}
+                            {it.units.length > 0 && <span className="text-muted"> — {it.units.join(", ")}</span>}
+                            {it.notes && <span className="block text-xs text-muted">{it.notes}</span>}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-green-700 font-medium">All work completed ✓</p>
+                  )}
+                  {sec.completed.length > 0 && (
+                    <div className="mt-3 pt-2 border-t border-border">
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-green-700 mb-1">
+                        Completed
+                      </div>
+                      <ul className="space-y-1">
+                        {sec.completed.map((it) => (
+                          <li key={it.seq} className="text-sm flex items-start gap-2 text-muted">
+                            <span className="font-mono text-xs font-bold shrink-0 mt-0.5">{padSeq(it.seq)}</span>
+                            <span className="text-green-700 shrink-0">✓</span>
+                            <span className="line-through flex-1">
+                              {it.label}
+                              {it.units.length > 0 ? ` — ${it.units.join(", ")}` : ""}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {w.specChanges.length > 0 && (
+              {/* Spec corrections */}
+              {sec.specChanges.length > 0 && (
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">
                     Spec corrections
                   </div>
-                  {w.specChanges.map((c, i) => (
+                  {sec.specChanges.map((c, i) => (
                     <div key={i} className="text-sm">
-                      <span className="text-muted">{c.field}:</span>{" "}
+                      <span className="text-muted">
+                        {c.unitLabel ? `${c.unitLabel} · ` : ""}
+                        {c.field}:
+                      </span>{" "}
                       <span className="line-through text-muted">{c.oldValue || "—"}</span>
                       {" → "}
                       <span className="font-semibold" style={{ color: ACCENT_TEXT }}>
@@ -272,17 +298,26 @@ export default function WorkOrderDocPage() {
                 </div>
               )}
 
-              {w.notes && (
-                <div className="text-sm text-foreground whitespace-pre-wrap">{w.notes}</div>
-              )}
+              {/* Notes */}
+              {sec.notes.map((n, i) => (
+                <div key={i} className="text-sm text-foreground whitespace-pre-wrap">
+                  {n.unitLabel && (
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-muted block mb-0.5">
+                      {n.unitLabel}
+                    </span>
+                  )}
+                  {n.text}
+                </div>
+              ))}
 
-              {w.photos.length > 0 && (
+              {/* Photos */}
+              {sec.photos.length > 0 && (
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">
-                    Photos ({w.photos.length})
+                    Photos ({sec.photos.length})
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                    {w.photos.map((p) => (
+                    {sec.photos.map((p) => (
                       <a
                         key={p.path}
                         href={photoUrls[p.path] || undefined}
@@ -304,62 +339,54 @@ export default function WorkOrderDocPage() {
                   </div>
                 </div>
               )}
-
-              {w.lineItems.length === 0 &&
-                w.specChanges.length === 0 &&
-                !w.notes &&
-                !w.newProduct &&
-                w.photos.length === 0 && (
-                  <div className="text-sm text-muted">See material list below.</div>
-                )}
             </div>
+
+            {/* This write-up's own material / trim list */}
+            {sec.materials.length > 0 && (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full border-collapse text-left">
+                  <thead>
+                    <tr style={{ background: "#1a1a1a" }}>
+                      <th className={thStyle} style={{ width: 55 }}>
+                        QTY: {sec.totalPcs}
+                      </th>
+                      <th className={thStyle} style={{ width: 55 }}>
+                        Unit
+                      </th>
+                      <th className={thStyle}>Item</th>
+                      <th className={thStyle}>Color</th>
+                      <th className={thStyle} style={{ width: 90 }}>
+                        Species
+                      </th>
+                      <th className={thStyle}>Lengths</th>
+                      <th className={thStyle} style={{ width: 110 }}>
+                        Vendor
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sec.materials.map((m, i) => (
+                      <tr key={i} className={i % 2 === 0 ? "bg-surface" : "bg-background"}>
+                        <td className={`${tdStyle} font-bold`}>
+                          {m.qty} {m.unit}
+                        </td>
+                        <td className={`${tdStyle} text-muted`}>{m.unitLabel || "—"}</td>
+                        <td className={`${tdStyle} font-semibold`}>{m.item || "—"}</td>
+                        <td className={`${tdStyle} text-muted`}>{m.color || "—"}</td>
+                        <td className={`${tdStyle} text-muted`}>{m.species || "—"}</td>
+                        <td className={`${tdStyle} text-muted font-mono text-[11px]`}>{m.lengths || "—"}</td>
+                        <td className={`${tdStyle} font-bold text-[11px]`} style={{ color: ACCENT_TEXT }}>
+                          {m.vendor || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="border-b-2" style={{ borderColor: ACCENT }} />
+              </div>
+            )}
           </div>
         ))}
-
-        {/* Combined material / trim list — install-instructions style, gold */}
-        {materials.length > 0 && (
-          <div className="mb-5 overflow-x-auto">
-            <table className="w-full border-collapse text-left">
-              <thead>
-                <tr style={{ background: "#1a1a1a" }}>
-                  <th className={thStyle} style={{ width: 55 }}>
-                    QTY: {totalPcs}
-                  </th>
-                  <th className={thStyle} style={{ width: 55 }}>
-                    Unit
-                  </th>
-                  <th className={thStyle}>Item</th>
-                  <th className={thStyle}>Color</th>
-                  <th className={thStyle} style={{ width: 90 }}>
-                    Species
-                  </th>
-                  <th className={thStyle}>Lengths</th>
-                  <th className={thStyle} style={{ width: 110 }}>
-                    Vendor
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {materials.map((m, i) => (
-                  <tr key={i} className={i % 2 === 0 ? "bg-surface" : "bg-background"}>
-                    <td className={`${tdStyle} font-bold`}>
-                      {m.qty} {m.unit}
-                    </td>
-                    <td className={`${tdStyle} text-muted`}>{m.unitLabel || "—"}</td>
-                    <td className={`${tdStyle} font-semibold`}>{m.item || "—"}</td>
-                    <td className={`${tdStyle} text-muted`}>{m.color || "—"}</td>
-                    <td className={`${tdStyle} text-muted`}>{m.species || "—"}</td>
-                    <td className={`${tdStyle} text-muted font-mono text-[11px]`}>{m.lengths || "—"}</td>
-                    <td className={`${tdStyle} font-bold text-[11px]`} style={{ color: ACCENT_TEXT }}>
-                      {m.vendor || "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="border-b-2" style={{ borderColor: ACCENT }} />
-          </div>
-        )}
 
         {/* Footer */}
         <div className="mt-8 pt-4 border-t border-border flex justify-between text-xs text-muted">
