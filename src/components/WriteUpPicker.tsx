@@ -22,7 +22,24 @@ export default function WriteUpPicker({ onPick, onClose }: Props) {
   const [results, setResults] = useState<WorkOrder[]>([]);
   const [searching, setSearching] = useState(false);
   const [manual, setManual] = useState(false);
+  const [pickingId, setPickingId] = useState<string | null>(null);
   const jobsRef = useRef<Map<string, unknown> | null>(null);
+  const jobsPromiseRef = useRef<Promise<Map<string, unknown>> | null>(null);
+
+  // Warm the material-jobs lookup as soon as the picker opens. It's a heavy
+  // fetch (every job's full data blob), so kicking it off in the background
+  // means it's usually ready by the time a result is tapped — no long wait on
+  // the first pick. Reuse the in-flight promise so we never fetch it twice.
+  useEffect(() => {
+    if (!jobsPromiseRef.current) {
+      jobsPromiseRef.current = fetchMaterialJobs()
+        .then((m) => {
+          jobsRef.current = m;
+          return m;
+        })
+        .catch(() => new Map<string, unknown>());
+    }
+  }, []);
 
   // Manual-entry fields
   const [mName, setMName] = useState("");
@@ -48,9 +65,14 @@ export default function WriteUpPicker({ onPick, onClose }: Props) {
   }, [query]);
 
   async function pickOrder(o: WorkOrder) {
+    if (pickingId) return; // ignore double-taps while a pick is loading
+    setPickingId(o.id);
     // Look up the material job so programmed units show up in the write-up.
-    if (!jobsRef.current) jobsRef.current = await fetchMaterialJobs();
-    const mat = (jobsRef.current.get(o.orderNumber) as WorkOrder["materialJob"]) || null;
+    // Await the shared warm-up promise (already in flight since the picker
+    // opened) rather than starting a fresh fetch.
+    const jobs = jobsRef.current || (jobsPromiseRef.current ? await jobsPromiseRef.current : await fetchMaterialJobs());
+    jobsRef.current = jobs;
+    const mat = (jobs.get(o.orderNumber) as WorkOrder["materialJob"]) || null;
     const target: WriteUpTarget = {
       orderNumber: o.orderNumber || o.accountName || o.customerName,
       workOrderNumber: o.workOrderNumber || "",
@@ -145,7 +167,8 @@ export default function WriteUpPicker({ onPick, onClose }: Props) {
                   <button
                     key={o.id}
                     onClick={() => pickOrder(o)}
-                    className="w-full text-left px-3 py-3 rounded-xl border border-border bg-surface flex items-center gap-3 active:bg-background"
+                    disabled={pickingId !== null}
+                    className="w-full text-left px-3 py-3 rounded-xl border border-border bg-surface flex items-center gap-3 active:bg-background disabled:opacity-60"
                   >
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isAccount ? "bg-rba-green/15 text-rba-green" : "bg-primary/15 text-primary"}`}>
                       {isAccount ? <Building2 className="w-4 h-4" /> : <Search className="w-4 h-4" />}
@@ -158,7 +181,11 @@ export default function WriteUpPicker({ onPick, onClose }: Props) {
                           .join(" · ")}
                       </p>
                     </div>
-                    <ChevronRight className="w-4 h-4 text-muted shrink-0" />
+                    {pickingId === o.id ? (
+                      <Loader2 className="w-4 h-4 text-amber-500 shrink-0 animate-spin" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-muted shrink-0" />
+                    )}
                   </button>
                 );
               })}

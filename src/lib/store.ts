@@ -489,7 +489,16 @@ export async function searchWorkOrders(query: string, limit = 25): Promise<WorkO
 
 // --- Material jobs ---
 
+// Session cache for the heavy jobs pull (every job's full data blob). Shared so
+// reopening the write-up picker doesn't re-download it each time.
+let _materialJobsCache: Map<string, any> | null = null;
+
+export function invalidateMaterialJobsCache() {
+  _materialJobsCache = null;
+}
+
 export async function fetchMaterialJobs(): Promise<Map<string, any>> {
+  if (_materialJobsCache) return _materialJobsCache;
   const jobByPO = new Map<string, any>();
   const supabase = getSupabase();
   if (!supabase) return jobByPO;
@@ -528,6 +537,7 @@ export async function fetchMaterialJobs(): Promise<Map<string, any>> {
       // Skip malformed rows
     }
   }
+  if (jobByPO.size > 0) _materialJobsCache = jobByPO;
   return jobByPO;
 }
 
