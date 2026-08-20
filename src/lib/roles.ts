@@ -5,6 +5,15 @@
 
 import type { UserRole } from "@/hooks/useAuth";
 
+/**
+ * The plain admin role always has access to everything. Every capability gate
+ * below short-circuits through this, so an admin can never be locked out of a
+ * feature no matter how the other role lists change.
+ */
+export function isAdmin(role: UserRole | null | undefined): boolean {
+  return role === "admin";
+}
+
 /** Roles allowed to create field write-ups and send field notes. */
 export const FIELD_WORK_ROLES: UserRole[] = ["admin", "field-manager"];
 
@@ -13,12 +22,26 @@ export const FIELD_WORK_ROLES: UserRole[] = ["admin", "field-manager"];
  * Gates the Write-Up button and the Log Action (field notes) button.
  */
 export function canDoFieldWork(role: UserRole | null | undefined): boolean {
-  return !!role && FIELD_WORK_ROLES.includes(role);
+  return isAdmin(role) || (!!role && FIELD_WORK_ROLES.includes(role));
 }
 
 /** Roles that can review/close write-ups and approve photo deletion (office). */
 export function canReviewWriteUps(role: UserRole | null | undefined): boolean {
-  return role === "admin" || role === "payroll-admin";
+  return isAdmin(role) || role === "payroll-admin";
+}
+
+/**
+ * Who can even SEE the Write-Ups tab. Limited to admin + field-manager for now
+ * so the feature stays out of regular members' way during a soft rollout.
+ * (Widen this later — e.g. add "payroll-admin" — to open it up.)
+ */
+export function canSeeWriteUps(role: UserRole | null | undefined): boolean {
+  return isAdmin(role) || role === "field-manager";
+}
+
+/** Who can open/manage the Time Off screen. */
+export function canManageTimeOff(role: UserRole | null | undefined): boolean {
+  return isAdmin(role) || role === "payroll-admin" || role === "field-manager";
 }
 
 /** Assignable roles, in the order shown in the admin Team dropdown. */

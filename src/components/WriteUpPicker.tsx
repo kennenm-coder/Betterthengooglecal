@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { WorkOrder, MaterialUnit } from "@/lib/types";
+import { WorkOrder, MaterialJobData, MaterialUnit } from "@/lib/types";
 import { searchWorkOrders, fetchMaterialJobs } from "@/lib/store";
 import { WriteUpTarget } from "./WriteUpModal";
 import { X, Search, Loader2, ChevronRight, PenLine, Building2 } from "lucide-react";
@@ -9,6 +9,62 @@ import { X, Search, Loader2, ChevronRight, PenLine, Building2 } from "lucide-rea
 interface Props {
   onPick: (target: WriteUpTarget, units: MaterialUnit[]) => void;
   onClose: () => void;
+}
+
+/**
+ * Search the prefetched material-jobs map (poNumber → job) by customer, account,
+ * PO#, or address, returning WorkOrder-shaped results. This surfaces programmed
+ * jobs that aren't in the work_orders table yet (e.g. not scheduled).
+ */
+function matchMaterialJobs(jobs: Map<string, MaterialJobData>, query: string, limit = 15): WorkOrder[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const out: WorkOrder[] = [];
+  for (const mat of jobs.values()) {
+    const job = mat.job;
+    const po = String(job.poNumber || "");
+    const customer = String(job.customerName || "");
+    const address = String(job.address || "");
+    const hay = `${po} ${customer} ${address}`.toLowerCase();
+    if (!hay.includes(q)) continue;
+    out.push({
+      id: `mat-${po || mat.id || out.length}`,
+      orderNumber: po,
+      workOrderNumber: "",
+      customerName: customer,
+      accountName: "",
+      address,
+      workOrderType: "Material job",
+      status: mat.status || "",
+      bookingDate: null,
+      orderOwner: "",
+      salesRep: "",
+      techMeasure: job.techMeasurer || "",
+      installer: "",
+      serviceRep: "",
+      appointmentStatus: "",
+      scheduledStart: null,
+      scheduledEnd: null,
+      contactName: "",
+      email: "",
+      phones: [],
+      serviceDescription: "",
+      primaryResource: "",
+      description: "",
+      combinedRetailTotal: 0,
+      productCount: mat.units.length,
+      totalUnits: mat.units.length,
+      windows: 0,
+      patioDoors: 0,
+      doors: 0,
+      orderAlerts: "",
+      latitude: null,
+      longitude: null,
+      materialJob: mat,
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 /**
@@ -23,8 +79,8 @@ export default function WriteUpPicker({ onPick, onClose }: Props) {
   const [searching, setSearching] = useState(false);
   const [manual, setManual] = useState(false);
   const [pickingId, setPickingId] = useState<string | null>(null);
-  const jobsRef = useRef<Map<string, unknown> | null>(null);
-  const jobsPromiseRef = useRef<Promise<Map<string, unknown>> | null>(null);
+  const jobsRef = useRef<Map<string, MaterialJobData> | null>(null);
+  const jobsPromiseRef = useRef<Promise<Map<string, MaterialJobData>> | null>(null);
 
   // Warm the material-jobs lookup as soon as the picker opens. It's a heavy
   // fetch (every job's full data blob), so kicking it off in the background
@@ -37,7 +93,7 @@ export default function WriteUpPicker({ onPick, onClose }: Props) {
           jobsRef.current = m;
           return m;
         })
-        .catch(() => new Map<string, unknown>());
+        .catch(() => new Map<string, MaterialJobData>());
     }
   }, []);
 
@@ -56,12 +112,28 @@ export default function WriteUpPicker({ onPick, onClose }: Props) {
       return;
     }
     setSearching(true);
+    let cancelled = false;
     const t = setTimeout(async () => {
-      const rows = await searchWorkOrders(q);
-      setResults(rows);
-      setSearching(false);
+      try {
+        // 1) The full work-orders table (scheduled or not).
+        const rows = await searchWorkOrders(q);
+        // 2) Programmed material jobs — many aren't in work_orders yet (e.g. a job
+        //    that's been measured but not scheduled), so search them too.
+        const jobs = jobsRef.current || (jobsPromiseRef.current ? await jobsPromiseRef.current : null);
+        if (cancelled) return;
+        const jobMatches = jobs ? matchMaterialJobs(jobs, q) : [];
+        const have = new Set(rows.map((r) => r.orderNumber));
+        setResults([...rows, ...jobMatches.filter((j) => !have.has(j.orderNumber))]);
+      } catch {
+        if (!cancelled) setResults([]);
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
     }, 300);
-    return () => clearTimeout(t);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, [query]);
 
   async function pickOrder(o: WorkOrder) {
