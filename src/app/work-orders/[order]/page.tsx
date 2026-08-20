@@ -211,8 +211,29 @@ export default function WorkOrderDocPage() {
           </div>
         </div>
 
-        {/* One block per write-up submission — numbered, with its own materials */}
-        {sections.map((sec) => (
+        {/* One block per write-up submission — same order as the new-write-up screen */}
+        {sections.map((sec) => {
+          // Whole-job note → what's wrong / financing / paint (matches the create flow).
+          let background = "";
+          let financing = "";
+          let paint = "";
+          const unitNotes: { unitLabel: string | null; text: string }[] = [];
+          for (const n of sec.notes) {
+            if (n.unitLabel) {
+              unitNotes.push(n);
+              continue;
+            }
+            const rest: string[] = [];
+            for (const seg of n.text.split("\n\n")) {
+              if (seg.startsWith("Financing notes: ")) financing = seg.slice("Financing notes: ".length);
+              else if (seg.startsWith("Paint & stain notes: ")) paint = seg.slice("Paint & stain notes: ".length);
+              else rest.push(seg);
+            }
+            const bg = rest.join("\n\n").trim();
+            if (bg) background = background ? `${background}\n\n${bg}` : bg;
+          }
+          const lbl = "text-[10px] font-bold uppercase tracking-wide text-muted mb-1";
+          return (
           <div key={sec.key} className="mb-8">
             {/* Section header */}
             <div
@@ -227,10 +248,36 @@ export default function WorkOrderDocPage() {
               </span>
             </div>
             <div className="border-b-2 px-3.5 py-3 space-y-3" style={{ borderColor: ACCENT }}>
-              {/* Added products */}
+              {/* 1. What's wrong + financing/paint + unit notes */}
+              {background && (
+                <div>
+                  <div className={lbl}>What&apos;s wrong</div>
+                  <div className="text-sm whitespace-pre-wrap">{background}</div>
+                </div>
+              )}
+              {financing && (
+                <div>
+                  <div className={lbl}>Financing notes</div>
+                  <div className="text-sm">{financing}</div>
+                </div>
+              )}
+              {paint && (
+                <div>
+                  <div className={lbl}>Paint &amp; stain notes</div>
+                  <div className="text-sm">{paint}</div>
+                </div>
+              )}
+              {unitNotes.map((n, i) => (
+                <div key={i} className="text-sm text-foreground whitespace-pre-wrap">
+                  <span className={`${lbl} block`}>{n.unitLabel} note</span>
+                  {n.text}
+                </div>
+              ))}
+
+              {/* 2. Units affected — added products + spec corrections */}
               {sec.newProducts.map((np, i) => (
                 <div key={i}>
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">
+                  <div className={lbl}>
                     Added product (not in original order){np.unitLabel ? ` · ${np.unitLabel}` : ""}
                   </div>
                   <div className="text-sm">
@@ -250,13 +297,29 @@ export default function WorkOrderDocPage() {
                   </div>
                 </div>
               ))}
+              {sec.specChanges.length > 0 && (
+                <div>
+                  <div className={lbl}>Spec corrections</div>
+                  {sec.specChanges.map((c, i) => (
+                    <div key={i} className="text-sm">
+                      <span className="text-muted">
+                        {c.unitLabel ? `${c.unitLabel} · ` : ""}
+                        {c.field}:
+                      </span>{" "}
+                      <span className="line-through text-muted">{c.oldValue || "—"}</span>
+                      {" → "}
+                      <span className="font-semibold" style={{ color: ACCENT_TEXT }}>
+                        {c.newValue}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-              {/* Work to complete — numbered, completed items collected below */}
+              {/* 3. Work to complete — numbered, completed items collected below */}
               {(sec.outstanding.length > 0 || sec.completed.length > 0) && (
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">
-                    Work to complete
-                  </div>
+                  <div className={lbl}>Work to complete</div>
                   {sec.outstanding.length > 0 ? (
                     <ul className="space-y-1.5">
                       {sec.outstanding.map((it) => (
@@ -296,73 +359,9 @@ export default function WorkOrderDocPage() {
                   )}
                 </div>
               )}
-
-              {/* Spec corrections */}
-              {sec.specChanges.length > 0 && (
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">
-                    Spec corrections
-                  </div>
-                  {sec.specChanges.map((c, i) => (
-                    <div key={i} className="text-sm">
-                      <span className="text-muted">
-                        {c.unitLabel ? `${c.unitLabel} · ` : ""}
-                        {c.field}:
-                      </span>{" "}
-                      <span className="line-through text-muted">{c.oldValue || "—"}</span>
-                      {" → "}
-                      <span className="font-semibold" style={{ color: ACCENT_TEXT }}>
-                        {c.newValue}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Notes */}
-              {sec.notes.map((n, i) => (
-                <div key={i} className="text-sm text-foreground whitespace-pre-wrap">
-                  {n.unitLabel && (
-                    <span className="text-[10px] font-bold uppercase tracking-wide text-muted block mb-0.5">
-                      {n.unitLabel}
-                    </span>
-                  )}
-                  {n.text}
-                </div>
-              ))}
-
-              {/* Photos */}
-              {sec.photos.length > 0 && (
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">
-                    Photos ({sec.photos.length})
-                  </div>
-                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                    {sec.photos.map((p) => (
-                      <a
-                        key={p.path}
-                        href={photoUrls[p.path] || undefined}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={p.name}
-                        className="block aspect-square rounded-lg overflow-hidden border border-border bg-surface"
-                      >
-                        {photoUrls[p.path] ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={photoUrls[p.path]} alt={p.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <span className="flex items-center justify-center w-full h-full text-[10px] text-muted">
-                            {p.name}
-                          </span>
-                        )}
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* This write-up's own material / trim list */}
+            {/* 4. This write-up's own material / trim list */}
             {sec.materials.length > 0 && (
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full border-collapse text-left">
@@ -406,8 +405,39 @@ export default function WorkOrderDocPage() {
                 <div className="border-b-2" style={{ borderColor: ACCENT }} />
               </div>
             )}
+
+            {/* 5. Photos */}
+            {sec.photos.length > 0 && (
+              <div className="mt-3">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">
+                  Photos ({sec.photos.length})
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {sec.photos.map((p) => (
+                    <a
+                      key={p.path}
+                      href={photoUrls[p.path] || undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={p.name}
+                      className="block aspect-square rounded-lg overflow-hidden border border-border bg-surface"
+                    >
+                      {photoUrls[p.path] ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={photoUrls[p.path]} alt={p.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="flex items-center justify-center w-full h-full text-[10px] text-muted">
+                          {p.name}
+                        </span>
+                      )}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
 
         {/* Footer */}
         <div className="mt-8 pt-4 border-t border-border flex justify-between text-xs text-muted">

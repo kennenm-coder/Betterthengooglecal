@@ -235,11 +235,55 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     doc.text(meta, M + contentW - 6, y + 12.5, { align: "right" });
     y += 26;
 
+    // Same order as the new-write-up screen:
+    // 1. What's wrong / financing / paint (parsed from the whole-job note).
+    let background = "", financing = "", paint = "";
+    const unitNotes: { unitLabel: string | null; text: string }[] = [];
+    for (const n of sec.notes) {
+      if (n.unitLabel) {
+        unitNotes.push(n);
+        continue;
+      }
+      const rest: string[] = [];
+      for (const seg of n.text.split("\n\n")) {
+        if (seg.startsWith("Financing notes: ")) financing = seg.slice("Financing notes: ".length);
+        else if (seg.startsWith("Paint & stain notes: ")) paint = seg.slice("Paint & stain notes: ".length);
+        else rest.push(seg);
+      }
+      const bg = rest.join("\n\n").trim();
+      if (bg) background = background ? `${background}\n\n${bg}` : bg;
+    }
+    if (background) {
+      line("WHAT'S WRONG", M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      wrapped(background, M + 4, contentW - 4, { size: 10 });
+    }
+    if (financing) {
+      line("FINANCING NOTES", M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      wrapped(financing, M + 4, contentW - 4, { size: 10 });
+    }
+    if (paint) {
+      line("PAINT & STAIN NOTES", M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      wrapped(paint, M + 4, contentW - 4, { size: 10 });
+    }
+    for (const n of unitNotes) {
+      line(`NOTES · ${n.unitLabel}`, M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      wrapped(n.text, M + 4, contentW - 4, { size: 10 });
+    }
+
+    // 2. Units affected — added products + spec corrections.
     for (const np of sec.newProducts) {
       line(`ADDED PRODUCT (not in original order)${np.unitLabel ? ` · ${np.unitLabel}` : ""}`, M, { size: 8, bold: true, color: MUTED, gap: 12 });
       line(`${np.product.type || "—"}${np.product.size ? ` · ${np.product.size}` : ""}`, M, { size: 10, bold: true });
     }
+    if (sec.specChanges.length > 0) {
+      line("SPEC CORRECTIONS", M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      for (const c of sec.specChanges) {
+        const u = c.unitLabel ? `${c.unitLabel} · ` : "";
+        wrapped(`${u}${c.field}:  ${c.oldValue || "—"}  →  ${c.newValue}`, M + 4, contentW - 4, { size: 10 });
+      }
+    }
 
+    // 3. Work to complete.
     if (sec.outstanding.length > 0 || sec.completed.length > 0) {
       line("WORK TO COMPLETE", M, { size: 8, bold: true, color: MUTED, gap: 12 });
       for (const it of sec.outstanding) {
@@ -256,25 +300,12 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
       }
     }
 
-    if (sec.specChanges.length > 0) {
-      line("SPEC CORRECTIONS", M, { size: 8, bold: true, color: MUTED, gap: 12 });
-      for (const c of sec.specChanges) {
-        const u = c.unitLabel ? `${c.unitLabel} · ` : "";
-        wrapped(`${u}${c.field}:  ${c.oldValue || "—"}  →  ${c.newValue}`, M + 4, contentW - 4, { size: 10 });
-      }
-    }
-
-    for (const n of sec.notes) {
-      line(`NOTES${n.unitLabel ? ` · ${n.unitLabel}` : ""}`, M, { size: 8, bold: true, color: MUTED, gap: 12 });
-      wrapped(n.text, M + 4, contentW - 4, { size: 10 });
-    }
-
-    photoGrid(sec.photos);
-
+    // 4. Trim / material, then 5. photos.
     if (sec.materials.length > 0) {
       y += 4;
       materialTable(sec.materials, sec.totalPcs);
     }
+    photoGrid(sec.photos);
     y += 12;
   }
 
