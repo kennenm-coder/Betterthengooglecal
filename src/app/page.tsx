@@ -12,11 +12,12 @@ import FilterPanel, { Filters, EMPTY_FILTERS, applyFilters } from "@/components/
 import TimeOffBanner from "@/components/TimeOffBanner";
 import StaleTabTag from "@/components/StaleTabBanner";
 import { useStaleTab } from "@/hooks/useStaleTab";
-import PinModal from "@/components/PinModal";
+import { useAuth } from "@/hooks/useAuth";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO } from "date-fns";
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database, CalendarDays, Plus } from "lucide-react";
+import Link from "next/link";
+import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database, CalendarDays, Plus, UserCog } from "lucide-react";
 
 export default function CalendarPageWrapper() {
   return (
@@ -27,12 +28,14 @@ export default function CalendarPageWrapper() {
 }
 
 function CalendarPage() {
-  const { orders, loading, loadingBackground, refresh, ensureDateLoaded } = useData();
+  const { orders, loading, loadingBackground, refresh, ensureDateLoaded, linkedJobsStale, resyncLinkedJobs } = useData();
+  const [resyncingJobs, setResyncingJobs] = useState(false);
   const searchParams = useSearchParams();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
-  const [showPinModal, setShowPinModal] = useState(false);
+  const { role } = useAuth();
+  const canManageTimeOff = role === "admin" || role === "payroll-admin";
   const { isStale, staleAfter, nextUpdate, isDesktop, dismiss, resetBlock } = useStaleTab();
 
   useEffect(() => {
@@ -148,14 +151,24 @@ function CalendarPage() {
 
           <div className="flex-1" />
 
-          <button
-            onClick={() => setShowPinModal(true)}
-            className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-md bg-rba-green text-white font-medium shrink-0 active:scale-[0.97] transition-all"
-            title="Add Time Off"
+          {canManageTimeOff && (
+            <button
+              onClick={() => router.push("/time-off")}
+              className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-md bg-rba-green text-white font-medium shrink-0 active:scale-[0.97] transition-all"
+              title="Add Time Off"
+            >
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Time Off</span>
+            </button>
+          )}
+
+          <Link
+            href="/settings"
+            className="p-1.5 rounded-md hover:bg-surface text-muted hover:text-foreground shrink-0"
+            title="Settings"
           >
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">Time Off</span>
-          </button>
+            <UserCog className="w-5 h-5" />
+          </Link>
         </div>
 
         {/* Row 2: Actions */}
@@ -215,20 +228,28 @@ function CalendarPage() {
 
       <TimeOffBanner requests={timeOffRequests} date={currentDate} />
 
+      {linkedJobsStale && (
+        <button
+          onClick={async () => {
+            setResyncingJobs(true);
+            try {
+              await resyncLinkedJobs();
+            } finally {
+              setResyncingJobs(false);
+            }
+          }}
+          disabled={resyncingJobs}
+          className="w-full bg-amber-500/15 text-amber-700 text-xs font-medium py-2 px-4 border-b border-amber-500/30 flex items-center justify-center gap-2 active:bg-amber-500/25 disabled:opacity-60"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${resyncingJobs ? "animate-spin" : ""}`} />
+          {resyncingJobs ? "Resyncing linked jobs…" : "Linked jobs changed — tap to resync"}
+        </button>
+      )}
+
       {loadingBackground && (
         <div className="bg-surface/80 text-muted text-xs text-center py-1 border-b border-border">
           Updating additional appointments…
         </div>
-      )}
-
-      {showPinModal && (
-        <PinModal
-          onSuccess={() => {
-            setShowPinModal(false);
-            router.push("/time-off");
-          }}
-          onClose={() => setShowPinModal(false)}
-        />
       )}
 
       <div className="flex-1 flex flex-col min-h-0">

@@ -24,6 +24,14 @@ type Status =
   | "requested"
   | "already-exists";
 
+/** Same-origin destination captured by middleware (e.g. a write-up doc link),
+ *  or "/" when there isn't one. Read from the URL so no Suspense is needed. */
+function redirectDest(): string {
+  if (typeof window === "undefined") return "/";
+  const p = new URLSearchParams(window.location.search).get("redirect");
+  return p && p.startsWith("/") && !p.startsWith("//") ? p : "/";
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("sign-in");
@@ -120,7 +128,7 @@ export default function LoginPage() {
             .from("allowed_emails")
             .update({ name: fullName })
             .eq("email", trimmedEmail);
-          router.push("/");
+          router.push(redirectDest());
           router.refresh();
         } else {
           // Not yet approved — auto-submit an access request
@@ -167,7 +175,7 @@ export default function LoginPage() {
         return;
       }
 
-      router.push("/");
+      router.push(redirectDest());
       router.refresh();
     } catch {
       setStatus("error");

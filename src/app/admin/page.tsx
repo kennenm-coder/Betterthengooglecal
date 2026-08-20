@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import { createAuthClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { ROLE_OPTIONS, ROLE_STYLES } from "@/lib/roles";
+import { getWriteUpPresets, setWriteUpPresets } from "@/lib/work-order-store";
 import { format, parseISO } from "date-fns";
 
 type DevTab = "settings" | "log" | "upload" | "team";
@@ -145,18 +147,6 @@ interface AccessRequest {
   name: string | null;
   created_at: string;
 }
-
-const ROLE_OPTIONS = [
-  { value: "member", label: "Member" },
-  { value: "payroll-admin", label: "Payroll Admin" },
-  { value: "admin", label: "Admin" },
-] as const;
-
-const ROLE_STYLES: Record<string, string> = {
-  admin: "bg-primary/15 text-primary",
-  "payroll-admin": "bg-rba-green/15 text-rba-green",
-  member: "bg-surface border border-border text-muted",
-};
 
 function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boolean; isPayrollAdmin?: boolean }) {
   const [emails, setEmails] = useState<AllowedEmail[]>([]);
@@ -657,7 +647,73 @@ function SettingsTab() {
         </div>
       </section>
 
+      <WriteUpPresetsSection />
     </div>
+  );
+}
+
+/* ── Write-Up Presets ── */
+function WriteUpPresetsSection() {
+  const [presets, setPresets] = useState<string[]>([]);
+  const [newPreset, setNewPreset] = useState("");
+
+  useEffect(() => {
+    getWriteUpPresets().then(setPresets);
+  }, []);
+
+  function persist(updated: string[]) {
+    setPresets(updated);
+    setWriteUpPresets(updated);
+  }
+
+  function add() {
+    const v = newPreset.trim();
+    if (!v || presets.includes(v)) return;
+    persist([...presets, v]);
+    setNewPreset("");
+  }
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-1">
+        Write-Up Presets
+      </h2>
+      <p className="text-xs text-muted mb-3">
+        Quick-tap work items field managers choose from when writing up a unit.
+      </p>
+      <div className="space-y-2">
+        {presets.map((p, i) => (
+          <div
+            key={i}
+            className="flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-surface"
+          >
+            <span className="text-sm font-medium">{p}</span>
+            <button
+              onClick={() => persist(presets.filter((_, j) => j !== i))}
+              className="p-1 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={newPreset}
+            onChange={(e) => setNewPreset(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+            placeholder="New preset (e.g. Recaulk exterior)..."
+            className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+          />
+          <button
+            onClick={add}
+            className="px-3 py-2 rounded-lg bg-primary text-white text-sm font-medium"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 

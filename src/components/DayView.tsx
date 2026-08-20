@@ -1,7 +1,7 @@
 "use client";
 
 import { WorkOrder } from "@/lib/types";
-import { getOrdersForDay, getHourSlot, typeColor } from "@/lib/calendar-utils";
+import { getOrdersForDay, getHourSlot, typeColor, typeTileText } from "@/lib/calendar-utils";
 import { formatTime } from "@/lib/calendar-utils";
 import { lastFirst, crewName, sortByStartTime, extractCity } from "@/lib/format-utils";
 import { format } from "date-fns";
@@ -68,9 +68,9 @@ export default function DayView({
                     <button
                       key={order.id}
                       onClick={() => onSelectOrder(order)}
-                      className={`w-full text-left rounded-md px-3 py-2 text-white text-base transition-all active:scale-[0.98] ${typeColor(
+                      className={`w-full text-left rounded-md px-3 py-2 text-base transition-all active:scale-[0.98] ${typeColor(
                         order.workOrderType
-                      )}`}
+                      )} ${typeTileText(order.workOrderType)}`}
                     >
                       <div className="font-medium truncate">
                         {lastFirst(order.customerName)} - {order.orderNumber}
