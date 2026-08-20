@@ -7,6 +7,7 @@ import { fetchWriteUpsForOrder, getSignedPhotoUrl, writeUpsToPlainText } from "@
 import { groupWriteUpSections, padSeq } from "@/lib/writeup-sections";
 import { downloadWriteUpZip } from "@/lib/writeup-export";
 import { useAuth } from "@/hooks/useAuth";
+import { canSeeWriteUps } from "@/lib/roles";
 import { ArrowLeft, Loader2, Printer, Wrench, Download, Copy, Check } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -18,7 +19,7 @@ const ACCENT_TEXT = "#A16207"; // small text (vendor, etc.) for print contrast
 export default function WorkOrderDocPage() {
   const params = useParams();
   const router = useRouter();
-  const { loading: authLoading } = useAuth();
+  const { role, loading: authLoading } = useAuth();
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -26,10 +27,11 @@ export default function WorkOrderDocPage() {
   const [copied, setCopied] = useState(false);
 
   const orderNumber = decodeURIComponent(String(params.order || ""));
-  // Everyone allowlisted can view a write-up doc (read/print/download).
+  // Soft rollout: only admin + field-manager can view a write-up doc.
+  const canView = canSeeWriteUps(role);
 
   useEffect(() => {
-    if (!orderNumber) return;
+    if (!orderNumber || authLoading || !canView) return;
     fetchWriteUpsForOrder(orderNumber).then(async (w) => {
       // Newest issues first, whole-job entries last.
       w.sort((a, b) => (a.unitLabel || "~").localeCompare(b.unitLabel || "~"));
@@ -43,9 +45,28 @@ export default function WorkOrderDocPage() {
       );
       setPhotoUrls(Object.fromEntries(entries.filter(([, u]) => u)));
     });
-  }, [orderNumber]);
+  }, [orderNumber, authLoading, canView]);
 
-  if (authLoading || loading) {
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!canView) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen gap-3 px-6 text-center">
+        <p className="text-muted">Field write-ups aren&apos;t available for your account.</p>
+        <button onClick={() => router.push("/")} className="text-primary underline text-sm">
+          Back to calendar
+        </button>
+      </div>
+    );
+  }
+
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />

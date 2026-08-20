@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import BottomNav from "@/components/BottomNav";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork, canReviewWriteUps } from "@/lib/roles";
+import { canDoFieldWork, canReviewWriteUps, canSeeWriteUps } from "@/lib/roles";
 import { FieldWorkOrder, WriteUpStatus, MaterialUnit } from "@/lib/types";
 import {
   fetchWriteUps,
@@ -55,9 +55,8 @@ export default function WorkOrdersPage() {
   const [filter, setFilter] = useState<Filter>("in_review");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // Everyone allowlisted can view write-ups (closed ≠ field work done, so all
-  // staff need visibility). Editing/reviewing stays gated.
-  const canView = true;
+  // Soft rollout: only admin + field-manager can see write-ups for now.
+  const canView = canSeeWriteUps(role);
   const canReview = canReviewWriteUps(role);
   const canCreate = canDoFieldWork(role);
   const canEdit = canDoFieldWork(role);
@@ -193,6 +192,22 @@ export default function WorkOrdersPage() {
       <div className="flex flex-col h-full">
         <div className="flex-1 flex items-center justify-center">
           <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        </div>
+        <BottomNav />
+      </div>
+    );
+  }
+
+  // Direct-URL guard: block members even if they somehow reach the route.
+  if (!canView) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
+          <Wrench className="w-8 h-8 text-muted" />
+          <p className="text-sm text-muted">Field write-ups aren&apos;t available for your account.</p>
+          <Link href="/" className="text-sm text-primary underline">
+            Back to calendar
+          </Link>
         </div>
         <BottomNav />
       </div>

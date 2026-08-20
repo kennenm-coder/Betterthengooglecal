@@ -12,6 +12,37 @@ interface Props {
 }
 
 /**
+ * Search the prefetched material-jobs map (poNumber → job) by customer, account,
+ * PO#, or address, returning WorkOrder-shaped results. This surfaces programmed
+ * jobs that aren't in the work_orders table yet (e.g. not scheduled).
+ */
+function matchMaterialJobs(jobs: Map<string, unknown>, query: string, limit = 15): WorkOrder[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const out: WorkOrder[] = [];
+  for (const raw of jobs.values()) {
+    const mat = raw as { id?: string; job?: Record<string, unknown> } | null;
+    const job = mat?.job || {};
+    const po = String(job.poNumber || "");
+    const customer = String(job.customerName || "");
+    const address = String(job.address || "");
+    const hay = `${po} ${customer} ${address}`.toLowerCase();
+    if (!hay.includes(q)) continue;
+    out.push({
+      id: `mat-${po || mat?.id || out.length}`,
+      orderNumber: po,
+      workOrderNumber: "",
+      customerName: customer,
+      accountName: "",
+      address,
+      workOrderType: "Material job",
+    } as unknown as WorkOrder);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
  * "Start a write-up" picker. Search any existing job or imported account by
  * customer name, account name, order #, or work order #, and attach a write-up
  * to it — or, when nothing matches, create one manually under whatever details
@@ -57,8 +88,14 @@ export default function WriteUpPicker({ onPick, onClose }: Props) {
     }
     setSearching(true);
     const t = setTimeout(async () => {
+      // 1) The full work-orders table (scheduled or not).
       const rows = await searchWorkOrders(q);
-      setResults(rows);
+      // 2) Programmed material jobs — many aren't in work_orders yet (e.g. a job
+      //    that's been measured but not scheduled), so search them too.
+      const jobs = jobsRef.current || (jobsPromiseRef.current ? await jobsPromiseRef.current : null);
+      const jobMatches = jobs ? matchMaterialJobs(jobs, q) : [];
+      const have = new Set(rows.map((r) => r.orderNumber));
+      setResults([...rows, ...jobMatches.filter((j) => !have.has(j.orderNumber))]);
       setSearching(false);
     }, 300);
     return () => clearTimeout(t);

@@ -35,7 +35,7 @@ function CalendarPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
   const { role } = useAuth();
-  const canManageTimeOff = role === "admin" || role === "payroll-admin";
+  const canManageTimeOff = role === "admin" || role === "payroll-admin" || role === "field-manager";
   const { isStale, staleAfter, nextUpdate, isDesktop, dismiss, resetBlock } = useStaleTab();
 
   useEffect(() => {

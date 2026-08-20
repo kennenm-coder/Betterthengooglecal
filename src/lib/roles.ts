@@ -21,6 +21,15 @@ export function canReviewWriteUps(role: UserRole | null | undefined): boolean {
   return role === "admin" || role === "payroll-admin";
 }
 
+/**
+ * Who can even SEE the Write-Ups tab. Limited to admin + field-manager for now
+ * so the feature stays out of regular members' way during a soft rollout.
+ * (Widen this later — e.g. add "payroll-admin" — to open it up.)
+ */
+export function canSeeWriteUps(role: UserRole | null | undefined): boolean {
+  return role === "admin" || role === "field-manager";
+}
+
 /** Assignable roles, in the order shown in the admin Team dropdown. */
 export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: "member", label: "Member" },
