@@ -24,6 +24,7 @@ import {
   ShieldX,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { canManageTimeOff } from "@/lib/roles";
 import { format } from "date-fns";
 
 interface DraftRow {
@@ -231,7 +232,7 @@ function TimeOffContent() {
     );
   }
 
-  if (role !== "admin" && role !== "payroll-admin" && role !== "field-manager") {
+  if (!canManageTimeOff(role)) {
     return (
       <div className="flex flex-col h-full bg-background items-center justify-center p-4">
         <div className="text-center space-y-3">

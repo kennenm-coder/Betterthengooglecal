@@ -533,6 +533,15 @@ export async function createWriteUp(input: NewWriteUp): Promise<CreateWriteUpRes
 
 // ─── Batch submit (multi-unit write-up) ─────────────────────────────────────
 
+/** A photo on an entry: a new blob to upload, or an already-uploaded one to keep. */
+export interface EntryPhoto {
+  /** New photo to upload (camera/upload/restored draft). */
+  blob?: Blob;
+  /** Existing photo to keep as-is when editing (already in storage). */
+  path?: string;
+  name: string;
+}
+
 /** One unit's worth of work inside a multi-unit write-up session. */
 export interface WriteUpEntryInput {
   unitLabel: string | null;
@@ -541,8 +550,44 @@ export interface WriteUpEntryInput {
   materialItems: WriteUpMaterialItem[];
   newProduct?: WriteUpNewProduct | null;
   notes: string;
-  /** Local photo blobs (from camera/upload or a restored draft), uploaded during submit. */
-  photoFiles: Blob[];
+  /** Photos on this unit — new blobs (uploaded on save) and kept existing ones. */
+  photos: EntryPhoto[];
+}
+
+/** Resolve an entry's photos to storage records: keep existing, upload new. */
+async function resolveEntryPhotos(orderNumber: string, unitLabel: string | null, photos: EntryPhoto[]): Promise<WriteUpPhoto[]> {
+  const out: WriteUpPhoto[] = [];
+  for (const p of photos) {
+    if (p.path) {
+      out.push({ path: p.path, name: p.name });
+      continue;
+    }
+    if (!p.blob) continue;
+    const blob = await compressImage(p.blob);
+    const path = await uploadWriteUpPhoto(orderNumber, unitLabel, blob, out.length + 1);
+    if (path) out.push({ path, name: p.name || `${unitLabel || "Whole job"} photo ${out.length + 1}` });
+  }
+  return out;
+}
+
+/** Copy reviewed / installed state from old items onto new ones by matching label. */
+function carryItemState(newItems: WriteUpLineItem[], oldItems: WriteUpLineItem[]): WriteUpLineItem[] {
+  const used = new Set<number>();
+  return newItems.map((ni) => {
+    const key = ni.label.trim().toLowerCase();
+    const idx = oldItems.findIndex((oi, i) => !used.has(i) && oi.label.trim().toLowerCase() === key);
+    if (idx < 0) return ni;
+    used.add(idx);
+    const old = oldItems[idx];
+    return {
+      ...ni,
+      reviewed: old.reviewed,
+      reviewedBy: old.reviewedBy,
+      reviewedByName: old.reviewedByName,
+      reviewedAt: old.reviewedAt,
+      completed: old.completed,
+    };
+  });
 }
 
 export interface SubmitContext {
@@ -579,15 +624,7 @@ export async function submitWriteUpBatch(
   const batchId = crypto.randomUUID();
   let done = 0;
   for (const e of entries) {
-    const photos: WriteUpPhoto[] = [];
-    const total = e.photoFiles.length;
-    for (let i = 0; i < total; i++) {
-      const blob = await compressImage(e.photoFiles[i]);
-      const path = await uploadWriteUpPhoto(ctx.orderNumber, e.unitLabel, blob, i + 1);
-      if (path) {
-        photos.push({ path, name: `${e.unitLabel || "Whole job"} photo ${i + 1} of ${total}` });
-      }
-    }
+    const photos = await resolveEntryPhotos(ctx.orderNumber, e.unitLabel, e.photos);
     const { writeUp, error } = await createWriteUp({
       orderNumber: ctx.orderNumber,
       batchId,
@@ -616,6 +653,100 @@ export async function submitWriteUpBatch(
     onProgress?.(++done, entries.length);
   }
   return { created, error: null };
+}
+
+// ─── Edit a whole write-up (guided flow, in place) ──────────────────────────
+
+export interface EditBatchContext extends SubmitContext {
+  /** The submission's shared id, reused so it stays one write-up. */
+  batchId: string;
+  updatedBy: string;
+  updatedByName: string;
+}
+
+/**
+ * Save an edited write-up submission IN PLACE, matched per unit:
+ *  - a unit that still exists → its row is UPDATED (id, created_at, status, and
+ *    each item's reviewed/installed state are preserved);
+ *  - a newly added unit → a new row is INSERTED with the same batch id;
+ *  - a removed unit → its row (and photos) are DELETED — only after every
+ *    update/insert succeeds, so a failure never loses data.
+ */
+export async function saveWriteUpBatchEdit(
+  oldRows: FieldWorkOrder[],
+  ctx: EditBatchContext,
+  entries: WriteUpEntryInput[],
+  onProgress?: (done: number, total: number) => void
+): Promise<{ ok: boolean; error: string | null }> {
+  const supabase = getSupabase();
+  if (!supabase) return { ok: false, error: "Not signed in — could not reach the database." };
+  const now = new Date().toISOString();
+  // Prefer the status the editor picked; else keep the submission's current one.
+  const status: WriteUpStatus = ctx.status || oldRows[0]?.status || "in_review";
+  const norm = (l: string | null) => (l || "").trim().toLowerCase();
+  const usedOld = new Set<string>();
+  let done = 0;
+
+  for (const e of entries) {
+    const photos = await resolveEntryPhotos(ctx.orderNumber, e.unitLabel, e.photos);
+    const match = oldRows.find((r) => !usedOld.has(r.id) && norm(r.unitLabel) === norm(e.unitLabel));
+    const lineItems = carryItemState(e.lineItems, match?.lineItems || []);
+    const shared = {
+      unit_label: e.unitLabel,
+      line_items: lineItems,
+      spec_changes: e.specChanges,
+      material_items: e.materialItems,
+      photos,
+      photo_count: photos.length,
+      new_product: e.newProduct || null,
+      notes: e.notes || "",
+      status,
+      updated_by: ctx.updatedBy || null,
+      updated_by_name: ctx.updatedByName || null,
+      updated_at: now,
+    };
+    if (match) {
+      usedOld.add(match.id);
+      const { error } = await supabase.from("field_work_orders").update(shared).eq("id", match.id);
+      if (error) {
+        console.error("saveWriteUpBatchEdit update failed:", error);
+        return { ok: false, error: error.message };
+      }
+    } else {
+      const { error } = await supabase.from("field_work_orders").insert({
+        order_number: ctx.orderNumber,
+        batch_id: ctx.batchId,
+        work_order_number: ctx.workOrderNumber || null,
+        job_id: ctx.jobId || null,
+        customer_name: ctx.customerName || null,
+        address: ctx.address || null,
+        created_by: ctx.createdBy || null,
+        created_by_name: ctx.createdByName || null,
+        ...shared,
+      });
+      if (error) {
+        console.error("saveWriteUpBatchEdit insert failed:", error);
+        return { ok: false, error: error.message };
+      }
+    }
+    onProgress?.(++done, entries.length);
+  }
+
+  // All writes succeeded — now remove rows for units that were dropped.
+  for (const r of oldRows) {
+    if (usedOld.has(r.id)) continue;
+    if (r.photos.length) {
+      try {
+        await supabase.storage.from(PHOTO_BUCKET).remove(r.photos.map((p) => p.path));
+      } catch {
+        /* orphaned files are harmless; keep going */
+      }
+    }
+    await supabase.from("field_work_orders").delete().eq("id", r.id);
+  }
+
+  invalidateWriteUpsCache();
+  return { ok: true, error: null };
 }
 
 // ─── Edit an existing write-up ──────────────────────────────────────────────
@@ -820,7 +951,7 @@ export function buildWriteUpMailto(
           m.lengths ? ` ${m.lengths}` : ""
         }${m.vendor ? ` (${m.vendor})` : ""}`
       );
-    if (e.photoFiles.length) lines.push(`   - ${e.photoFiles.length} photo(s) attached to the write-up`);
+    if (e.photos.length) lines.push(`   - ${e.photos.length} photo(s) attached to the write-up`);
     if (e.notes) lines.push(`   - Notes: ${e.notes}`);
   }
   lines.push("", "View the full write-up (Duck Force sign-in required):", docLink);

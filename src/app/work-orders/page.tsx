@@ -63,7 +63,8 @@ export default function WorkOrdersPage() {
 
   const [showPicker, setShowPicker] = useState(false);
   const [pending, setPending] = useState<{ target: WriteUpTarget; units: MaterialUnit[] } | null>(null);
-  const [editing, setEditing] = useState<FieldWorkOrder | null>(null);
+  // Editing a whole submission (all its unit rows) through the guided flow.
+  const [editing, setEditing] = useState<FieldWorkOrder[] | null>(null);
 
   useEffect(() => {
     if (!canView) return;
@@ -187,6 +188,16 @@ export default function WorkOrdersPage() {
     return entries;
   }, [visible]);
 
+  // Tab counts = number of write-up SUBMISSIONS per status (not per-unit rows),
+  // so the count matches the write-ups actually shown in the list.
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const sec of groupWriteUpSections(writeUps)) {
+      counts[sec.status] = (counts[sec.status] || 0) + 1;
+    }
+    return counts;
+  }, [writeUps]);
+
   if (authLoading) {
     return (
       <div className="flex flex-col h-full">
@@ -260,9 +271,7 @@ export default function WorkOrdersPage() {
             >
               {f.label}
               {f.id !== "all" && (
-                <span className="ml-1.5 text-xs opacity-70">
-                  {writeUps.filter((w) => w.status === f.id).length}
-                </span>
+                <span className="ml-1.5 text-xs opacity-70">{statusCounts[f.id] || 0}</span>
               )}
             </button>
           ))}
@@ -344,6 +353,7 @@ export default function WorkOrdersPage() {
                           total={sections.length}
                           canReview={canReview}
                           canEdit={canEdit}
+                          onEdit={() => setEditing(sec.rows)}
                           onReviewItems={(itemsToReview, reviewed) => setItemsReviewed(sec, itemsToReview, reviewed)}
                           onStatus={(status) => setSectionStatus(sec, status)}
                         />
@@ -352,7 +362,6 @@ export default function WorkOrdersPage() {
                             key={w.id}
                             w={w}
                             canEdit={canEdit}
-                            onEdit={() => setEditing(w)}
                             onDeletePhotos={() => deletePhotos(w)}
                           />
                         ))}
@@ -388,17 +397,17 @@ export default function WorkOrdersPage() {
         />
       )}
 
-      {editing && (
+      {editing && editing.length > 0 && (
         <WriteUpModal
           order={{
-            orderNumber: editing.orderNumber,
-            workOrderNumber: editing.workOrderNumber,
-            customerName: editing.customerName,
-            address: editing.address,
+            orderNumber: editing[0].orderNumber,
+            workOrderNumber: editing[0].workOrderNumber,
+            customerName: editing[0].customerName,
+            address: editing[0].address,
             materialJob: null,
           }}
           units={[]}
-          editWriteUp={editing}
+          editBatch={editing}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -443,6 +452,7 @@ function ReviewSection({
   total,
   canReview,
   canEdit,
+  onEdit,
   onReviewItems,
   onStatus,
 }: {
@@ -450,6 +460,7 @@ function ReviewSection({
   total: number;
   canReview: boolean;
   canEdit: boolean;
+  onEdit: () => void;
   onReviewItems: (items: NumberedWorkItem[], reviewed: boolean) => void;
   onStatus: (status: WriteUpStatus) => void;
 }) {
@@ -467,9 +478,20 @@ function ReviewSection({
           </span>
           <StatusPill status={section.status} />
         </div>
-        <span className="text-[11px] text-muted text-right truncate">
-          Wrote: {section.createdByName || "—"} · {format(parseISO(section.createdAt), "MMM d")}
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[11px] text-muted text-right truncate">
+            Wrote: {section.createdByName || "—"} · {format(parseISO(section.createdAt), "MMM d")}
+          </span>
+          {canEdit && (
+            <button
+              onClick={onEdit}
+              className="p-1.5 rounded-lg text-muted hover:text-amber-600 no-print shrink-0"
+              title="Edit write-up"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {allWork.length > 0 && (
@@ -554,12 +576,10 @@ function ReviewSection({
 function WriteUpRow({
   w,
   canEdit,
-  onEdit,
   onDeletePhotos,
 }: {
   w: FieldWorkOrder;
   canEdit: boolean;
-  onEdit: () => void;
   onDeletePhotos: () => Promise<boolean>;
 }) {
   // Only surface "edited" when it actually differs from creation.
@@ -583,15 +603,6 @@ function WriteUpRow({
               </span>
             )}
           </span>
-          {canEdit && (
-            <button
-              onClick={onEdit}
-              className="p-1.5 rounded-lg text-muted hover:text-amber-600 no-print shrink-0"
-              title="Edit write-up"
-            >
-              <Pencil className="w-4 h-4" />
-            </button>
-          )}
         </div>
       </div>
 

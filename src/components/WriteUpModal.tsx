@@ -28,6 +28,7 @@ import {
   SPEC_FIELDS,
   unitLabelOf,
   submitWriteUpBatch,
+  saveWriteUpBatchEdit,
   buildWriteUpMailto,
   updateWriteUp,
   deleteWriteUp,
@@ -75,6 +76,9 @@ interface Props {
   /** When set, the modal edits this existing write-up in place instead of
    *  creating new ones. */
   editWriteUp?: FieldWorkOrder;
+  /** When set, edit a whole submission (all its unit rows) through the guided
+   *  new-write-up flow, saving each row in place. Takes precedence over editWriteUp. */
+  editBatch?: FieldWorkOrder[];
 }
 
 interface LocalPhoto {
@@ -277,9 +281,11 @@ function specEntriesFromChanges(changes: SpecChange[]): SpecEntry[] {
   });
 }
 
-export default function WriteUpModal({ order, units, onClose, onSaved, editWriteUp }: Props) {
+export default function WriteUpModal({ order, units, onClose, onSaved, editWriteUp, editBatch }: Props) {
   const { user, autoCc } = useAuth();
-  const isEditing = !!editWriteUp;
+  const isBatchEdit = !!editBatch && editBatch.length > 0;
+  // The old single-row flat editor only applies when NOT doing a guided batch edit.
+  const isEditing = !!editWriteUp && !isBatchEdit;
   const [presets, setPresets] = useState<string[]>([]);
   const [catalog, setCatalog] = useState<CatalogPickItem[]>([]);
   const [options, setOptions] = useState<UnitOptions | null>(null);
@@ -350,7 +356,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   }, [partsCatalog.length]);
 
   useEffect(() => {
-    if (isEditing) return; // edit mode doesn't use the local draft system
+    if (isEditing || isBatchEdit) return; // editing doesn't use the local draft system
     let cancelled = false;
     loadDraft(order.orderNumber).then((d) => {
       if (cancelled) return;
@@ -408,6 +414,127 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editWriteUp]);
+
+  // Batch edit: load a whole submission into the guided (new-write-up) flow.
+  useEffect(() => {
+    if (!isBatchEdit || !editBatch) return;
+    let cancelled = false;
+    (async () => {
+      // Load every photo once (path → LocalPhoto with its blob).
+      const photoByPath = new Map<string, LocalPhoto>();
+      for (const r of editBatch) {
+        for (const p of r.photos) {
+          if (photoByPath.has(p.path)) continue;
+          const url = await getSignedPhotoUrl(p.path);
+          if (!url) continue;
+          try {
+            const res = await fetch(url);
+            if (res.ok) photoByPath.set(p.path, { id: crypto.randomUUID(), name: p.name, blob: await res.blob(), path: p.path });
+          } catch {
+            /* skip a photo that won't load */
+          }
+        }
+      }
+      if (cancelled) return;
+
+      // Whole-job notes → background / financing / paint.
+      let bg = "", fin = "", paint = "";
+      for (const r of editBatch) {
+        if (!r.notes) continue;
+        const rest: string[] = [];
+        for (const seg of r.notes.split("\n\n")) {
+          if (seg.startsWith("Financing notes: ")) fin = seg.slice("Financing notes: ".length);
+          else if (seg.startsWith("Paint & stain notes: ")) paint = seg.slice("Paint & stain notes: ".length);
+          else rest.push(seg);
+        }
+        const restText = rest.join("\n\n").trim();
+        if (restText && !bg) bg = restText;
+      }
+      setBackground(bg);
+      setFinancingNotes(fin);
+      setPaintStainNotes(paint);
+
+      // Units = rows with a unit label (the whole-job row, null, isn't a unit).
+      const unitRows = editBatch.filter((r) => r.unitLabel);
+      const labelToKey = new Map<string, string>();
+      const hydUnits: WuUnit[] = unitRows.map((r) => {
+        const key = crypto.randomUUID();
+        labelToKey.set((r.unitLabel || "").trim(), key);
+        return {
+          key,
+          isNewProduct: !!r.newProduct,
+          unitLabel: r.unitLabel || "",
+          unitType: r.newProduct?.type || "",
+          hasSpecChange: r.specChanges.length > 0,
+          specEntries: specEntriesFromChanges(r.specChanges),
+        };
+      });
+      setWuUnits(hydUnits);
+
+      // Issues = line items grouped by their number (or label) across rows.
+      interface IAgg { key: string; label: string; note: string; needsOrdering: boolean; orderingNotes: string; unitKeys: Set<string>; order: number; }
+      const iMap = new Map<string, IAgg>();
+      let order = 0;
+      for (const r of editBatch) {
+        for (const li of r.lineItems) {
+          const gk = li.seq != null ? `s:${li.seq}` : `l:${li.label.trim().toLowerCase()}`;
+          let g = iMap.get(gk);
+          if (!g) {
+            let note = "", needsOrdering = false, orderingNotes = "";
+            for (const b of (li.notes || "").split(" · ")) {
+              if (b.startsWith("NEEDS ORDERED: ")) { needsOrdering = true; orderingNotes = b.slice("NEEDS ORDERED: ".length); }
+              else if (b === "NEEDS ORDERED") needsOrdering = true;
+              else if (b.trim()) note = note ? `${note} · ${b}` : b;
+            }
+            g = { key: crypto.randomUUID(), label: li.label, note, needsOrdering, orderingNotes, unitKeys: new Set(), order: order++ };
+            iMap.set(gk, g);
+          }
+          const k = r.unitLabel ? labelToKey.get(r.unitLabel.trim()) : undefined;
+          if (k) g.unitKeys.add(k);
+        }
+      }
+      const issueAggs = [...iMap.values()].sort((a, b) => a.order - b.order);
+
+      // Best guess: attach each row's materials + photos to an issue that
+      // affects that unit (materials/photos are stored per-unit, not per-issue).
+      const matByIssue = new Map<string, WriteUpMaterialItem[]>();
+      const phByIssue = new Map<string, LocalPhoto[]>();
+      const targetFor = (unitKey: string | null): IAgg | undefined => {
+        if (unitKey) {
+          const m = issueAggs.find((g) => g.unitKeys.has(unitKey));
+          if (m) return m;
+        }
+        return issueAggs.find((g) => g.unitKeys.size === 0) || issueAggs[0];
+      };
+      for (const r of editBatch) {
+        const unitKey = r.unitLabel ? labelToKey.get(r.unitLabel.trim()) || null : null;
+        const target = targetFor(unitKey);
+        if (!target) continue;
+        if (r.materialItems.length) matByIssue.set(target.key, [...(matByIssue.get(target.key) || []), ...r.materialItems]);
+        const rowPhotos = r.photos.map((p) => photoByPath.get(p.path)).filter((x): x is LocalPhoto => !!x);
+        if (rowPhotos.length) phByIssue.set(target.key, [...(phByIssue.get(target.key) || []), ...rowPhotos]);
+      }
+
+      const hydIssues: WuIssue[] = issueAggs.map((g) => ({
+        id: g.key,
+        label: g.label,
+        note: g.note,
+        needsOrdering: g.needsOrdering,
+        parts: [],
+        orderingNotes: g.orderingNotes,
+        unitKeys: [...g.unitKeys],
+        materials: matByIssue.get(g.key) || [],
+        photos: phByIssue.get(g.key) || [],
+      }));
+      setIssues(hydIssues.length ? hydIssues : [makeIssue()]);
+      setStatus(editBatch[0].status);
+      setDraftReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBatchEdit]);
 
   const unitOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -619,7 +746,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       tasks: WriteUpLineItem[];
       specs: SpecChange[];
       materials: WriteUpMaterialItem[];
-      photos: Blob[];
+      photos: LocalPhoto[];
       notes: string;
     }
     const byKey = new Map<string, Agg>();
@@ -682,7 +809,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         // Attach this item's materials + photos to just its first target (no dupes).
         if (idx === 0) {
           a.materials.push(...generalPartMaterials, ...it.materials);
-          a.photos.push(...it.photos.map((p) => p.blob));
+          a.photos.push(...it.photos);
         }
       });
     });
@@ -702,7 +829,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         materialItems: a.materials,
         newProduct: a.isNewProduct ? { ...emptyProduct, type: a.unitType } : null,
         notes: a.notes,
-        photoFiles: a.photos,
+        photos: a.photos.map((p) => ({ blob: p.path ? undefined : p.blob, path: p.path, name: p.name })),
       }));
   }
 
@@ -792,7 +919,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   // the latest state without re-binding listeners on every keystroke.
   const flushRef = useRef<() => void>(() => {});
   flushRef.current = () => {
-    if (isEditing || !draftReady || submitting) return;
+    if (isEditing || isBatchEdit || !draftReady || submitting) return;
     const d = buildDraftNow();
     if (d) saveDraft(d);
     else clearDraft(order.orderNumber);
@@ -815,7 +942,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   // ── Auto-save (debounced) ──
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (isEditing || !draftReady || submitting) return;
+    if (isEditing || isBatchEdit || !draftReady || submitting) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const d = buildDraftNow();
@@ -877,16 +1004,57 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   }
 
   async function handleDeleteWriteUp() {
-    if (!editWriteUp || deletingWriteUp) return;
+    if (deletingWriteUp) return;
+    // Batch edit deletes every row of the submission; flat edit deletes one row.
+    const rows = isBatchEdit ? editBatch || [] : editWriteUp ? [editWriteUp] : [];
+    if (rows.length === 0) return;
     setDeletingWriteUp(true);
     setError("");
-    const res = await deleteWriteUp(
-      editWriteUp.id,
-      editWriteUp.photos.map((p) => p.path)
-    );
+    for (const r of rows) {
+      const res = await deleteWriteUp(
+        r.id,
+        r.photos.map((p) => p.path)
+      );
+      if (!res.ok) {
+        setDeletingWriteUp(false);
+        setError(res.error ? `Couldn't delete: ${res.error}` : "Couldn't delete the write-up — try again.");
+        return;
+      }
+    }
     setDeletingWriteUp(false);
+    onSaved?.();
+    onClose();
+  }
+
+  // Save an edited write-up submission in place through the guided flow.
+  async function saveGuidedEdit() {
+    if (!isBatchEdit || !editBatch || saving) return;
+    if (validIssues.length === 0 && !createHasContent) {
+      setError("Add at least one work item.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    const ctx = {
+      orderNumber: order.orderNumber || editBatch[0].orderNumber,
+      batchId: editBatch[0].batchId || crypto.randomUUID(),
+      workOrderNumber: order.workOrderNumber || editBatch[0].workOrderNumber,
+      jobId: order.materialJob?.id || editBatch[0].jobId || null,
+      customerName: order.customerName || editBatch[0].customerName,
+      address: order.address || editBatch[0].address,
+      createdBy: editBatch[0].createdBy,
+      createdByName: editBatch[0].createdByName,
+      updatedBy: user?.email || "",
+      updatedByName: user?.email?.split("@")[0] || "",
+      status,
+    };
+    const res = await saveWriteUpBatchEdit(editBatch, ctx, buildInputs(), (done, total) =>
+      setProgress({ done, total })
+    );
+    setSaving(false);
+    setProgress(null);
     if (!res.ok) {
-      setError(res.error ? `Couldn't delete: ${res.error}` : "Couldn't delete the write-up — try again.");
+      setError(res.error ? `Couldn't save: ${res.error}` : "Couldn't save the changes — try again.");
       return;
     }
     onSaved?.();
@@ -1035,7 +1203,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             <Wrench className="w-5 h-5 text-amber-600 shrink-0" />
             <div className="min-w-0">
               <h2 className="text-base font-semibold leading-tight">
-                {isEditing ? "Edit Write-Up" : "Field Write-Up"}
+                {isEditing || isBatchEdit ? "Edit Write-Up" : "Field Write-Up"}
               </h2>
               <p className="text-xs text-muted leading-tight truncate">
                 {order.customerName} · #{order.orderNumber}
@@ -1072,7 +1240,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
           {/* Status — edit mode only */}
-          {isEditing && (
+          {(isEditing || isBatchEdit) && (
             <section>
               <SectionLabel>Status</SectionLabel>
               <div className="flex gap-2 mt-2">
@@ -1309,7 +1477,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
 
 
           {/* Danger zone — delete the whole write-up (edit mode) */}
-          {isEditing && (
+          {(isEditing || isBatchEdit) && (
             <div className="pt-3 border-t border-border">
               {confirmDelete ? (
                 <div className="rounded-xl border border-danger/40 bg-danger/5 p-3">
@@ -1352,7 +1520,25 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
 
         {/* Footer */}
         <div className="px-4 py-3 border-t border-border shrink-0">
-          {isEditing ? (
+          {isBatchEdit ? (
+            <button
+              onClick={saveGuidedEdit}
+              disabled={saving}
+              className="w-full py-4 rounded-xl bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.99] transition-transform"
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  {progress ? `Saving ${progress.done}/${progress.total}…` : "Saving…"}
+                </>
+              ) : (
+                <>
+                  <Check className="w-5 h-5" />
+                  Save changes
+                </>
+              )}
+            </button>
+          ) : isEditing ? (
             <button
               onClick={saveChanges}
               disabled={saving || !editorHasContent}
@@ -1568,6 +1754,15 @@ function PhotoSection({
   onUpload: (files: File[]) => void;
   onRemove: (id: string) => void;
 }) {
+  const [dragActive, setDragActive] = useState(false);
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragActive(false);
+    const files = Array.from(e.dataTransfer?.files || []).filter((f) => f.type.startsWith("image/"));
+    if (files.length) onUpload(files);
+  }
+
   return (
     <div>
       <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
@@ -1588,8 +1783,25 @@ function PhotoSection({
         >
           <Camera className="w-4 h-4" /> Take photos
         </button>
-        <label className="flex items-center justify-center gap-2 py-4 rounded-xl border border-dashed border-border text-sm font-medium text-muted cursor-pointer active:bg-surface">
-          <ImagePlus className="w-4 h-4" /> Upload
+        {/* Upload — also a drop target on desktop (drag photos straight in). */}
+        <label
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (!dragActive) setDragActive(true);
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            setDragActive(false);
+          }}
+          onDrop={handleDrop}
+          className={`flex flex-col items-center justify-center gap-0.5 py-4 rounded-xl border border-dashed text-sm font-medium cursor-pointer transition-colors ${
+            dragActive ? "border-amber-500 bg-amber-500/10 text-amber-600" : "border-border text-muted active:bg-surface"
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <ImagePlus className="w-4 h-4" /> {dragActive ? "Drop to upload" : "Upload"}
+          </span>
+          <span className="hidden sm:block text-[10px] font-normal text-muted">or drag &amp; drop</span>
           <input
             type="file"
             accept="image/*"
@@ -2087,7 +2299,7 @@ function UnitSummary({
                 </div>
               )}
               {inp.materialItems.length > 0 && <div className="mt-1 text-xs text-muted">{inp.materialItems.length} material line(s)</div>}
-              {inp.photoFiles.length > 0 && <div className="mt-1 text-xs text-muted">{inp.photoFiles.length} photo(s)</div>}
+              {inp.photos.length > 0 && <div className="mt-1 text-xs text-muted">{inp.photos.length} photo(s)</div>}
             </div>
           ))}
         </div>

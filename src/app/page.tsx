@@ -13,6 +13,7 @@ import TimeOffBanner from "@/components/TimeOffBanner";
 import StaleTabTag from "@/components/StaleTabBanner";
 import { useStaleTab } from "@/hooks/useStaleTab";
 import { useAuth } from "@/hooks/useAuth";
+import { canManageTimeOff as canManageTimeOffRole, isAdmin } from "@/lib/roles";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO } from "date-fns";
@@ -35,7 +36,7 @@ function CalendarPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
   const { role } = useAuth();
-  const canManageTimeOff = role === "admin" || role === "payroll-admin" || role === "field-manager";
+  const canManageTimeOff = canManageTimeOffRole(role);
   const { isStale, staleAfter, nextUpdate, isDesktop, dismiss, resetBlock } = useStaleTab();
 
   useEffect(() => {
@@ -214,15 +215,17 @@ function CalendarPage() {
 
           <FilterPanel orders={orders} filters={filters} onChange={setFilters} />
 
-          <button
-            onClick={() => setView(view === "list" ? "day" : "list")}
-            className={`p-2 rounded-full transition-colors shrink-0 ${
-              view === "list" ? "bg-primary text-white" : "hover:bg-surface"
-            }`}
-            title="Jobs Not Scheduled"
-          >
-            <Database className="w-4.5 h-4.5" />
-          </button>
+          {isAdmin(role) && (
+            <button
+              onClick={() => setView(view === "list" ? "day" : "list")}
+              className={`p-2 rounded-full transition-colors shrink-0 ${
+                view === "list" ? "bg-primary text-white" : "hover:bg-surface"
+              }`}
+              title="Jobs Not Scheduled"
+            >
+              <Database className="w-4.5 h-4.5" />
+            </button>
+          )}
         </div>
       </header>
 
