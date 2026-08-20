@@ -6,7 +6,15 @@ import BottomNav from "@/components/BottomNav";
 import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork, canReviewWriteUps } from "@/lib/roles";
 import { FieldWorkOrder, WriteUpStatus, MaterialUnit } from "@/lib/types";
-import { fetchWriteUps, updateWriteUpStatus, writeUpsToPlainText, deleteWriteUpPhotos } from "@/lib/work-order-store";
+import {
+  fetchWriteUps,
+  updateWriteUpStatus,
+  writeUpsToPlainText,
+  deleteWriteUpPhotos,
+  loadCachedWriteUps,
+  writeUpsCacheFresh,
+  invalidateWriteUpsCache,
+} from "@/lib/work-order-store";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
 import {
@@ -56,11 +64,19 @@ export default function WorkOrdersPage() {
 
   useEffect(() => {
     if (!canView) return;
-    load();
+    // Paint instantly from cache, then refetch only if it's gone stale. This
+    // makes the tab feel instant and avoids re-pulling the whole list (egress)
+    // on every visit when nothing has changed.
+    const cached = loadCachedWriteUps();
+    if (cached) {
+      setWriteUps(cached);
+      setLoading(false);
+    }
+    if (!writeUpsCacheFresh()) load(!cached);
   }, [canView]);
 
-  async function load() {
-    setLoading(true);
+  async function load(showSpinner = true) {
+    if (showSpinner) setLoading(true);
     const data = await fetchWriteUps();
     setWriteUps(data);
     setLoading(false);
@@ -70,6 +86,7 @@ export default function WorkOrdersPage() {
     const ok = await updateWriteUpStatus(id, status);
     if (ok) {
       setWriteUps((prev) => prev.map((w) => (w.id === id ? { ...w, status } : w)));
+      invalidateWriteUpsCache();
     }
   }
 
@@ -82,6 +99,7 @@ export default function WorkOrdersPage() {
       setWriteUps((prev) =>
         prev.map((x) => (x.id === w.id ? { ...x, photos: [], photoCount: 0, photosUploaded: false } : x))
       );
+      invalidateWriteUpsCache();
       return true;
     }
     alert(res.error ? `Couldn't delete photos: ${res.error}` : "Couldn't delete photos — try again.");

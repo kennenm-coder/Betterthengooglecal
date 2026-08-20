@@ -829,6 +829,60 @@ export async function fetchWriteUpsForOrder(orderNumber: string): Promise<FieldW
   return (data as FieldWorkOrderRow[]).map(rowToWriteUp);
 }
 
+// ─── Write-ups list cache (perceived speed + egress control) ────────────────
+// The write-ups list is a full-table pull (select *). To avoid re-downloading
+// it on every visit to the Write-Ups tab, we cache the un-filtered result both
+// in memory (shared for the page session) and in localStorage (survives reload
+// for instant paint). A short freshness window means rapid tab-switching reuses
+// the cache instead of hitting the network — the actual egress win.
+const WRITEUPS_CACHE_KEY = "rba-writeups-list-v1";
+const WRITEUPS_TTL_MS = 2 * 60 * 1000; // 2 min: reuse without refetching
+let _writeUpsCache: { data: FieldWorkOrder[]; ts: number } | null = null;
+
+/** Cached write-ups for instant paint, or null if nothing cached yet. */
+export function loadCachedWriteUps(): FieldWorkOrder[] | null {
+  if (_writeUpsCache) return _writeUpsCache.data;
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(WRITEUPS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { data: FieldWorkOrder[]; ts: number };
+    if (!parsed?.data) return null;
+    _writeUpsCache = parsed;
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+/** True when the cached list is fresh enough to skip a network refetch. */
+export function writeUpsCacheFresh(): boolean {
+  const ts = _writeUpsCache?.ts;
+  return typeof ts === "number" && Date.now() - ts < WRITEUPS_TTL_MS;
+}
+
+/** Drop the cache so the next load refetches (call after any write-up change). */
+export function invalidateWriteUpsCache() {
+  _writeUpsCache = null;
+  if (typeof localStorage !== "undefined") {
+    try {
+      localStorage.removeItem(WRITEUPS_CACHE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function cacheWriteUps(data: FieldWorkOrder[]) {
+  _writeUpsCache = { data, ts: Date.now() };
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(WRITEUPS_CACHE_KEY, JSON.stringify(_writeUpsCache));
+  } catch {
+    // Over quota (large photo/entry payloads) — keep the in-memory cache only.
+  }
+}
+
 export async function fetchWriteUps(statuses?: WriteUpStatus[]): Promise<FieldWorkOrder[]> {
   const supabase = getSupabase();
   if (!supabase) return [];
@@ -836,7 +890,10 @@ export async function fetchWriteUps(statuses?: WriteUpStatus[]): Promise<FieldWo
   if (statuses && statuses.length) query = query.in("status", statuses);
   const { data, error } = await query.order("created_at", { ascending: false });
   if (error || !data) return [];
-  return (data as FieldWorkOrderRow[]).map(rowToWriteUp);
+  const rows = (data as FieldWorkOrderRow[]).map(rowToWriteUp);
+  // Only the un-filtered "all" list is cached (that's what the tab loads).
+  if (!statuses || statuses.length === 0) cacheWriteUps(rows);
+  return rows;
 }
 
 /** Map of order_number → count of open write-ups, for calendar-card badges. */
