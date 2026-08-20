@@ -35,6 +35,7 @@ import {
   Trash2,
   AlertTriangle,
   Send,
+  Camera,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -356,15 +357,10 @@ export default function WorkOrdersPage() {
                           onEdit={() => setEditing(sec.rows)}
                           onReviewItems={(itemsToReview, reviewed) => setItemsReviewed(sec, itemsToReview, reviewed)}
                           onStatus={(status) => setSectionStatus(sec, status)}
+                          onDeletePhotos={async () => {
+                            for (const w of sec.rows) if (w.photos.length) await deletePhotos(w);
+                          }}
                         />
-                        {sec.rows.map((w) => (
-                          <WriteUpRow
-                            key={w.id}
-                            w={w}
-                            canEdit={canEdit}
-                            onDeletePhotos={() => deletePhotos(w)}
-                          />
-                        ))}
                       </div>
                     ))}
                   </div>
@@ -455,6 +451,7 @@ function ReviewSection({
   onEdit,
   onReviewItems,
   onStatus,
+  onDeletePhotos,
 }: {
   section: WriteUpSection;
   total: number;
@@ -463,14 +460,38 @@ function ReviewSection({
   onEdit: () => void;
   onReviewItems: (items: NumberedWorkItem[], reviewed: boolean) => void;
   onStatus: (status: WriteUpStatus) => void;
+  onDeletePhotos: () => Promise<void>;
 }) {
   const allWork = [...section.outstanding, ...section.completed].sort((a, b) => a.seq - b.seq);
   const reviewable = section.status === "in_review";
   const allReviewed = allWork.length > 0 && allWork.every((i) => i.reviewed);
+  const [confirmPhotos, setConfirmPhotos] = useState(false);
+  const [deletingPhotos, setDeletingPhotos] = useState(false);
+
+  // Whole-job note → what's wrong / financing / paint (matches the create screen).
+  let background = "", financing = "", paint = "";
+  const unitNotes: { unitLabel: string | null; text: string }[] = [];
+  for (const n of section.notes) {
+    if (n.unitLabel) {
+      unitNotes.push(n);
+      continue;
+    }
+    const rest: string[] = [];
+    for (const seg of n.text.split("\n\n")) {
+      if (seg.startsWith("Financing notes: ")) financing = seg.slice("Financing notes: ".length);
+      else if (seg.startsWith("Paint & stain notes: ")) paint = seg.slice("Paint & stain notes: ".length);
+      else rest.push(seg);
+    }
+    const bg = rest.join("\n\n").trim();
+    if (bg) background = background ? `${background}\n\n${bg}` : bg;
+  }
+  const unitRows = section.rows.filter((r) => r.unitLabel);
+  const canDeletePhotos = canEdit && section.status === "closed" && section.photos.length > 0;
 
   return (
-    <div className="px-4 py-3 bg-background/40">
-      <div className="flex items-center justify-between gap-2 mb-2">
+    <div className="px-4 py-3 bg-background/40 space-y-3">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-xs font-bold uppercase tracking-wide text-muted">
             Write-up {section.index}
@@ -481,6 +502,7 @@ function ReviewSection({
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-[11px] text-muted text-right truncate">
             Wrote: {section.createdByName || "—"} · {format(parseISO(section.createdAt), "MMM d")}
+            {section.updatedByName ? ` · edited by ${section.updatedByName}` : ""}
           </span>
           {canEdit && (
             <button
@@ -494,43 +516,194 @@ function ReviewSection({
         </div>
       </div>
 
-      {allWork.length > 0 && (
-        <ul className="space-y-1.5">
-          {allWork.map((it) => {
-            const canToggle = canReview && reviewable;
-            return (
-              <li key={it.seq} className="flex items-start gap-2 text-sm">
-                <button
-                  disabled={!canToggle}
-                  onClick={() => onReviewItems([it], !it.reviewed)}
-                  className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
-                    it.reviewed ? "bg-blue-500 border-blue-500 text-white" : "border-border text-transparent"
-                  } ${canToggle ? "cursor-pointer" : "cursor-default"}`}
-                  title={it.reviewed ? "Reviewed — tap to undo" : "Mark reviewed"}
-                >
-                  <Check className="w-3 h-3" />
-                </button>
-                <span className="font-mono text-xs font-bold text-muted mt-0.5 shrink-0">{padSeq(it.seq)}</span>
-                <span className="flex-1 min-w-0">
-                  <span>{it.label}</span>
-                  {it.units.length > 0 && <span className="text-muted"> — {it.units.join(", ")}</span>}
-                  <span className="flex flex-wrap gap-x-2">
-                    {it.reviewed && it.reviewedByName && (
-                      <span className="text-[10px] text-blue-600">
-                        Reviewed by {it.reviewedByName}
-                        {it.reviewedAt ? ` · ${format(parseISO(it.reviewedAt), "MMM d")}` : ""}
-                      </span>
-                    )}
-                    {it.completed && <span className="text-[10px] text-green-600 font-medium">Installed ✓</span>}
-                  </span>
-                </span>
-              </li>
-            );
-          })}
-        </ul>
+      {/* 1. What's wrong + financing/paint + any unit notes */}
+      {(background || financing || paint || unitNotes.length > 0) && (
+        <div className="space-y-2">
+          {background && (
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">What&apos;s wrong</div>
+              <p className="text-sm whitespace-pre-wrap">{background}</p>
+            </div>
+          )}
+          {financing && (
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">Financing notes</div>
+              <p className="text-sm">{financing}</p>
+            </div>
+          )}
+          {paint && (
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">Paint &amp; stain notes</div>
+              <p className="text-sm">{paint}</p>
+            </div>
+          )}
+          {unitNotes.map((n, i) => (
+            <div key={i}>
+              <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">{n.unitLabel} note</div>
+              <p className="text-sm whitespace-pre-wrap">{n.text}</p>
+            </div>
+          ))}
+        </div>
       )}
 
-      <div className="flex flex-wrap gap-2 mt-3 no-print">
+      {/* 2. Units affected (with added products + spec changes) */}
+      {unitRows.length > 0 && (
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">Units affected</div>
+          <div className="space-y-1.5">
+            {unitRows.map((r) => {
+              const specs = section.specChanges.filter((c) => c.unitLabel === r.unitLabel);
+              return (
+                <div key={r.id} className="text-sm">
+                  <span className="font-semibold">{r.unitLabel}</span>
+                  {r.newProduct && (
+                    <span className="text-muted">
+                      {" "}
+                      · Added: {r.newProduct.type}
+                      {r.newProduct.size ? ` ${r.newProduct.size}` : ""}
+                    </span>
+                  )}
+                  {specs.map((c, i) => (
+                    <div key={i} className="text-xs ml-4">
+                      <span className="text-muted">{c.field}:</span>{" "}
+                      <span className="line-through text-muted">{c.oldValue || "—"}</span>
+                      {" → "}
+                      <span className="font-semibold text-amber-600">{c.newValue}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 3. Work to complete */}
+      {allWork.length > 0 && (
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">Work to complete</div>
+          <ul className="space-y-1.5">
+            {allWork.map((it) => {
+              const canToggle = canReview && reviewable;
+              return (
+                <li key={it.seq} className="flex items-start gap-2 text-sm">
+                  <button
+                    disabled={!canToggle}
+                    onClick={() => onReviewItems([it], !it.reviewed)}
+                    className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                      it.reviewed ? "bg-blue-500 border-blue-500 text-white" : "border-border text-transparent"
+                    } ${canToggle ? "cursor-pointer" : "cursor-default"}`}
+                    title={it.reviewed ? "Reviewed — tap to undo" : "Mark reviewed"}
+                  >
+                    <Check className="w-3 h-3" />
+                  </button>
+                  <span className="font-mono text-xs font-bold text-muted mt-0.5 shrink-0">{padSeq(it.seq)}</span>
+                  <span className="flex-1 min-w-0">
+                    <span>{it.label}</span>
+                    {it.units.length > 0 && <span className="text-muted"> — {it.units.join(", ")}</span>}
+                    <span className="flex flex-wrap gap-x-2">
+                      {it.reviewed && it.reviewedByName && (
+                        <span className="text-[10px] text-blue-600">
+                          Reviewed by {it.reviewedByName}
+                          {it.reviewedAt ? ` · ${format(parseISO(it.reviewedAt), "MMM d")}` : ""}
+                        </span>
+                      )}
+                      {it.completed && <span className="text-[10px] text-green-600 font-medium">Installed ✓</span>}
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* 4. Trim / material */}
+      {section.materials.length > 0 && (
+        <div className="overflow-x-auto">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">Trim / material</div>
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="bg-[#1a1a1a]">
+                {[`QTY: ${section.totalPcs}`, "Unit", "Item", "Color", "Species", "Lengths", "Vendor"].map((h) => (
+                  <th key={h} className="px-2 py-1 text-[9px] font-bold tracking-wider uppercase text-white">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {section.materials.map((m, i) => (
+                <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-surface"}>
+                  <td className="px-2 py-1 text-xs border-b border-border font-bold whitespace-nowrap">
+                    {m.qty} {m.unit}
+                  </td>
+                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.unitLabel || "—"}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border font-semibold">{m.item}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.color || "—"}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.species || "—"}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border text-muted font-mono">{m.lengths || "—"}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border font-bold text-[#6DB344]">{m.vendor || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* 5. Photos (count — open the Doc to view) */}
+      {section.photos.length > 0 && (
+        <div className="text-xs text-muted flex items-center gap-1.5">
+          <Camera className="w-3.5 h-3.5" />
+          {section.photos.length} photo{section.photos.length !== 1 ? "s" : ""} — open the Doc to view
+        </div>
+      )}
+
+      {/* Delete photos — closed write-ups only, admins/field managers */}
+      {canDeletePhotos && (
+        <div className="no-print">
+          {confirmPhotos ? (
+            <div className="rounded-lg border border-danger/40 bg-danger/5 px-3 py-2">
+              <p className="text-xs font-medium text-danger flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Delete all {section.photos.length} photo{section.photos.length !== 1 ? "s" : ""}? This can&apos;t be undone.
+              </p>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => setConfirmPhotos(false)}
+                  disabled={deletingPhotos}
+                  className="flex-1 py-2 rounded-lg text-xs font-medium border border-border disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setDeletingPhotos(true);
+                    await onDeletePhotos();
+                    setDeletingPhotos(false);
+                    setConfirmPhotos(false);
+                  }}
+                  disabled={deletingPhotos}
+                  className="flex-1 py-2 rounded-lg text-xs font-semibold bg-danger text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {deletingPhotos ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                  Delete photos
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmPhotos(true)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-danger border border-danger/30"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete photos
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2 no-print">
         {section.status === "draft" && canEdit && (
           <button
             onClick={() => onStatus("in_review")}
@@ -569,177 +742,6 @@ function ReviewSection({
           </button>
         )}
       </div>
-    </div>
-  );
-}
-
-function WriteUpRow({
-  w,
-  canEdit,
-  onDeletePhotos,
-}: {
-  w: FieldWorkOrder;
-  canEdit: boolean;
-  onDeletePhotos: () => Promise<boolean>;
-}) {
-  // Only surface "edited" when it actually differs from creation.
-  const wasEdited = !!w.updatedBy && Math.abs(+parseISO(w.updatedAt) - +parseISO(w.createdAt)) > 60000;
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [deletingPhotos, setDeletingPhotos] = useState(false);
-  const canDeletePhotos = canEdit && w.status === "closed" && w.photos.length > 0;
-  return (
-    <div className="px-4 py-3 border-t border-border">
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold">{w.unitLabel || "Whole job"}</span>
-          <StatusPill status={w.status} />
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-muted text-right">
-            {w.createdByName || w.createdBy} · {format(parseISO(w.createdAt), "MMM d, h:mm a")}
-            {wasEdited && (
-              <span className="block text-[10px]">
-                edited {format(parseISO(w.updatedAt), "MMM d, h:mm a")} by {w.updatedByName || w.updatedBy}
-              </span>
-            )}
-          </span>
-        </div>
-      </div>
-
-      {w.newProduct && (
-        <div className="mb-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-amber-700 mb-0.5">
-            Added product
-          </p>
-          <p className="text-sm font-semibold">
-            {w.newProduct.type}
-            {w.newProduct.size ? ` · ${w.newProduct.size}` : ""}
-          </p>
-          <p className="text-xs text-muted">
-            {[w.newProduct.exteriorColor, w.newProduct.interiorColor, w.newProduct.intFinish, w.newProduct.frame]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
-        </div>
-      )}
-
-      {w.lineItems.length > 0 && (
-        <ul className="mb-2 space-y-1">
-          {w.lineItems.map((li, i) => (
-            <li key={i} className="text-sm flex items-start gap-2">
-              {li.completed ? (
-                <Check className="w-3.5 h-3.5 mt-0.5 text-green-600 shrink-0" />
-              ) : (
-                <span
-                  className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${
-                    li.kind === "preset" ? "bg-amber-500" : "bg-primary"
-                  }`}
-                />
-              )}
-              <span className={li.completed ? "line-through text-muted" : ""}>
-                {li.label}
-                {li.notes ? <span className="text-muted"> — {li.notes}</span> : null}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {w.specChanges.length > 0 && (
-        <div className="mb-2 rounded-lg bg-background border border-border px-3 py-2">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">Spec corrections</p>
-          {w.specChanges.map((c, i) => (
-            <p key={i} className="text-xs">
-              <span className="text-muted">{c.field}:</span>{" "}
-              <span className="line-through text-muted">{c.oldValue || "—"}</span>{" → "}
-              <span className="font-semibold text-amber-600">{c.newValue}</span>
-            </p>
-          ))}
-        </div>
-      )}
-
-      {w.materialItems.length > 0 && (
-        <div className="mb-2 overflow-x-auto">
-          <table className="w-full border-collapse text-left">
-            <thead>
-              <tr className="bg-[#1a1a1a]">
-                {["QTY", "Item", "Color", "Species", "Lengths", "Vendor"].map((h) => (
-                  <th
-                    key={h}
-                    className="px-2 py-1 text-[9px] font-bold tracking-wider uppercase text-white"
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {w.materialItems.map((m, i) => (
-                <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-surface"}>
-                  <td className="px-2 py-1 text-xs border-b border-border font-bold whitespace-nowrap">
-                    {m.qty} {m.unit}
-                  </td>
-                  <td className="px-2 py-1 text-xs border-b border-border font-semibold">{m.item}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.color || "—"}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.species || "—"}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border text-muted font-mono">{m.lengths || "—"}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border font-bold text-[#6DB344]">{m.vendor || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {w.notes && <p className="text-sm text-muted whitespace-pre-wrap mb-2">{w.notes}</p>}
-
-      {/* Delete photos — closed write-ups only, while photos still exist */}
-      {canDeletePhotos && (
-        <div className="mt-2 no-print">
-          {confirmingDelete ? (
-            <div className="rounded-lg border border-danger/40 bg-danger/5 px-3 py-2">
-              <p className="text-xs font-medium text-danger flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                Delete {w.photos.length} photo{w.photos.length !== 1 ? "s" : ""}? This can&apos;t be undone.
-              </p>
-              <div className="flex gap-2 mt-2">
-                <button
-                  onClick={() => setConfirmingDelete(false)}
-                  disabled={deletingPhotos}
-                  className="flex-1 py-2 rounded-lg text-xs font-medium border border-border disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={async () => {
-                    setDeletingPhotos(true);
-                    const ok = await onDeletePhotos();
-                    setDeletingPhotos(false);
-                    if (ok) setConfirmingDelete(false);
-                  }}
-                  disabled={deletingPhotos}
-                  className="flex-1 py-2 rounded-lg text-xs font-semibold bg-danger text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  {deletingPhotos ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="w-3.5 h-3.5" />
-                  )}
-                  {deletingPhotos ? "Deleting…" : "Delete photos"}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setConfirmingDelete(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-danger border border-danger/30 hover:bg-danger/5"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Delete photos ({w.photos.length})
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }
