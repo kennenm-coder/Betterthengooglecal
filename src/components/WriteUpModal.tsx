@@ -416,11 +416,108 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   }, [editWriteUp]);
 
   // Batch edit: load a whole submission into the guided (new-write-up) flow.
+  // The text + structure fill in immediately; photos download in the background
+  // and attach a moment later, so the form never sits blank.
   useEffect(() => {
     if (!isBatchEdit || !editBatch) return;
     let cancelled = false;
+
+    // ── Phase 1 (synchronous): everything except photo blobs ──
+    // Whole-job notes → background / financing / paint.
+    let bg = "", fin = "", paint = "";
+    for (const r of editBatch) {
+      if (!r.notes) continue;
+      const rest: string[] = [];
+      for (const seg of r.notes.split("\n\n")) {
+        if (seg.startsWith("Financing notes: ")) fin = seg.slice("Financing notes: ".length);
+        else if (seg.startsWith("Paint & stain notes: ")) paint = seg.slice("Paint & stain notes: ".length);
+        else rest.push(seg);
+      }
+      const restText = rest.join("\n\n").trim();
+      if (restText && !bg) bg = restText;
+    }
+    setBackground(bg);
+    setFinancingNotes(fin);
+    setPaintStainNotes(paint);
+
+    // Units = rows with a unit label (the whole-job row, null, isn't a unit).
+    const unitRows = editBatch.filter((r) => r.unitLabel);
+    const labelToKey = new Map<string, string>();
+    const hydUnits: WuUnit[] = unitRows.map((r) => {
+      const key = crypto.randomUUID();
+      labelToKey.set((r.unitLabel || "").trim(), key);
+      return {
+        key,
+        isNewProduct: !!r.newProduct,
+        unitLabel: r.unitLabel || "",
+        unitType: r.newProduct?.type || "",
+        hasSpecChange: r.specChanges.length > 0,
+        specEntries: specEntriesFromChanges(r.specChanges),
+      };
+    });
+    setWuUnits(hydUnits);
+
+    // Issues = line items grouped by their number (or label) across rows.
+    interface IAgg { key: string; label: string; note: string; needsOrdering: boolean; orderingNotes: string; unitKeys: Set<string>; order: number; }
+    const iMap = new Map<string, IAgg>();
+    let order = 0;
+    for (const r of editBatch) {
+      for (const li of r.lineItems) {
+        const gk = li.seq != null ? `s:${li.seq}` : `l:${li.label.trim().toLowerCase()}`;
+        let g = iMap.get(gk);
+        if (!g) {
+          let note = "", needsOrdering = false, orderingNotes = "";
+          for (const b of (li.notes || "").split(" · ")) {
+            if (b.startsWith("NEEDS ORDERED: ")) { needsOrdering = true; orderingNotes = b.slice("NEEDS ORDERED: ".length); }
+            else if (b === "NEEDS ORDERED") needsOrdering = true;
+            else if (b.trim()) note = note ? `${note} · ${b}` : b;
+          }
+          g = { key: crypto.randomUUID(), label: li.label, note, needsOrdering, orderingNotes, unitKeys: new Set(), order: order++ };
+          iMap.set(gk, g);
+        }
+        const k = r.unitLabel ? labelToKey.get(r.unitLabel.trim()) : undefined;
+        if (k) g.unitKeys.add(k);
+      }
+    }
+    const issueAggs = [...iMap.values()].sort((a, b) => a.order - b.order);
+
+    // Best guess: attach each row's materials + photos to an issue that affects
+    // that unit (materials/photos are stored per-unit, not per-issue). Photos
+    // are held by path here; their blobs download in phase 2.
+    const matByIssue = new Map<string, WriteUpMaterialItem[]>();
+    const photoPathsByIssue = new Map<string, WriteUpPhoto[]>();
+    const targetFor = (unitKey: string | null): IAgg | undefined => {
+      if (unitKey) {
+        const m = issueAggs.find((g) => g.unitKeys.has(unitKey));
+        if (m) return m;
+      }
+      return issueAggs.find((g) => g.unitKeys.size === 0) || issueAggs[0];
+    };
+    for (const r of editBatch) {
+      const unitKey = r.unitLabel ? labelToKey.get(r.unitLabel.trim()) || null : null;
+      const target = targetFor(unitKey);
+      if (!target) continue;
+      if (r.materialItems.length) matByIssue.set(target.key, [...(matByIssue.get(target.key) || []), ...r.materialItems]);
+      if (r.photos.length) photoPathsByIssue.set(target.key, [...(photoPathsByIssue.get(target.key) || []), ...r.photos]);
+    }
+
+    const hydIssues: WuIssue[] = issueAggs.map((g) => ({
+      id: g.key,
+      label: g.label,
+      note: g.note,
+      needsOrdering: g.needsOrdering,
+      parts: [],
+      orderingNotes: g.orderingNotes,
+      unitKeys: [...g.unitKeys],
+      materials: matByIssue.get(g.key) || [],
+      photos: [],
+    }));
+    setIssues(hydIssues.length ? hydIssues : [makeIssue()]);
+    setStatus(editBatch[0].status);
+    setDraftReady(true);
+
+    // ── Phase 2 (background): download photo blobs, then attach them ──
     (async () => {
-      // Load every photo once (path → LocalPhoto with its blob).
       const photoByPath = new Map<string, LocalPhoto>();
       for (const r of editBatch) {
         for (const p of r.photos) {
@@ -435,101 +532,17 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
           }
         }
       }
-      if (cancelled) return;
-
-      // Whole-job notes → background / financing / paint.
-      let bg = "", fin = "", paint = "";
-      for (const r of editBatch) {
-        if (!r.notes) continue;
-        const rest: string[] = [];
-        for (const seg of r.notes.split("\n\n")) {
-          if (seg.startsWith("Financing notes: ")) fin = seg.slice("Financing notes: ".length);
-          else if (seg.startsWith("Paint & stain notes: ")) paint = seg.slice("Paint & stain notes: ".length);
-          else rest.push(seg);
-        }
-        const restText = rest.join("\n\n").trim();
-        if (restText && !bg) bg = restText;
-      }
-      setBackground(bg);
-      setFinancingNotes(fin);
-      setPaintStainNotes(paint);
-
-      // Units = rows with a unit label (the whole-job row, null, isn't a unit).
-      const unitRows = editBatch.filter((r) => r.unitLabel);
-      const labelToKey = new Map<string, string>();
-      const hydUnits: WuUnit[] = unitRows.map((r) => {
-        const key = crypto.randomUUID();
-        labelToKey.set((r.unitLabel || "").trim(), key);
-        return {
-          key,
-          isNewProduct: !!r.newProduct,
-          unitLabel: r.unitLabel || "",
-          unitType: r.newProduct?.type || "",
-          hasSpecChange: r.specChanges.length > 0,
-          specEntries: specEntriesFromChanges(r.specChanges),
-        };
-      });
-      setWuUnits(hydUnits);
-
-      // Issues = line items grouped by their number (or label) across rows.
-      interface IAgg { key: string; label: string; note: string; needsOrdering: boolean; orderingNotes: string; unitKeys: Set<string>; order: number; }
-      const iMap = new Map<string, IAgg>();
-      let order = 0;
-      for (const r of editBatch) {
-        for (const li of r.lineItems) {
-          const gk = li.seq != null ? `s:${li.seq}` : `l:${li.label.trim().toLowerCase()}`;
-          let g = iMap.get(gk);
-          if (!g) {
-            let note = "", needsOrdering = false, orderingNotes = "";
-            for (const b of (li.notes || "").split(" · ")) {
-              if (b.startsWith("NEEDS ORDERED: ")) { needsOrdering = true; orderingNotes = b.slice("NEEDS ORDERED: ".length); }
-              else if (b === "NEEDS ORDERED") needsOrdering = true;
-              else if (b.trim()) note = note ? `${note} · ${b}` : b;
-            }
-            g = { key: crypto.randomUUID(), label: li.label, note, needsOrdering, orderingNotes, unitKeys: new Set(), order: order++ };
-            iMap.set(gk, g);
-          }
-          const k = r.unitLabel ? labelToKey.get(r.unitLabel.trim()) : undefined;
-          if (k) g.unitKeys.add(k);
-        }
-      }
-      const issueAggs = [...iMap.values()].sort((a, b) => a.order - b.order);
-
-      // Best guess: attach each row's materials + photos to an issue that
-      // affects that unit (materials/photos are stored per-unit, not per-issue).
-      const matByIssue = new Map<string, WriteUpMaterialItem[]>();
-      const phByIssue = new Map<string, LocalPhoto[]>();
-      const targetFor = (unitKey: string | null): IAgg | undefined => {
-        if (unitKey) {
-          const m = issueAggs.find((g) => g.unitKeys.has(unitKey));
-          if (m) return m;
-        }
-        return issueAggs.find((g) => g.unitKeys.size === 0) || issueAggs[0];
-      };
-      for (const r of editBatch) {
-        const unitKey = r.unitLabel ? labelToKey.get(r.unitLabel.trim()) || null : null;
-        const target = targetFor(unitKey);
-        if (!target) continue;
-        if (r.materialItems.length) matByIssue.set(target.key, [...(matByIssue.get(target.key) || []), ...r.materialItems]);
-        const rowPhotos = r.photos.map((p) => photoByPath.get(p.path)).filter((x): x is LocalPhoto => !!x);
-        if (rowPhotos.length) phByIssue.set(target.key, [...(phByIssue.get(target.key) || []), ...rowPhotos]);
-      }
-
-      const hydIssues: WuIssue[] = issueAggs.map((g) => ({
-        id: g.key,
-        label: g.label,
-        note: g.note,
-        needsOrdering: g.needsOrdering,
-        parts: [],
-        orderingNotes: g.orderingNotes,
-        unitKeys: [...g.unitKeys],
-        materials: matByIssue.get(g.key) || [],
-        photos: phByIssue.get(g.key) || [],
-      }));
-      setIssues(hydIssues.length ? hydIssues : [makeIssue()]);
-      setStatus(editBatch[0].status);
-      setDraftReady(true);
+      if (cancelled || photoByPath.size === 0) return;
+      setIssues((prev) =>
+        prev.map((i) => {
+          const paths = photoPathsByIssue.get(i.id);
+          if (!paths || paths.length === 0) return i;
+          const photos = paths.map((pp) => photoByPath.get(pp.path)).filter((x): x is LocalPhoto => !!x);
+          return photos.length ? { ...i, photos } : i;
+        })
+      );
     })();
+
     return () => {
       cancelled = true;
     };
