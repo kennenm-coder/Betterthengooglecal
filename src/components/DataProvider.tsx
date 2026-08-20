@@ -243,9 +243,17 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
   // Detect linked-job changes when the tab regains focus — only flag when the
   // fingerprint actually differs from what we loaded (no false alarms).
+  // Debounced to at most once per minute so backgrounding/foregrounding the app
+  // (constant in mobile field use) doesn't re-query the signature every time —
+  // detecting an edited linked job within a minute is plenty, and it keeps
+  // repeated focus events from adding up on egress.
+  const lastSigCheckRef = useRef(0);
   useEffect(() => {
+    const SIG_CHECK_MIN_INTERVAL_MS = 60 * 1000;
     const check = async () => {
       if (!jobsSigRef.current) return;
+      if (Date.now() - lastSigCheckRef.current < SIG_CHECK_MIN_INTERVAL_MS) return;
+      lastSigCheckRef.current = Date.now();
       try {
         const sig = await fetchJobsSignature();
         if (sig && sig !== jobsSigRef.current) setLinkedJobsStale(true);
