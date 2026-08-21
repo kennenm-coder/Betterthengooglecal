@@ -44,6 +44,7 @@ import {
   getDraftPhoto,
   deleteDraftPhoto,
 } from "@/lib/writeup-draft";
+import { getWriteUpEmails } from "@/lib/action-settings";
 import {
   X,
   Plus,
@@ -1129,7 +1130,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     if (sendEmail) {
       const origin = typeof window !== "undefined" ? window.location.origin : "";
       const docLink = `${origin}/work-orders/${encodeURIComponent(order.orderNumber)}`;
-      const mailto = buildWriteUpMailto(ctx, inputs, docLink, autoCc);
+      const toEmails = await getWriteUpEmails();
+      const mailto = buildWriteUpMailto(ctx, inputs, docLink, toEmails, autoCc);
       if (typeof window !== "undefined") window.location.href = mailto;
     }
 
