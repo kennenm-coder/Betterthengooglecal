@@ -916,16 +916,21 @@ export async function deleteWriteUp(
   return { ok: true, error: null };
 }
 
-/** Field-notes inbox the write-up email is addressed to. */
+/** Default inbox a write-up email is addressed to (admin-configurable via the
+ *  Dev Settings → Config → Email Defaults section; see getWriteUpEmails()). */
 export const WRITEUP_EMAIL_TO = "fieldnotes@rbanwo.com";
 
-/** Build a mailto: link with a pre-written summary + a link to the doc. */
+/** Build a mailto: link with a pre-written summary + a link to the doc.
+ *  `to` is the list of default recipients (falls back to WRITEUP_EMAIL_TO);
+ *  `cc` is the submitting user's per-account auto-CC list. */
 export function buildWriteUpMailto(
   ctx: SubmitContext,
   entries: WriteUpEntryInput[],
   docLink: string,
+  to?: string[],
   cc?: string[]
 ): string {
+  const toList = to && to.length ? to : [WRITEUP_EMAIL_TO];
   const subject = `Field Write-Up - ${ctx.customerName || ""} - ${ctx.orderNumber}`;
   const lines: string[] = [
     "A field write-up was completed:",
@@ -957,7 +962,7 @@ export function buildWriteUpMailto(
   lines.push("", "View the full write-up (Duck Force sign-in required):", docLink);
 
   const ccPart = cc && cc.length ? `&cc=${encodeURIComponent(cc.join(","))}` : "";
-  return `mailto:${WRITEUP_EMAIL_TO}?subject=${encodeURIComponent(subject)}${ccPart}&body=${encodeURIComponent(
+  return `mailto:${toList.join(",")}?subject=${encodeURIComponent(subject)}${ccPart}&body=${encodeURIComponent(
     lines.join("\n")
   )}`;
 }

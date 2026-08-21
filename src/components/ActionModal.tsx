@@ -2,7 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { WorkOrder, ActionPerson } from "@/lib/types";
-import { getActionTypes, addActionLog } from "@/lib/action-settings";
+import {
+  getActionTypes,
+  addActionLog,
+  getFieldNotesEmail,
+  DEFAULT_FIELDNOTES_EMAIL,
+} from "@/lib/action-settings";
 import { useAuth } from "@/hooks/useAuth";
 import { X, ChevronRight, Phone, FileText, AlertTriangle, Mic, MicOff } from "lucide-react";
 import { format } from "date-fns";
@@ -22,6 +27,7 @@ export default function ActionModal({
   const [actionType, setActionType] = useState("");
   const [notes, setNotes] = useState("");
   const [actionTypes, setActionTypes] = useState<string[]>([]);
+  const [fieldNotesEmail, setFieldNotesEmail] = useState(DEFAULT_FIELDNOTES_EMAIL);
   const [listening, setListening] = useState(false);
   const [recognition, setRecognition] = useState<any>(null);
   const { user, autoCc } = useAuth();
@@ -32,6 +38,7 @@ export default function ActionModal({
 
   useEffect(() => {
     getActionTypes().then(setActionTypes);
+    getFieldNotesEmail().then(setFieldNotesEmail);
   }, []);
 
   useEffect(() => {
@@ -90,7 +97,7 @@ export default function ActionModal({
       `Salesforce Link: ${sfUrl}`,
     ].join("\n");
 
-    const toEmails = [person.email, "fieldnotes@rbanwo.com"].join(",");
+    const toEmails = [person.email, fieldNotesEmail || DEFAULT_FIELDNOTES_EMAIL].join(",");
     const ccPart = autoCc.length > 0 ? `&cc=${encodeURIComponent(autoCc.join(","))}` : "";
     const mailto = `mailto:${toEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}${ccPart}`;
 

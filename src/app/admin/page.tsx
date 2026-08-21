@@ -6,6 +6,12 @@ import {
   getActionTypes,
   setActionTypes,
   getActionLog,
+  getWriteUpEmails,
+  setWriteUpEmails,
+  getFieldNotesEmail,
+  setFieldNotesEmail,
+  DEFAULT_WRITEUP_EMAIL,
+  DEFAULT_FIELDNOTES_EMAIL,
 } from "@/lib/action-settings";
 import { ActionLogEntry } from "@/lib/types";
 import BottomNav from "@/components/BottomNav";
@@ -532,10 +538,10 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
             ) : (
               <div
                 key={entry.id}
-                onClick={() => startEdit(entry)}
+                onClick={isPayrollAdmin ? undefined : () => startEdit(entry)}
                 className={`flex items-center justify-between px-3 py-2.5 rounded-lg border border-border bg-surface transition-colors ${
-                  isPayrollAdmin && entry.role === "admin"
-                    ? "opacity-60"
+                  isPayrollAdmin
+                    ? ""
                     : "cursor-pointer hover:border-primary/30"
                 }`}
               >
@@ -629,16 +635,18 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
               )}
             </button>
           </div>
-          <div>
-            <label className="text-[11px] font-medium text-muted mb-1 block">
-              Roles
-            </label>
-            <RoleCheckboxes
-              selected={newRoles}
-              onChange={setNewRoles}
-              options={availableRoles}
-            />
-          </div>
+          {!isPayrollAdmin && (
+            <div>
+              <label className="text-[11px] font-medium text-muted mb-1 block">
+                Roles
+              </label>
+              <RoleCheckboxes
+                selected={newRoles}
+                onChange={setNewRoles}
+                options={availableRoles}
+              />
+            </div>
+          )}
           {error && (
             <p className="text-xs text-danger flex items-center gap-1">
               <AlertCircle className="w-3 h-3" />
@@ -725,8 +733,115 @@ function SettingsTab() {
         </div>
       </section>
 
+      <EmailDefaultsSection />
+
       <WriteUpPresetsSection />
     </div>
+  );
+}
+
+/* ── Email Defaults ── */
+function EmailDefaultsSection() {
+  const [writeUpEmails, setWriteUpEmailsState] = useState("");
+  const [fieldNotesEmail, setFieldNotesEmailState] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    Promise.all([getWriteUpEmails(), getFieldNotesEmail()]).then(
+      ([writeUps, fieldNotes]) => {
+        setWriteUpEmailsState(writeUps.join(", "));
+        setFieldNotesEmailState(fieldNotes);
+        setLoading(false);
+      }
+    );
+  }, []);
+
+  async function save() {
+    setSaving(true);
+    setSaved(false);
+    const writeUpList = writeUpEmails
+      .split(/[,;\n]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.includes("@"));
+    const fieldNotes = fieldNotesEmail.trim().toLowerCase();
+    await Promise.all([
+      setWriteUpEmails(writeUpList.length ? writeUpList : [DEFAULT_WRITEUP_EMAIL]),
+      setFieldNotesEmail(fieldNotes.includes("@") ? fieldNotes : DEFAULT_FIELDNOTES_EMAIL),
+    ]);
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-1">
+        Email Defaults
+      </h2>
+      <p className="text-xs text-muted mb-3">
+        Default recipients used when field managers submit write-ups and field
+        notes. Each user&apos;s own auto-CC list is still added on top.
+      </p>
+      {loading ? (
+        <div className="flex items-center gap-2 text-muted text-sm py-2">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading…
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div>
+            <label className="text-[11px] font-medium text-muted mb-1 block">
+              Write-Up “To” Email(s)
+            </label>
+            <input
+              type="text"
+              value={writeUpEmails}
+              onChange={(e) => setWriteUpEmailsState(e.target.value)}
+              placeholder="writeups@company.com, manager@company.com"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            <p className="text-[10px] text-muted mt-0.5">
+              Comma-separated. All of these are put on the “To” line of a
+              submitted write-up.
+            </p>
+          </div>
+          <div>
+            <label className="text-[11px] font-medium text-muted mb-1 block">
+              Field Notes Email
+            </label>
+            <input
+              type="email"
+              value={fieldNotesEmail}
+              onChange={(e) => setFieldNotesEmailState(e.target.value)}
+              placeholder="fieldnotes@company.com"
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            <p className="text-[10px] text-muted mt-0.5">
+              The inbox field notes are sent to, alongside the sender&apos;s own
+              email.
+            </p>
+          </div>
+          <button
+            onClick={save}
+            disabled={saving}
+            className="w-full py-2 rounded-lg bg-primary text-white text-sm font-medium flex items-center justify-center gap-1 disabled:opacity-50"
+          >
+            {saving ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : saved ? (
+              <>
+                <Check className="w-4 h-4" />
+                Saved
+              </>
+            ) : (
+              "Save Email Defaults"
+            )}
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 
