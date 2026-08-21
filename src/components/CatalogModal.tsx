@@ -1,6 +1,10 @@
 "use client";
 
-// Settings → Manage Catalogs. Two editable catalogs that feed the write-up flow:
+// Settings → Manage Catalogs. Modeled on the material-list-maker's Material
+// Catalog editor: a search box, category filter pills, an item count, an
+// "+ Add" button, and collapsible item cards you expand to edit inline (with
+// category / verified badges and duplicate / delete). Two catalogs feed the
+// write-up flow:
 //  • Parts — name, category, product type, optional color/size options, and a
 //    per-variant (color+size) part-number matrix.
 //  • Work to complete — the "what needs done" list, with an optional
@@ -19,7 +23,7 @@ import {
   upsertWork,
   deleteWork,
 } from "@/lib/work-order-store";
-import { X, Plus, Trash2, Loader2, Check, Package, Wrench, Pencil } from "lucide-react";
+import { X, Plus, Trash2, Loader2, Check, Package, Wrench, ChevronDown, ChevronRight, Copy } from "lucide-react";
 
 export default function CatalogModal({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<"parts" | "work">("parts");
@@ -37,8 +41,8 @@ export default function CatalogModal({ onClose }: { onClose: () => void }) {
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium ${
-                tab === t ? "bg-primary text-white" : "bg-surface text-muted"
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-sm font-semibold ${
+                tab === t ? "bg-amber-500 text-white" : "bg-surface text-muted"
               }`}
             >
               {t === "parts" ? <Package className="w-4 h-4" /> : <Wrench className="w-4 h-4" />}
@@ -55,8 +59,25 @@ export default function CatalogModal({ onClose }: { onClose: () => void }) {
 const label = "text-[11px] font-bold uppercase tracking-wide text-muted mb-1";
 const field = "w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50";
 
-function UnverifiedBadge() {
-  return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-600">Review</span>;
+function Pill({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-1 rounded-full text-xs font-semibold ${active ? "bg-amber-500 text-white" : "bg-surface text-muted border border-border"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Badge({ tone, children }: { tone: "category" | "muted" | "review"; children: React.ReactNode }) {
+  const cls =
+    tone === "category"
+      ? "bg-amber-500/15 text-amber-600"
+      : tone === "review"
+      ? "bg-amber-500/15 text-amber-600"
+      : "bg-surface text-muted border border-border";
+  return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase ${cls}`}>{children}</span>;
 }
 
 /* ───────────────────────── Parts ───────────────────────── */
@@ -64,8 +85,10 @@ function UnverifiedBadge() {
 function PartsEditor() {
   const [parts, setParts] = useState<PartsCatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<PartsCatalogItem | "new" | null>(null);
-  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("All");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
   async function reload() {
     setParts(await fetchAllParts());
@@ -74,75 +97,88 @@ function PartsEditor() {
     reload().finally(() => setLoading(false));
   }, []);
 
-  if (editing) {
-    return (
-      <PartForm
-        part={editing === "new" ? null : editing}
-        productTypes={[...new Set(parts.map((p) => p.productType).filter(Boolean))]}
-        categories={[...new Set(parts.map((p) => p.category).filter(Boolean))]}
-        onDone={async () => {
-          setEditing(null);
-          await reload();
-        }}
-        onCancel={() => setEditing(null)}
-      />
-    );
-  }
-
-  const q = query.trim().toLowerCase();
-  const shown = q
-    ? parts.filter((p) => `${p.partName} ${p.category} ${p.productType} ${p.position || ""}`.toLowerCase().includes(q))
-    : parts;
-  const byType = new Map<string, PartsCatalogItem[]>();
-  for (const p of shown) {
-    const arr = byType.get(p.productType) || [];
-    arr.push(p);
-    byType.set(p.productType, arr);
-  }
+  const productTypes = [...new Set(parts.map((p) => p.productType).filter(Boolean))].sort();
+  const categories = [...new Set(parts.map((p) => p.category).filter(Boolean))].sort();
+  const q = search.trim().toLowerCase();
+  const shown = parts.filter(
+    (p) =>
+      (catFilter === "All" || p.productType === catFilter) &&
+      (!q || `${p.partName} ${p.category} ${p.position || ""}`.toLowerCase().includes(q))
+  );
 
   return (
     <div>
-      <div className="flex gap-2 mb-3">
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search parts…" className={field} />
-        <button
-          onClick={() => setEditing("new")}
-          className="shrink-0 flex items-center gap-1 px-3 rounded-lg bg-amber-500 text-white text-sm font-semibold"
-        >
-          <Plus className="w-4 h-4" /> Add
-        </button>
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search parts…" className={`${field} mb-2`} />
+
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        <Pill active={catFilter === "All"} onClick={() => setCatFilter("All")}>All</Pill>
+        {productTypes.map((t) => (
+          <Pill key={t} active={catFilter === t} onClick={() => setCatFilter(t)}>{t}</Pill>
+        ))}
       </div>
+
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs text-muted">{parts.length} part{parts.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      <button
+        onClick={() => { setAdding(true); setExpanded(null); }}
+        className="w-full py-2.5 rounded-lg border-2 border-dashed border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-1 mb-3"
+      >
+        <Plus className="w-4 h-4" /> Add part {catFilter !== "All" ? `(${catFilter})` : ""}
+      </button>
+
+      {adding && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 mb-2">
+          <PartForm
+            part={null}
+            defaultProductType={catFilter !== "All" ? catFilter : ""}
+            productTypes={productTypes}
+            categories={categories}
+            onDone={async () => { setAdding(false); await reload(); }}
+            onCancel={() => setAdding(false)}
+          />
+        </div>
+      )}
+
       {loading ? (
         <div className="flex justify-center py-8 text-muted"><Loader2 className="w-5 h-5 animate-spin" /></div>
       ) : shown.length === 0 ? (
         <p className="text-sm text-muted text-center py-6">No parts.</p>
       ) : (
-        [...byType.entries()].map(([type, items]) => (
-          <div key={type} className="mb-4">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-muted mb-1">{type}</div>
-            <div className="space-y-1">
-              {items.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => setEditing(p)}
-                  className="w-full text-left px-3 py-2 rounded-lg border border-border bg-surface flex items-center gap-2"
-                >
+        <div className="space-y-1.5">
+          {shown.map((p) => {
+            const open = expanded === p.id;
+            return (
+              <div key={p.id} className="rounded-lg border border-border bg-surface overflow-hidden">
+                <button onClick={() => setExpanded(open ? null : p.id)} className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate flex items-center gap-2">
+                    <div className="text-sm font-semibold truncate flex items-center gap-2">
                       {p.partName}
-                      {!p.verified && <UnverifiedBadge />}
+                      {!p.verified && <Badge tone="review">Review</Badge>}
                     </div>
                     <div className="text-[11px] text-muted truncate">
-                      {[p.category, p.position, p.colors.length ? `${p.colors.length} colors` : "", p.sizes.length ? `${p.sizes.length} sizes` : "", p.variants.length ? `${p.variants.length} part #s` : ""]
-                        .filter(Boolean)
-                        .join(" · ")}
+                      {[p.position, p.variants.length ? `${p.variants.length} part #s` : ""].filter(Boolean).join(" · ")}
                     </div>
                   </div>
-                  <Pencil className="w-4 h-4 text-muted shrink-0" />
+                  <Badge tone="category">{p.category || "—"}</Badge>
+                  {open ? <ChevronDown className="w-4 h-4 text-muted shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted shrink-0" />}
                 </button>
-              ))}
-            </div>
-          </div>
-        ))
+                {open && (
+                  <div className="border-t border-border p-3">
+                    <PartForm
+                      part={p}
+                      productTypes={productTypes}
+                      categories={categories}
+                      onDone={async () => { setExpanded(null); await reload(); }}
+                      onCancel={() => setExpanded(null)}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -157,16 +193,18 @@ function ChipList({ items, onChange, placeholder }: { items: string[]; onChange:
   }
   return (
     <div>
-      <div className="flex flex-wrap gap-1.5 mb-1.5">
-        {items.map((it) => (
-          <span key={it} className="inline-flex items-center gap-1 text-xs bg-surface border border-border rounded-full px-2 py-1">
-            {it}
-            <button onClick={() => onChange(items.filter((x) => x !== it))} className="text-muted hover:text-danger">
-              <X className="w-3 h-3" />
-            </button>
-          </span>
-        ))}
-      </div>
+      {items.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-1.5">
+          {items.map((it) => (
+            <span key={it} className="inline-flex items-center gap-1 text-xs bg-background border border-border rounded-full px-2 py-1">
+              {it}
+              <button onClick={() => onChange(items.filter((x) => x !== it))} className="text-muted hover:text-danger">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="flex gap-2">
         <input
           value={draft}
@@ -183,18 +221,20 @@ function ChipList({ items, onChange, placeholder }: { items: string[]; onChange:
 
 function PartForm({
   part,
+  defaultProductType,
   productTypes,
   categories,
   onDone,
   onCancel,
 }: {
   part: PartsCatalogItem | null;
+  defaultProductType?: string;
   productTypes: string[];
   categories: string[];
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const [productType, setProductType] = useState(part?.productType || "");
+  const [productType, setProductType] = useState(part?.productType || defaultProductType || "");
   const [category, setCategory] = useState(part?.category || "");
   const [partName, setPartName] = useState(part?.partName || "");
   const [position, setPosition] = useState(part?.position || "");
@@ -216,15 +256,15 @@ function PartForm({
     });
   }
 
-  async function save() {
+  async function save(asCopy = false) {
     if (!partName.trim()) { setError("A part name is required."); return; }
     setSaving(true);
     setError("");
     const res = await upsertPart({
-      id: part?.id,
+      id: asCopy ? undefined : part?.id,
       productType: productType || "Custom",
       category: category || "Custom",
-      partName,
+      partName: asCopy ? `${partName} (Copy)` : partName,
       position: position || null,
       colors,
       sizes,
@@ -238,23 +278,6 @@ function PartForm({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <button onClick={onCancel} className="text-sm text-primary">← Back</button>
-        {part && (
-          confirmDelete ? (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-danger">Delete?</span>
-              <button onClick={async () => { await deletePart(part.id); onDone(); }} className="text-xs font-semibold text-danger">Yes</button>
-              <button onClick={() => setConfirmDelete(false)} className="text-xs text-muted">No</button>
-            </div>
-          ) : (
-            <button onClick={() => setConfirmDelete(true)} className="flex items-center gap-1 text-xs text-danger">
-              <Trash2 className="w-3.5 h-3.5" /> Delete
-            </button>
-          )
-        )}
-      </div>
-
       <div className="grid grid-cols-2 gap-2">
         <div>
           <div className={label}>Product type</div>
@@ -292,16 +315,9 @@ function PartForm({
             sizeOpts.map((s) => (
               <div key={`${c}|${s}`} className="flex items-center gap-2">
                 {(c || s) && (
-                  <span className="text-xs text-muted shrink-0 w-28 truncate">
-                    {[c, s].filter(Boolean).join(" · ") || "Any"}
-                  </span>
+                  <span className="text-xs text-muted shrink-0 w-28 truncate">{[c, s].filter(Boolean).join(" · ") || "Any"}</span>
                 )}
-                <input
-                  value={partNumberFor(c, s)}
-                  onChange={(e) => setPartNumber(c, s, e.target.value)}
-                  placeholder="Part #"
-                  className={field}
-                />
+                <input value={partNumberFor(c, s)} onChange={(e) => setPartNumber(c, s, e.target.value)} placeholder="Part #" className={field} />
               </div>
             ))
           )}
@@ -315,10 +331,25 @@ function PartForm({
 
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <button onClick={save} disabled={saving} className="w-full py-3 rounded-xl bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
-        {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-        Save part
-      </button>
+      <div className="flex items-center gap-2">
+        <button onClick={() => save(false)} disabled={saving} className="flex-1 py-2.5 rounded-lg bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+          Save
+        </button>
+        {part && (
+          <button onClick={() => save(true)} disabled={saving} title="Save as a copy" className="px-3 py-2.5 rounded-lg border border-border text-muted">
+            <Copy className="w-4 h-4" />
+          </button>
+        )}
+        <button onClick={onCancel} className="px-3 py-2.5 rounded-lg border border-border text-sm text-muted">Cancel</button>
+        {part && (
+          confirmDelete ? (
+            <button onClick={async () => { await deletePart(part.id); onDone(); }} className="px-3 py-2.5 rounded-lg bg-danger text-white text-sm font-semibold">Delete?</button>
+          ) : (
+            <button onClick={() => setConfirmDelete(true)} className="px-3 py-2.5 rounded-lg border border-danger/40 text-danger"><Trash2 className="w-4 h-4" /></button>
+          )
+        )}
+      </div>
     </div>
   );
 }
@@ -328,7 +359,9 @@ function PartForm({
 function WorkEditor() {
   const [items, setItems] = useState<WorkCatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<WorkCatalogItem | "new" | null>(null);
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
   async function reload() {
     setItems(await fetchAllWork());
@@ -337,53 +370,55 @@ function WorkEditor() {
     reload().finally(() => setLoading(false));
   }, []);
 
-  if (editing) {
-    return (
-      <WorkForm
-        item={editing === "new" ? null : editing}
-        onDone={async () => {
-          setEditing(null);
-          await reload();
-        }}
-        onCancel={() => setEditing(null)}
-      />
-    );
-  }
+  const q = search.trim().toLowerCase();
+  const shown = q ? items.filter((it) => it.label.toLowerCase().includes(q)) : items;
 
   return (
     <div>
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search work items…" className={`${field} mb-2`} />
+      <div className="text-xs text-muted mb-2">{items.length} item{items.length !== 1 ? "s" : ""}</div>
+
       <button
-        onClick={() => setEditing("new")}
-        className="w-full flex items-center justify-center gap-1 mb-3 px-3 py-2.5 rounded-lg bg-amber-500 text-white text-sm font-semibold"
+        onClick={() => { setAdding(true); setExpanded(null); }}
+        className="w-full py-2.5 rounded-lg border-2 border-dashed border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-1 mb-3"
       >
         <Plus className="w-4 h-4" /> Add work item
       </button>
+
+      {adding && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 mb-2">
+          <WorkForm item={null} onDone={async () => { setAdding(false); await reload(); }} onCancel={() => setAdding(false)} />
+        </div>
+      )}
+
       {loading ? (
         <div className="flex justify-center py-8 text-muted"><Loader2 className="w-5 h-5 animate-spin" /></div>
-      ) : items.length === 0 ? (
+      ) : shown.length === 0 ? (
         <p className="text-sm text-muted text-center py-6">No work items.</p>
       ) : (
-        <div className="space-y-1">
-          {items.map((it) => (
-            <button
-              key={it.id}
-              onClick={() => setEditing(it)}
-              className="w-full text-left px-3 py-2.5 rounded-lg border border-border bg-surface flex items-center gap-2"
-            >
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate flex items-center gap-2">
-                  {it.label}
-                  {!it.verified && <UnverifiedBadge />}
-                </div>
-                {(it.minutesPerUnit != null || it.productType) && (
-                  <div className="text-[11px] text-muted truncate">
-                    {[it.minutesPerUnit != null ? `${it.minutesPerUnit} min/unit` : "", it.productType || ""].filter(Boolean).join(" · ")}
+        <div className="space-y-1.5">
+          {shown.map((it) => {
+            const open = expanded === it.id;
+            return (
+              <div key={it.id} className="rounded-lg border border-border bg-surface overflow-hidden">
+                <button onClick={() => setExpanded(open ? null : it.id)} className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold truncate flex items-center gap-2">
+                      {it.label}
+                      {!it.verified && <Badge tone="review">Review</Badge>}
+                    </div>
+                  </div>
+                  {it.minutesPerUnit != null && <Badge tone="muted">{it.minutesPerUnit} min/unit</Badge>}
+                  {open ? <ChevronDown className="w-4 h-4 text-muted shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted shrink-0" />}
+                </button>
+                {open && (
+                  <div className="border-t border-border p-3">
+                    <WorkForm item={it} onDone={async () => { setExpanded(null); await reload(); }} onCancel={() => setExpanded(null)} />
                   </div>
                 )}
               </div>
-              <Pencil className="w-4 h-4 text-muted shrink-0" />
-            </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -417,30 +452,13 @@ function WorkForm({ item, onDone, onCancel }: { item: WorkCatalogItem | null; on
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <button onClick={onCancel} className="text-sm text-primary">← Back</button>
-        {item && (
-          confirmDelete ? (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-danger">Delete?</span>
-              <button onClick={async () => { await deleteWork(item.id); onDone(); }} className="text-xs font-semibold text-danger">Yes</button>
-              <button onClick={() => setConfirmDelete(false)} className="text-xs text-muted">No</button>
-            </div>
-          ) : (
-            <button onClick={() => setConfirmDelete(true)} className="flex items-center gap-1 text-xs text-danger">
-              <Trash2 className="w-3.5 h-3.5" /> Delete
-            </button>
-          )
-        )}
-      </div>
-
       <div>
         <div className={label}>Work item</div>
         <input value={labelText} onChange={(e) => setLabelText(e.target.value)} placeholder="Redo caulking" className={field} />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <div className={label}>Time per unit (min, optional)</div>
+          <div className={label}>Time per unit (min)</div>
           <input inputMode="numeric" value={minutes} onChange={(e) => setMinutes(e.target.value.replace(/[^0-9]/g, ""))} placeholder="15" className={field} />
         </div>
         <div>
@@ -456,10 +474,20 @@ function WorkForm({ item, onDone, onCancel }: { item: WorkCatalogItem | null; on
 
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <button onClick={save} disabled={saving} className="w-full py-3 rounded-xl bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
-        {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-        Save work item
-      </button>
+      <div className="flex items-center gap-2">
+        <button onClick={save} disabled={saving} className="flex-1 py-2.5 rounded-lg bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+          Save
+        </button>
+        <button onClick={onCancel} className="px-3 py-2.5 rounded-lg border border-border text-sm text-muted">Cancel</button>
+        {item && (
+          confirmDelete ? (
+            <button onClick={async () => { await deleteWork(item.id); onDone(); }} className="px-3 py-2.5 rounded-lg bg-danger text-white text-sm font-semibold">Delete?</button>
+          ) : (
+            <button onClick={() => setConfirmDelete(true)} className="px-3 py-2.5 rounded-lg border border-danger/40 text-danger"><Trash2 className="w-4 h-4" /></button>
+          )
+        )}
+      </div>
     </div>
   );
 }
