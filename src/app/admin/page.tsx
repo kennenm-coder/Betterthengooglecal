@@ -288,6 +288,7 @@ function TeamTab() {
   }
 
   function startEdit(entry: AllowedEmail) {
+    setError("");
     setEditingId(entry.id);
     setEditName(entry.name || "");
     setEditEmail(entry.email);
@@ -296,6 +297,7 @@ function TeamTab() {
   }
 
   function cancelEdit() {
+    setError("");
     setEditingId(null);
   }
 
@@ -310,6 +312,7 @@ function TeamTab() {
     const trimmedName = editName.trim();
     if (!trimmedEmail) return;
 
+    setError("");
     const roles = editRoles.length ? editRoles : ["member"];
 
     // Prevent demoting the last admin
@@ -328,7 +331,7 @@ function TeamTab() {
 
     const role = primaryRole(roles);
     const supabase = createAuthClient();
-    const { error: updateError } = await supabase
+    const { data: updated, error: updateError } = await supabase
       .from("allowed_emails")
       .update({
         email: trimmedEmail,
@@ -337,10 +340,17 @@ function TeamTab() {
         roles,
         auto_cc: parsedAutoCc,
       })
-      .eq("id", id);
+      .eq("id", id)
+      .select();
 
     if (updateError) {
+      console.error("saveEdit failed:", updateError);
       setError(updateError.message);
+    } else if (!updated || updated.length === 0) {
+      // Update succeeded with 0 rows changed — RLS blocked the write.
+      setError(
+        "Save was blocked by database permissions (no row changed). Your account may not have admin rights in the database."
+      );
     } else {
       setEmails((prev) =>
         prev.map((e) =>
@@ -482,6 +492,12 @@ function TeamTab() {
                     Comma-separated. These emails auto-CC when this person sends field notes.
                   </p>
                 </div>
+                {error && (
+                  <p className="text-xs text-danger flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    {error}
+                  </p>
+                )}
                 <div className="flex gap-2">
                   <button
                     onClick={() => saveEdit(entry.id)}
