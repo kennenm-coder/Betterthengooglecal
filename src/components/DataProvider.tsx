@@ -12,6 +12,7 @@ import {
   loadMonth,
   mergeOrders,
   fetchMaterialJobs,
+  fetchJobsSignature,
   enrichWithMaterials,
   yieldToMain,
 } from "@/lib/store";
@@ -28,6 +29,10 @@ interface DataContextType {
   refresh: () => Promise<void>;
   setOrdersLocal: (orders: WorkOrder[]) => void;
   ensureDateLoaded: (date: Date) => void;
+  /** True when linked material jobs changed in the DB since we loaded them. */
+  linkedJobsStale: boolean;
+  /** Refetch material jobs and re-link them onto the loaded orders. */
+  resyncLinkedJobs: () => Promise<void>;
 }
 
 const DataContext = createContext<DataContextType>({
@@ -39,6 +44,8 @@ const DataContext = createContext<DataContextType>({
   refresh: async () => {},
   setOrdersLocal: () => {},
   ensureDateLoaded: () => {},
+  linkedJobsStale: false,
+  resyncLinkedJobs: async () => {},
 });
 
 export function useData() {
@@ -67,11 +74,13 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [loadingBackground, setLoadingBackground] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [linkedJobsStale, setLinkedJobsStale] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const genRef = useRef(0);
   const loadedMonthsRef = useRef<Set<string>>(new Set());
   const monthLoadingRef = useRef<Set<string>>(new Set());
   const jobByPORef = useRef<Map<string, any>>(new Map());
+  const jobsSigRef = useRef<string>("");
 
   const refresh = useCallback(async () => {
     abortRef.current?.abort();
@@ -112,6 +121,13 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         const enriched = enrichWithMaterials(initial, jobByPO);
         setOrders(enriched);
         saveBoundedCache(enriched);
+        // Baseline fingerprint so we can detect later linked-job changes.
+        setLinkedJobsStale(false);
+        fetchJobsSignature()
+          .then((sig) => {
+            jobsSigRef.current = sig;
+          })
+          .catch(() => {});
       } catch {
         // Material enrichment failed — calendar still works without it
       }
@@ -212,6 +228,50 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     setLastUpdated(new Date().toISOString());
   }, []);
 
+  const resyncLinkedJobs = useCallback(async () => {
+    const jobByPO = await fetchMaterialJobs();
+    jobByPORef.current = jobByPO;
+    setMaterialJobs(Array.from(jobByPO.values()) as MaterialJobData[]);
+    setOrders((prev) => {
+      const enriched = enrichWithMaterials(prev, jobByPO);
+      saveBoundedCache(enriched);
+      return enriched;
+    });
+    jobsSigRef.current = await fetchJobsSignature();
+    setLinkedJobsStale(false);
+  }, []);
+
+  // Detect linked-job changes when the tab regains focus — only flag when the
+  // fingerprint actually differs from what we loaded (no false alarms).
+  // Debounced to at most once per minute so backgrounding/foregrounding the app
+  // (constant in mobile field use) doesn't re-query the signature every time —
+  // detecting an edited linked job within a minute is plenty, and it keeps
+  // repeated focus events from adding up on egress.
+  const lastSigCheckRef = useRef(0);
+  useEffect(() => {
+    const SIG_CHECK_MIN_INTERVAL_MS = 60 * 1000;
+    const check = async () => {
+      if (!jobsSigRef.current) return;
+      if (Date.now() - lastSigCheckRef.current < SIG_CHECK_MIN_INTERVAL_MS) return;
+      lastSigCheckRef.current = Date.now();
+      try {
+        const sig = await fetchJobsSignature();
+        if (sig && sig !== jobsSigRef.current) setLinkedJobsStale(true);
+      } catch {
+        /* ignore — offline or transient */
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") check();
+    };
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   useEffect(() => {
     // Hydrate from cache immediately
     const cached = loadBoundedCache();
@@ -240,6 +300,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         refresh,
         setOrdersLocal: setOrdersLocalFn,
         ensureDateLoaded,
+        linkedJobsStale,
+        resyncLinkedJobs,
       }}
     >
       {children}

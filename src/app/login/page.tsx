@@ -24,6 +24,14 @@ type Status =
   | "requested"
   | "already-exists";
 
+/** Same-origin destination captured by middleware (e.g. a write-up doc link),
+ *  or "/" when there isn't one. Read from the URL so no Suspense is needed. */
+function redirectDest(): string {
+  if (typeof window === "undefined") return "/";
+  const p = new URLSearchParams(window.location.search).get("redirect");
+  return p && p.startsWith("/") && !p.startsWith("//") ? p : "/";
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("sign-in");
@@ -86,14 +94,10 @@ export default function LoginPage() {
         return;
       }
 
-      if (!isAllowed) {
-        setStatus("not-allowed");
-        return;
-      }
-
-      setStatus("submitting");
-
       if (mode === "sign-up") {
+        // Always create the auth account, even if not yet approved.
+        // This way the user doesn't have to re-register after approval.
+        setStatus("submitting");
         const fullName = `${firstName.trim()} ${lastName.trim()}`;
         const { data, error } = await supabase.auth.signUp({
           email: trimmedEmail,
@@ -118,28 +122,60 @@ export default function LoginPage() {
           return;
         }
 
-        await supabase
-          .from("allowed_emails")
-          .update({ name: fullName })
-          .eq("email", trimmedEmail);
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: trimmedEmail,
-          password,
-        });
+        if (isAllowed) {
+          // Already on the allowlist — update their name and sign in
+          await supabase
+            .from("allowed_emails")
+            .update({ name: fullName })
+            .eq("email", trimmedEmail);
+          router.push(redirectDest());
+          router.refresh();
+        } else {
+          // Not yet approved — auto-submit an access request
+          const { data: existing } = await supabase
+            .from("access_requests")
+            .select("id")
+            .eq("email", trimmedEmail)
+            .maybeSingle();
 
-        if (error) {
-          setStatus("error");
-          if (error.message === "Invalid login credentials") {
-            setErrorMsg("Wrong email or password.");
-          } else {
-            setErrorMsg(error.message);
+          if (!existing) {
+            await supabase.from("access_requests").insert({
+              email: trimmedEmail,
+              name: fullName,
+            });
           }
-          return;
+
+          // Sign them out so middleware doesn't redirect-loop
+          await supabase.auth.signOut();
+          setStatus("requested");
         }
+        return;
       }
 
-      router.push("/");
+      // Sign-in flow — must be on the allowlist
+      if (!isAllowed) {
+        setStatus("not-allowed");
+        return;
+      }
+
+      setStatus("submitting");
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password,
+      });
+
+      if (error) {
+        setStatus("error");
+        if (error.message === "Invalid login credentials") {
+          setErrorMsg("Wrong email or password.");
+        } else {
+          setErrorMsg(error.message);
+        }
+        return;
+      }
+
+      router.push(redirectDest());
       router.refresh();
     } catch {
       setStatus("error");
@@ -226,7 +262,7 @@ export default function LoginPage() {
                   <span className="font-medium text-foreground">{email}</span>
                 </p>
                 <p className="text-xs text-muted mt-3">
-                  You&apos;ll be able to create an account once approved.
+                  Your account is ready — just sign in once approved.
                 </p>
               </div>
               <button

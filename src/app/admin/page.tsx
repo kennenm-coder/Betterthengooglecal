@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import { createAuthClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { ROLE_OPTIONS, ROLE_STYLES } from "@/lib/roles";
+import { getWriteUpPresets, setWriteUpPresets } from "@/lib/work-order-store";
 import { format, parseISO } from "date-fns";
 
 type DevTab = "settings" | "log" | "upload" | "team";
@@ -41,6 +43,21 @@ export default function AdminPage() {
         <div className="flex-1 flex items-center justify-center">
           <Loader2 className="w-8 h-8 text-primary animate-spin" />
         </div>
+        <BottomNav />
+      </div>
+    );
+  }
+
+  // Payroll admins get access to Team tab only
+  if (role === "payroll-admin") {
+    return (
+      <div className="flex flex-col h-full">
+        <header className="bg-background border-b border-border px-4 py-3">
+          <h1 className="text-lg font-semibold">Team Management</h1>
+        </header>
+        <main className="flex-1 overflow-y-auto p-4">
+          <TeamTab canDelete={false} isPayrollAdmin={true} />
+        </main>
         <BottomNav />
       </div>
     );
@@ -106,7 +123,7 @@ function UnlockedContent() {
 
       <div className="flex-1 overflow-y-auto p-4">
         {tab === "settings" && <SettingsTab />}
-        {tab === "team" && <TeamTab />}
+        {tab === "team" && <TeamTab canDelete={true} />}
         {tab === "log" && <LogTab />}
         {tab === "upload" && <UploadTab />}
       </div>
@@ -132,22 +149,6 @@ interface AccessRequest {
   created_at: string;
 }
 
-const ROLE_OPTIONS = [
-  { value: "member", label: "Member" },
-  { value: "payroll-admin", label: "Payroll Admin" },
-  { value: "scheduling", label: "Scheduling" },
-  { value: "scheduling_manager", label: "Scheduling Manager" },
-  { value: "admin", label: "Admin" },
-] as const;
-
-const ROLE_STYLES: Record<string, string> = {
-  admin: "bg-primary/15 text-primary",
-  "payroll-admin": "bg-rba-green/15 text-rba-green",
-  scheduling: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
-  scheduling_manager: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
-  member: "bg-surface border border-border text-muted",
-};
-
 // Calendar-app RLS keys off the single `role` column. When someone holds
 // multiple roles we still store one primary `role` (highest calendar role
 // present), and the full set in `roles`. Scheduling-only accounts fall back
@@ -167,9 +168,11 @@ function rowRoles(entry: { role: string; roles: string[] | null }): string[] {
 function RoleCheckboxes({
   selected,
   onChange,
+  options = ROLE_OPTIONS,
 }: {
   selected: string[];
   onChange: (next: string[]) => void;
+  options?: readonly { value: string; label: string }[];
 }) {
   function toggle(value: string) {
     onChange(
@@ -180,7 +183,7 @@ function RoleCheckboxes({
   }
   return (
     <div className="flex flex-wrap gap-1.5">
-      {ROLE_OPTIONS.map((r) => {
+      {options.map((r) => {
         const on = selected.includes(r.value);
         return (
           <button
@@ -202,7 +205,7 @@ function RoleCheckboxes({
   );
 }
 
-function TeamTab() {
+function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boolean; isPayrollAdmin?: boolean }) {
   const [emails, setEmails] = useState<AllowedEmail[]>([]);
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -216,6 +219,11 @@ function TeamTab() {
   const [editEmail, setEditEmail] = useState("");
   const [editRoles, setEditRoles] = useState<string[]>([]);
   const [editAutoCc, setEditAutoCc] = useState("");
+
+  // Payroll admins can only assign member or payroll-admin roles (not admin)
+  const availableRoles = isPayrollAdmin
+    ? ROLE_OPTIONS.filter((r) => r.value !== "admin")
+    : ROLE_OPTIONS;
 
   useEffect(() => {
     loadData();
@@ -288,6 +296,8 @@ function TeamTab() {
   }
 
   function startEdit(entry: AllowedEmail) {
+    // Payroll admins cannot edit admin users
+    if (isPayrollAdmin && rowRoles(entry).includes("admin")) return;
     setError("");
     setEditingId(entry.id);
     setEditName(entry.name || "");
@@ -475,7 +485,11 @@ function TeamTab() {
                   <label className="text-[11px] font-medium text-muted mb-1 block">
                     Roles
                   </label>
-                  <RoleCheckboxes selected={editRoles} onChange={setEditRoles} />
+                  <RoleCheckboxes
+                    selected={editRoles}
+                    onChange={setEditRoles}
+                    options={availableRoles}
+                  />
                 </div>
                 <div>
                   <label className="text-[11px] font-medium text-muted mb-1 block">
@@ -519,7 +533,11 @@ function TeamTab() {
               <div
                 key={entry.id}
                 onClick={() => startEdit(entry)}
-                className="flex items-center justify-between px-3 py-2.5 rounded-lg border border-border bg-surface cursor-pointer hover:border-primary/30 transition-colors"
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg border border-border bg-surface transition-colors ${
+                  isPayrollAdmin && entry.role === "admin"
+                    ? "opacity-60"
+                    : "cursor-pointer hover:border-primary/30"
+                }`}
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -548,15 +566,17 @@ function TeamTab() {
                     </span>
                   )}
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeEmail(entry.id);
-                  }}
-                  className="p-1.5 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors shrink-0 ml-2"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {canDelete && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeEmail(entry.id);
+                    }}
+                    className="p-1.5 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors shrink-0 ml-2"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             )
           )}
@@ -613,7 +633,11 @@ function TeamTab() {
             <label className="text-[11px] font-medium text-muted mb-1 block">
               Roles
             </label>
-            <RoleCheckboxes selected={newRoles} onChange={setNewRoles} />
+            <RoleCheckboxes
+              selected={newRoles}
+              onChange={setNewRoles}
+              options={availableRoles}
+            />
           </div>
           {error && (
             <p className="text-xs text-danger flex items-center gap-1">
@@ -701,7 +725,73 @@ function SettingsTab() {
         </div>
       </section>
 
+      <WriteUpPresetsSection />
     </div>
+  );
+}
+
+/* ── Write-Up Presets ── */
+function WriteUpPresetsSection() {
+  const [presets, setPresets] = useState<string[]>([]);
+  const [newPreset, setNewPreset] = useState("");
+
+  useEffect(() => {
+    getWriteUpPresets().then(setPresets);
+  }, []);
+
+  function persist(updated: string[]) {
+    setPresets(updated);
+    setWriteUpPresets(updated);
+  }
+
+  function add() {
+    const v = newPreset.trim();
+    if (!v || presets.includes(v)) return;
+    persist([...presets, v]);
+    setNewPreset("");
+  }
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-1">
+        Write-Up Presets
+      </h2>
+      <p className="text-xs text-muted mb-3">
+        Quick-tap work items field managers choose from when writing up a unit.
+      </p>
+      <div className="space-y-2">
+        {presets.map((p, i) => (
+          <div
+            key={i}
+            className="flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-surface"
+          >
+            <span className="text-sm font-medium">{p}</span>
+            <button
+              onClick={() => persist(presets.filter((_, j) => j !== i))}
+              className="p-1 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={newPreset}
+            onChange={(e) => setNewPreset(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+            placeholder="New preset (e.g. Recaulk exterior)..."
+            className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+          />
+          <button
+            onClick={add}
+            className="px-3 py-2 rounded-lg bg-primary text-white text-sm font-medium"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 

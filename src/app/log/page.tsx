@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ImportLogEntry, ImportLogOrder } from "@/lib/import-log";
+import { ImportLogEntry, ImportLogOrder, ImportLogFieldChange } from "@/lib/import-log";
 import BottomNav from "@/components/BottomNav";
 import {
   ScrollText,
@@ -15,6 +15,7 @@ import {
   Monitor,
   Plus,
   Pencil,
+  ArrowRight,
 } from "lucide-react";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
 
@@ -23,6 +24,17 @@ function formatRelativeDay(iso: string): string {
   if (isToday(date)) return "Today";
   if (isYesterday(date)) return "Yesterday";
   return format(date, "EEEE, MMM d");
+}
+
+/** Format a change value — dates become "MMM d, h:mm a"; everything else is
+ *  shown as-is. Falls back to the raw string if a date can't be parsed. */
+function formatChangeValue(value: string, isDate?: boolean): string {
+  if (!isDate || value === "—") return value;
+  try {
+    return format(parseISO(value), "MMM d, h:mm a");
+  } catch {
+    return value;
+  }
 }
 
 function groupByDay(
@@ -201,24 +213,9 @@ function LogCard({
       </button>
 
       {expanded && entry.orders && entry.orders.length > 0 && (
-        <div className="border-t border-border px-3 py-2 space-y-0.5 max-h-60 overflow-y-auto">
+        <div className="border-t border-border px-3 py-2 space-y-2 max-h-80 overflow-y-auto">
           {(entry.orders as ImportLogOrder[]).map((o, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-2 text-xs py-0.5"
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                  o.action === "added" ? "bg-success" : "bg-primary"
-                }`}
-              />
-              <span className="font-medium truncate flex-1">
-                {o.customerName || "—"}
-              </span>
-              <span className="text-muted shrink-0">
-                {o.workOrderNumber || "—"}
-              </span>
-            </div>
+            <OrderRow key={i} order={o} />
           ))}
           {entry.total_count > entry.orders.length && (
             <p className="text-[10px] text-muted pt-1">
@@ -227,6 +224,57 @@ function LogCard({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function OrderRow({ order }: { order: ImportLogOrder }) {
+  const changes = order.changes ?? [];
+  const hasChanges = order.action === "updated" && changes.length > 0;
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 text-xs">
+        <span
+          className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+            order.action === "added" ? "bg-success" : "bg-primary"
+          }`}
+        />
+        <span className="font-medium truncate flex-1">
+          {order.customerName || "—"}
+        </span>
+        <span className="text-muted shrink-0">
+          {order.workOrderNumber || "—"}
+        </span>
+      </div>
+
+      {hasChanges && (
+        <div className="mt-1 ml-3.5 space-y-1 border-l border-border pl-2.5">
+          {changes.map((c, i) => (
+            <ChangeRow key={i} change={c} />
+          ))}
+        </div>
+      )}
+      {order.action === "updated" && !hasChanges && (
+        <p className="mt-0.5 ml-3.5 text-[10px] text-muted italic">
+          No tracked fields changed
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ChangeRow({ change }: { change: ImportLogFieldChange }) {
+  return (
+    <div className="text-[11px] leading-snug">
+      <span className="text-muted">{change.field}: </span>
+      <span className="text-muted/80 line-through">
+        {formatChangeValue(change.from, change.isDate)}
+      </span>
+      <ArrowRight className="inline w-2.5 h-2.5 mx-1 text-muted align-[-1px]" />
+      <span className="text-foreground font-medium">
+        {formatChangeValue(change.to, change.isDate)}
+      </span>
     </div>
   );
 }

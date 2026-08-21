@@ -81,6 +81,21 @@ export function typeColor(type: WorkOrder["workOrderType"]): string {
   }
 }
 
+// Contrast-aware text color for labels sitting ON the type-colored tile.
+// Resolves to black or white via the --*-text CSS vars set in ColorLoader.
+export function typeTileText(type: WorkOrder["workOrderType"]): string {
+  switch (type) {
+    case "Install":
+      return "text-install-text";
+    case "Service":
+      return "text-service-text";
+    case "Job Site Visit":
+      return "text-jsv-text";
+    default:
+      return "text-white";
+  }
+}
+
 export function typeColorText(type: WorkOrder["workOrderType"]): string {
   switch (type) {
     case "Install":

@@ -459,9 +459,46 @@ export async function upsertWorkOrders(orders: WorkOrder[]): Promise<boolean> {
   return true;
 }
 
+/**
+ * Search work orders (and imported account rows) by customer name, account
+ * name, order number, or work order number. Backs the "start a write-up"
+ * picker so a field manager can attach a write-up to any existing job/account.
+ */
+export async function searchWorkOrders(query: string, limit = 25): Promise<WorkOrder[]> {
+  const supabase = getSupabase();
+  const q = query.trim();
+  if (!supabase || q.length < 2) return [];
+  // Strip LIKE wildcards and the comma that would break the .or() filter list.
+  const term = q.replace(/[%_,]/g, " ").trim();
+  const like = `%${term}%`;
+  const { data, error } = await supabase
+    .from("work_orders")
+    .select("*")
+    .or(
+      [
+        `customer_name.ilike.${like}`,
+        `account_name.ilike.${like}`,
+        `order_number.ilike.${like}`,
+        `work_order_number.ilike.${like}`,
+      ].join(",")
+    )
+    .limit(limit);
+  if (error || !data) return [];
+  return (data as WorkOrderRow[]).map(rowToWorkOrder);
+}
+
 // --- Material jobs ---
 
+// Session cache for the heavy jobs pull (every job's full data blob). Shared so
+// reopening the write-up picker doesn't re-download it each time.
+let _materialJobsCache: Map<string, any> | null = null;
+
+export function invalidateMaterialJobsCache() {
+  _materialJobsCache = null;
+}
+
 export async function fetchMaterialJobs(): Promise<Map<string, any>> {
+  if (_materialJobsCache) return _materialJobsCache;
   const jobByPO = new Map<string, any>();
   const supabase = getSupabase();
   if (!supabase) return jobByPO;
@@ -500,7 +537,39 @@ export async function fetchMaterialJobs(): Promise<Map<string, any>> {
       // Skip malformed rows
     }
   }
+  if (jobByPO.size > 0) _materialJobsCache = jobByPO;
   return jobByPO;
+}
+
+/**
+ * Lightweight fingerprint of the submitted material jobs — id + savedAt for
+ * each, without downloading the full `data` blobs. Used to detect when linked
+ * jobs changed (added, removed, or edited) since the calendar loaded them, so
+ * we can prompt a resync. Any change to a job bumps its savedAt.
+ */
+export async function fetchJobsSignature(): Promise<string> {
+  const supabase = getSupabase();
+  if (!supabase) return "";
+  // Cheap path: one tiny scalar ("<count>:<newest savedAt>") via a DB function
+  // (migration 012). Detects any add/edit/delete without pulling every row.
+  const { data, error } = await supabase.rpc("jobs_signature");
+  if (!error && typeof data === "string") return data;
+  // Fallback until migration 012 is applied: the old per-row scan still works.
+  return fetchJobsSignatureFallback();
+}
+
+async function fetchJobsSignatureFallback(): Promise<string> {
+  const supabase = getSupabase();
+  if (!supabase) return "";
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("id, savedAt:data->>savedAt, submitted:data->>submitted");
+  if (error || !data) return "";
+  return (data as { id: string; savedAt: string | null; submitted: string | null }[])
+    .filter((r) => r.submitted === "true")
+    .map((r) => `${r.id}:${r.savedAt || ""}`)
+    .sort()
+    .join("|");
 }
 
 export function enrichWithMaterials(

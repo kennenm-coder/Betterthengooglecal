@@ -1,7 +1,7 @@
 "use client";
 
 import { WorkOrder, TimeOffRequest } from "@/lib/types";
-import { typeColor } from "@/lib/calendar-utils";
+import { typeColor, typeTileText } from "@/lib/calendar-utils";
 import { lastFirst, crewName } from "@/lib/format-utils";
 import { getTimeOffForDate } from "@/lib/time-off-store";
 import { format } from "date-fns";
@@ -88,9 +88,9 @@ export default function WeekBarOverview({
                     <button
                       key={bar.order.id}
                       onClick={() => onSelectOrder(bar.order)}
-                      className={`w-full text-left text-white text-[10px] leading-tight px-1.5 py-0.5 rounded truncate hover:opacity-90 transition-opacity ${typeColor(
+                      className={`w-full text-left text-[10px] leading-tight px-1.5 py-0.5 rounded truncate hover:opacity-90 transition-opacity ${typeColor(
                         bar.order.workOrderType
-                      )}`}
+                      )} ${typeTileText(bar.order.workOrderType)}`}
                       title={`${lastFirst(bar.order.customerName)} - ${crew || bar.order.orderNumber}`}
                     >
                       {name}

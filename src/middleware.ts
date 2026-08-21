@@ -36,6 +36,15 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
+  // Dev harness pages (/dev-*) skip the auth redirect. Safe in production: the
+  // page component itself returns null unless NODE_ENV === "development", so on
+  // Vercel these routes render a blank page with no data. (NODE_ENV is not
+  // reliably "development" inside the Next 16 middleware runtime, so we can't
+  // gate here — we gate in the page component instead.)
+  if (pathname.startsWith("/dev-")) {
+    return supabaseResponse;
+  }
+
   if (
     !user &&
     !pathname.startsWith("/login") &&
@@ -45,12 +54,24 @@ export async function middleware(request: NextRequest) {
   ) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    // Remember where they were headed (e.g. a write-up doc link from an email)
+    // so login can send them back there instead of the home screen.
+    if (pathname !== "/") {
+      url.search = "";
+      url.searchParams.set("redirect", pathname + request.nextUrl.search);
+    }
     return NextResponse.redirect(url);
   }
 
   if (user && pathname.startsWith("/login")) {
+    const dest = request.nextUrl.searchParams.get("redirect");
+    // Honor a same-origin redirect target (path + query); else fall back home.
+    if (dest && dest.startsWith("/") && !dest.startsWith("//")) {
+      return NextResponse.redirect(new URL(dest, request.url));
+    }
     const url = request.nextUrl.clone();
     url.pathname = "/";
+    url.search = "";
     return NextResponse.redirect(url);
   }
 

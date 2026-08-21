@@ -4,7 +4,13 @@ import { useState, useEffect } from "react";
 import { createAuthClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 
-export type UserRole = "admin" | "payroll-admin" | "member";
+export type UserRole =
+  | "admin"
+  | "payroll-admin"
+  | "field-manager"
+  | "scheduling"
+  | "scheduling_manager"
+  | "member";
 
 interface AuthState {
   user: User | null;
@@ -17,14 +23,23 @@ interface AuthState {
   loading: boolean;
 }
 
+// Module-level cache of the last resolved auth state. useAuth remounts on every
+// page navigation (BottomNav, headers, etc.); without this cache each mount
+// would reset role to "member" until the async fetch returns, making
+// role-gated UI (e.g. the Write-Ups tab) flicker in and out on every route
+// change. Starting from the cached value keeps it stable.
+let cachedState: AuthState | null = null;
+
 export function useAuth(): AuthState {
-  const [state, setState] = useState<AuthState>({
-    user: null,
-    role: "member",
-    roles: [],
-    autoCc: [],
-    loading: true,
-  });
+  const [state, setState] = useState<AuthState>(
+    cachedState ?? {
+      user: null,
+      role: "member",
+      roles: [],
+      autoCc: [],
+      loading: true,
+    }
+  );
 
   useEffect(() => {
     const supabase = createAuthClient();
@@ -34,6 +49,7 @@ export function useAuth(): AuthState {
         data: { user },
       } = await supabase.auth.getUser();
 
+      let next: AuthState;
       if (user?.email) {
         const { data } = await supabase
           .from("allowed_emails")
@@ -47,16 +63,19 @@ export function useAuth(): AuthState {
             ? [data.role as string]
             : [];
 
-        setState({
+        next = {
           user,
           role: (data?.role as UserRole) || "member",
           roles,
           autoCc: Array.isArray(data?.auto_cc) ? data.auto_cc : [],
           loading: false,
-        });
+        };
       } else {
-        setState({ user, role: "member", roles: [], autoCc: [], loading: false });
+        next = { user, role: "member", roles: [], autoCc: [], loading: false };
       }
+
+      cachedState = next;
+      setState(next);
     }
 
     load();
