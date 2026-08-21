@@ -10,7 +10,11 @@ export type UserRole =
   | "field-manager"
   | "scheduling"
   | "scheduling_manager"
-  | "member";
+  | "member"
+  // Cut-list-app roles (no calendar capabilities on their own). Managed here so
+  // the shared allowed_emails table + Team UI stay the single source of truth.
+  | "configuring"
+  | "configuring-editing";
 
 interface AuthState {
   user: User | null;
