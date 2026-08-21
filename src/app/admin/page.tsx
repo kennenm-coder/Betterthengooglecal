@@ -137,6 +137,7 @@ interface AllowedEmail {
   email: string;
   name: string | null;
   role: string;
+  roles: string[] | null;
   auto_cc: string[] | null;
   created_at: string;
 }
@@ -148,19 +149,75 @@ interface AccessRequest {
   created_at: string;
 }
 
+// Calendar-app RLS keys off the single `role` column. When someone holds
+// multiple roles we still store one primary `role` (highest calendar role
+// present), and the full set in `roles`. Scheduling-only accounts fall back
+// to "member" so they can still view the calendar app.
+const CALENDAR_ROLE_PRIORITY = ["admin", "payroll-admin", "member"] as const;
+function primaryRole(roles: string[]): string {
+  for (const r of CALENDAR_ROLE_PRIORITY) if (roles.includes(r)) return r;
+  return "member";
+}
+/** Normalize a row's roles into an array (handles legacy rows with only `role`). */
+function rowRoles(entry: { role: string; roles: string[] | null }): string[] {
+  if (Array.isArray(entry.roles) && entry.roles.length) return entry.roles;
+  return entry.role ? [entry.role] : [];
+}
+
+/** Checkbox group for assigning multiple roles. */
+function RoleCheckboxes({
+  selected,
+  onChange,
+  options = ROLE_OPTIONS,
+}: {
+  selected: string[];
+  onChange: (next: string[]) => void;
+  options?: readonly { value: string; label: string }[];
+}) {
+  function toggle(value: string) {
+    onChange(
+      selected.includes(value)
+        ? selected.filter((r) => r !== value)
+        : [...selected, value]
+    );
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((r) => {
+        const on = selected.includes(r.value);
+        return (
+          <button
+            key={r.value}
+            type="button"
+            onClick={() => toggle(r.value)}
+            className={`text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-colors ${
+              on
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-background text-muted hover:border-primary/40"
+            }`}
+          >
+            {on && <Check className="w-3 h-3 inline -mt-0.5 mr-1" />}
+            {r.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boolean; isPayrollAdmin?: boolean }) {
   const [emails, setEmails] = useState<AllowedEmail[]>([]);
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [newEmail, setNewEmail] = useState("");
   const [newName, setNewName] = useState("");
-  const [newRole, setNewRole] = useState<string>("member");
+  const [newRoles, setNewRoles] = useState<string[]>(["member"]);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
-  const [editRole, setEditRole] = useState("");
+  const [editRoles, setEditRoles] = useState<string[]>([]);
   const [editAutoCc, setEditAutoCc] = useState("");
 
   // Payroll admins can only assign member or payroll-admin roles (not admin)
@@ -217,10 +274,11 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
     setAdding(true);
     setError("");
 
+    const roles = newRoles.length ? newRoles : ["member"];
     const supabase = createAuthClient();
     const { error: insertError } = await supabase
       .from("allowed_emails")
-      .insert({ email: trimmedEmail, name: trimmedName || null, role: newRole });
+      .insert({ email: trimmedEmail, name: trimmedName || null, role: primaryRole(roles), roles });
 
     if (insertError) {
       if (insertError.code === "23505") {
@@ -231,7 +289,7 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
     } else {
       setNewEmail("");
       setNewName("");
-      setNewRole("member");
+      setNewRoles(["member"]);
       await loadData();
     }
     setAdding(false);
@@ -239,21 +297,23 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
 
   function startEdit(entry: AllowedEmail) {
     // Payroll admins cannot edit admin users
-    if (isPayrollAdmin && entry.role === "admin") return;
+    if (isPayrollAdmin && rowRoles(entry).includes("admin")) return;
+    setError("");
     setEditingId(entry.id);
     setEditName(entry.name || "");
     setEditEmail(entry.email);
-    setEditRole(entry.role);
+    setEditRoles(rowRoles(entry));
     setEditAutoCc((entry.auto_cc || []).join(", "));
   }
 
   function cancelEdit() {
+    setError("");
     setEditingId(null);
   }
 
   function isLastAdminEntry(entry: AllowedEmail): boolean {
-    if (entry.role !== "admin") return false;
-    const adminCount = emails.filter((e) => e.role === "admin").length;
+    if (!rowRoles(entry).includes("admin")) return false;
+    const adminCount = emails.filter((e) => rowRoles(e).includes("admin")).length;
     return adminCount <= 1;
   }
 
@@ -262,9 +322,12 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
     const trimmedName = editName.trim();
     if (!trimmedEmail) return;
 
+    setError("");
+    const roles = editRoles.length ? editRoles : ["member"];
+
     // Prevent demoting the last admin
     const original = emails.find((e) => e.id === id);
-    if (original && original.role === "admin" && editRole !== "admin") {
+    if (original && rowRoles(original).includes("admin") && !roles.includes("admin")) {
       if (isLastAdminEntry(original)) {
         setError("Cannot demote the last admin. Promote another admin first.");
         return;
@@ -276,24 +339,33 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
       .map((s) => s.trim().toLowerCase())
       .filter((s) => s.includes("@"));
 
+    const role = primaryRole(roles);
     const supabase = createAuthClient();
-    const { error: updateError } = await supabase
+    const { data: updated, error: updateError } = await supabase
       .from("allowed_emails")
       .update({
         email: trimmedEmail,
         name: trimmedName || null,
-        role: editRole,
+        role,
+        roles,
         auto_cc: parsedAutoCc,
       })
-      .eq("id", id);
+      .eq("id", id)
+      .select();
 
     if (updateError) {
+      console.error("saveEdit failed:", updateError);
       setError(updateError.message);
+    } else if (!updated || updated.length === 0) {
+      // Update succeeded with 0 rows changed — RLS blocked the write.
+      setError(
+        "Save was blocked by database permissions (no row changed). Your account may not have admin rights in the database."
+      );
     } else {
       setEmails((prev) =>
         prev.map((e) =>
           e.id === id
-            ? { ...e, email: trimmedEmail, name: trimmedName || null, role: editRole, auto_cc: parsedAutoCc }
+            ? { ...e, email: trimmedEmail, name: trimmedName || null, role, roles, auto_cc: parsedAutoCc }
             : e
         )
       );
@@ -409,17 +481,16 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                   placeholder="Email"
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
-                <select
-                  value={editRole}
-                  onChange={(e) => setEditRole(e.target.value)}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                >
-                  {availableRoles.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
+                <div>
+                  <label className="text-[11px] font-medium text-muted mb-1 block">
+                    Roles
+                  </label>
+                  <RoleCheckboxes
+                    selected={editRoles}
+                    onChange={setEditRoles}
+                    options={availableRoles}
+                  />
+                </div>
                 <div>
                   <label className="text-[11px] font-medium text-muted mb-1 block">
                     Auto CC on Field Notes
@@ -435,6 +506,12 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                     Comma-separated. These emails auto-CC when this person sends field notes.
                   </p>
                 </div>
+                {error && (
+                  <p className="text-xs text-danger flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    {error}
+                  </p>
+                )}
                 <div className="flex gap-2">
                   <button
                     onClick={() => saveEdit(entry.id)}
@@ -463,20 +540,22 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                 }`}
               >
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     {entry.name && (
                       <span className="text-sm font-medium truncate">
                         {entry.name}
                       </span>
                     )}
-                    <span
-                      className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${
-                        ROLE_STYLES[entry.role] || ROLE_STYLES.member
-                      }`}
-                    >
-                      {ROLE_OPTIONS.find((r) => r.value === entry.role)?.label ||
-                        "Member"}
-                    </span>
+                    {rowRoles(entry).map((r) => (
+                      <span
+                        key={r}
+                        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${
+                          ROLE_STYLES[r] || ROLE_STYLES.member
+                        }`}
+                      >
+                        {ROLE_OPTIONS.find((o) => o.value === r)?.label || r}
+                      </span>
+                    ))}
                   </div>
                   <span className="text-xs text-muted block truncate">
                     {entry.email}
@@ -538,17 +617,6 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
               placeholder="email@company.com"
               className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
-            <select
-              value={newRole}
-              onChange={(e) => setNewRole(e.target.value)}
-              className="rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              {ROLE_OPTIONS.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
             <button
               onClick={addEmail}
               disabled={adding || !newEmail.trim()}
@@ -560,6 +628,16 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                 <Plus className="w-4 h-4" />
               )}
             </button>
+          </div>
+          <div>
+            <label className="text-[11px] font-medium text-muted mb-1 block">
+              Roles
+            </label>
+            <RoleCheckboxes
+              selected={newRoles}
+              onChange={setNewRoles}
+              options={availableRoles}
+            />
           </div>
           {error && (
             <p className="text-xs text-danger flex items-center gap-1">

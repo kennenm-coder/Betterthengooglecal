@@ -44,11 +44,13 @@ export function canManageTimeOff(role: UserRole | null | undefined): boolean {
   return isAdmin(role) || role === "payroll-admin" || role === "field-manager";
 }
 
-/** Assignable roles, in the order shown in the admin Team dropdown. */
+/** Assignable roles, in the order shown in the admin Team checkboxes. */
 export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: "member", label: "Member" },
   { value: "field-manager", label: "Field Manager" },
   { value: "payroll-admin", label: "Payroll Admin" },
+  { value: "scheduling", label: "Scheduling" },
+  { value: "scheduling_manager", label: "Scheduling Manager" },
   { value: "admin", label: "Admin" },
 ];
 
@@ -60,5 +62,7 @@ export const ROLE_STYLES: Record<string, string> = {
   admin: "bg-primary/15 text-primary",
   "payroll-admin": "bg-rba-green/15 text-rba-green",
   "field-manager": "bg-amber-500/15 text-amber-600",
+  scheduling: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+  scheduling_manager: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
   member: "bg-surface border border-border text-muted",
 };
