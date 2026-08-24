@@ -1,6 +1,17 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+// Middleware runs on every request and has a hard Vercel timeout. If Supabase
+// is slow or briefly unreachable, an un-bounded await hangs the whole request
+// and 504s (MIDDLEWARE_INVOCATION_TIMEOUT). Cap every network call so we fail
+// fast and fall through rather than block.
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
@@ -27,7 +38,9 @@ export async function middleware(request: NextRequest) {
 
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await withTimeout(supabase.auth.getUser(), 2500, {
+    data: { user: null },
+  } as Awaited<ReturnType<typeof supabase.auth.getUser>>);
 
   const { pathname } = request.nextUrl;
 
@@ -84,10 +97,21 @@ export async function middleware(request: NextRequest) {
     !pathname.startsWith("/forgot-password") &&
     !pathname.startsWith("/reset-password")
   ) {
-    const { data: isAllowed } = await supabase
-      .rpc("is_email_allowed", { check_email: user.email.toLowerCase() });
+    // Default to allowed on timeout: a slow RPC must not lock users out or 504.
+    // rpc() returns a thenable builder, so wrap it in a real Promise for race().
+    const { data: isAllowed } = await withTimeout(
+      Promise.resolve(
+        supabase.rpc("is_email_allowed", {
+          check_email: user.email.toLowerCase(),
+        })
+      ),
+      2500,
+      { data: true } as Awaited<
+        ReturnType<typeof supabase.rpc>
+      >
+    );
 
-    if (!isAllowed) {
+    if (isAllowed === false) {
       await supabase.auth.signOut();
       const url = request.nextUrl.clone();
       url.pathname = "/login";
