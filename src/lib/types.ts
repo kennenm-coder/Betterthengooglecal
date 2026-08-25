@@ -32,6 +32,9 @@ export interface WorkOrder {
   latitude: number | null;
   longitude: number | null;
   materialJob?: MaterialJobData | null;
+  /** Legacy install-instructions URL (Google Drive), shown only when there is
+   *  no paired materialJob. See legacy_install_links table / migration 015. */
+  legacyInstallUrl?: string | null;
 }
 
 export interface PhoneEntry {

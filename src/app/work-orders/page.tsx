@@ -151,6 +151,33 @@ export default function WorkOrdersPage() {
     }
   }
 
+  /** Mark the given numbered work items completed/not-completed across the rows
+   *  they span. Purely a field-progress toggle: no reviewer stamp and no status
+   *  change — a reviewer still approves the write-up separately. */
+  async function setItemsCompleted(section: WriteUpSection, items: WriteUpSection["outstanding"], completed: boolean) {
+    const nextItemsByRow = new Map<string, FieldWorkOrder["lineItems"]>();
+    for (const r of section.rows) nextItemsByRow.set(r.id, r.lineItems.map((li) => ({ ...li })));
+    const touched = new Set<string>();
+    for (const it of items) {
+      for (const src of it.sources) {
+        const arr = nextItemsByRow.get(src.rowId);
+        if (!arr || !arr[src.index]) continue;
+        arr[src.index].completed = completed;
+        touched.add(src.rowId);
+      }
+    }
+    const results = await Promise.all(
+      [...touched].map((rowId) => updateWriteUpLineItems(rowId, nextItemsByRow.get(rowId)!))
+    );
+    if (!results.every(Boolean)) {
+      alert("Couldn't save — try again.");
+      return;
+    }
+    setWriteUps((prev) =>
+      prev.map((w) => (touched.has(w.id) ? { ...w, lineItems: nextItemsByRow.get(w.id)! } : w))
+    );
+  }
+
   async function deletePhotos(w: FieldWorkOrder): Promise<boolean> {
     const res = await deleteWriteUpPhotos(
       w.id,
@@ -353,9 +380,11 @@ export default function WorkOrdersPage() {
                           section={sec}
                           total={sections.length}
                           canReview={canReview}
+                          canComplete={canView}
                           canEdit={canEdit}
                           onEdit={() => setEditing(sec.rows)}
                           onReviewItems={(itemsToReview, reviewed) => setItemsReviewed(sec, itemsToReview, reviewed)}
+                          onToggleCompleted={(itemsToToggle, completed) => setItemsCompleted(sec, itemsToToggle, completed)}
                           onStatus={(status) => setSectionStatus(sec, status)}
                           onDeletePhotos={async () => {
                             for (const w of sec.rows) if (w.photos.length) await deletePhotos(w);
@@ -447,23 +476,26 @@ function ReviewSection({
   section,
   total,
   canReview,
+  canComplete,
   canEdit,
   onEdit,
   onReviewItems,
+  onToggleCompleted,
   onStatus,
   onDeletePhotos,
 }: {
   section: WriteUpSection;
   total: number;
   canReview: boolean;
+  canComplete: boolean;
   canEdit: boolean;
   onEdit: () => void;
   onReviewItems: (items: NumberedWorkItem[], reviewed: boolean) => void;
+  onToggleCompleted: (items: NumberedWorkItem[], completed: boolean) => void;
   onStatus: (status: WriteUpStatus) => void;
   onDeletePhotos: () => Promise<void>;
 }) {
   const allWork = [...section.outstanding, ...section.completed].sort((a, b) => a.seq - b.seq);
-  const reviewable = section.status === "in_review";
   const allReviewed = allWork.length > 0 && allWork.every((i) => i.reviewed);
   const [confirmPhotos, setConfirmPhotos] = useState(false);
   const [deletingPhotos, setDeletingPhotos] = useState(false);
@@ -584,16 +616,16 @@ function ReviewSection({
           <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">Work to complete</div>
           <ul className="space-y-1.5">
             {allWork.map((it) => {
-              const canToggle = canReview && reviewable;
+              const canToggle = canComplete;
               return (
                 <li key={it.seq} className="flex items-start gap-2 text-sm">
                   <button
                     disabled={!canToggle}
-                    onClick={() => onReviewItems([it], !it.reviewed)}
+                    onClick={() => onToggleCompleted([it], !it.completed)}
                     className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
-                      it.reviewed ? "bg-blue-500 border-blue-500 text-white" : "border-border text-transparent"
+                      it.completed ? "bg-green-600 border-green-600 text-white" : "border-border text-transparent"
                     } ${canToggle ? "cursor-pointer" : "cursor-default"}`}
-                    title={it.reviewed ? "Reviewed — tap to undo" : "Mark reviewed"}
+                    title={it.completed ? "Completed — tap to undo" : "Mark completed"}
                   >
                     <Check className="w-3 h-3" />
                   </button>
@@ -608,7 +640,6 @@ function ReviewSection({
                           {it.reviewedAt ? ` · ${format(parseISO(it.reviewedAt), "MMM d")}` : ""}
                         </span>
                       )}
-                      {it.completed && <span className="text-[10px] text-green-600 font-medium">Installed ✓</span>}
                     </span>
                   </span>
                 </li>

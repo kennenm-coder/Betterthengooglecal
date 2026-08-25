@@ -572,13 +572,75 @@ async function fetchJobsSignatureFallback(): Promise<string> {
     .join("|");
 }
 
+// --- Legacy install-instruction links (migration 015) ---
+// A per-order Google Drive URL to the OLD install PDFs, shown only when the
+// order has no paired material job. Keyed by order_number so it survives
+// work-order re-imports and applies to every appointment of the order.
+
+let _legacyLinksCache: Map<string, string> | null = null;
+
+export function invalidateLegacyLinksCache() {
+  _legacyLinksCache = null;
+}
+
+export async function fetchLegacyLinks(): Promise<Map<string, string>> {
+  if (_legacyLinksCache) return _legacyLinksCache;
+  const map = new Map<string, string>();
+  const supabase = getSupabase();
+  if (!supabase) return map;
+  const { data, error } = await supabase
+    .from("legacy_install_links")
+    .select("order_number, url");
+  if (error || !data) return map;
+  for (const row of data as { order_number: string; url: string }[]) {
+    if (row.order_number && row.url) map.set(row.order_number, row.url);
+  }
+  _legacyLinksCache = map;
+  return map;
+}
+
+export async function upsertLegacyLink(
+  orderNumber: string,
+  url: string,
+  updatedBy?: string
+): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase) return false;
+  const { error } = await supabase.from("legacy_install_links").upsert(
+    {
+      order_number: orderNumber,
+      url,
+      updated_by: updatedBy || null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "order_number" }
+  );
+  if (error) return false;
+  _legacyLinksCache?.set(orderNumber, url);
+  return true;
+}
+
+export async function deleteLegacyLink(orderNumber: string): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase) return false;
+  const { error } = await supabase
+    .from("legacy_install_links")
+    .delete()
+    .eq("order_number", orderNumber);
+  if (error) return false;
+  _legacyLinksCache?.delete(orderNumber);
+  return true;
+}
+
 export function enrichWithMaterials(
   orders: WorkOrder[],
-  jobByPO: Map<string, any>
+  jobByPO: Map<string, any>,
+  legacyByOrder: Map<string, string> | null = _legacyLinksCache
 ): WorkOrder[] {
   return orders.map((wo) => ({
     ...wo,
     materialJob: jobByPO.get(wo.orderNumber) || null,
+    legacyInstallUrl: legacyByOrder?.get(wo.orderNumber) || null,
   }));
 }
 

@@ -84,6 +84,11 @@ export default function DayView({
                             Linked
                           </span>
                         )}
+                        {!order.materialJob && order.legacyInstallUrl && (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-400/30 text-xs font-semibold">
+                            Legacy Linked
+                          </span>
+                        )}
                       </div>
                     </button>
                   );
