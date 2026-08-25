@@ -44,6 +44,19 @@ export function canManageTimeOff(role: UserRole | null | undefined): boolean {
   return isAdmin(role) || role === "payroll-admin" || role === "field-manager";
 }
 
+/** Roles allowed to set/edit/clear the legacy install-instructions link. */
+export const LEGACY_LINK_ROLES: UserRole[] = ["admin", "scheduling", "scheduling_manager"];
+
+/**
+ * Can this role add/edit/clear a legacy install-instructions link on a job?
+ * Everyone else can still see the link and open it — they just can't edit.
+ * Keep in sync with the RLS policies in
+ * supabase/migrations/015_legacy_install_links.sql.
+ */
+export function canEditLegacyLink(role: UserRole | null | undefined): boolean {
+  return isAdmin(role) || (!!role && LEGACY_LINK_ROLES.includes(role));
+}
+
 /** Assignable roles, in the order shown in the admin Team checkboxes. */
 export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: "member", label: "Member" },

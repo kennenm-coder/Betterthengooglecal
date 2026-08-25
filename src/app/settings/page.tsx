@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createAuthClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork } from "@/lib/roles";
+import { canDoFieldWork, canEditLegacyLink } from "@/lib/roles";
 import BottomNav from "@/components/BottomNav";
 import LoadingScheduleModal from "@/components/LoadingScheduleModal";
 import {
@@ -25,6 +25,7 @@ import {
   Wrench,
   ChevronRight,
   Truck,
+  Link2,
 } from "lucide-react";
 
 const COLOR_FIELDS: { key: keyof WorkOrderColors; label: string }[] = [
@@ -44,6 +45,7 @@ export default function SettingsPage() {
   const [showLoadingSchedule, setShowLoadingSchedule] = useState(false);
   const { role } = useAuth();
   const fieldManager = canDoFieldWork(role);
+  const canManageLegacyLinks = canEditLegacyLink(role);
 
   useEffect(() => {
     const supabase = createAuthClient();
@@ -164,6 +166,22 @@ export default function SettingsPage() {
               </div>
               <ChevronRight className="w-4 h-4 text-muted" />
             </button>
+          </section>
+        )}
+
+        {/* Legacy Links — scheduling roles + admin */}
+        {canManageLegacyLinks && (
+          <section>
+            <Link
+              href="/legacy-links"
+              className="w-full flex items-center justify-between px-3 py-3 rounded-lg border border-border bg-surface text-sm font-medium hover:bg-muted/10 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <Link2 className="w-4 h-4 text-amber-600" />
+                <span>Legacy Links Needed</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-muted" />
+            </Link>
           </section>
         )}
 

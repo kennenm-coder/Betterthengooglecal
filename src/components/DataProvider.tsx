@@ -14,8 +14,12 @@ import {
   fetchMaterialJobs,
   fetchJobsSignature,
   enrichWithMaterials,
+  fetchLegacyLinks,
+  deleteLegacyLink,
   yieldToMain,
 } from "@/lib/store";
+import { useAuth } from "@/hooks/useAuth";
+import { canEditLegacyLink } from "@/lib/roles";
 
 const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"]);
 
@@ -33,6 +37,8 @@ interface DataContextType {
   linkedJobsStale: boolean;
   /** Refetch material jobs and re-link them onto the loaded orders. */
   resyncLinkedJobs: () => Promise<void>;
+  /** Reflect a legacy install-link change locally (url, or null to clear). */
+  applyLegacyLink: (orderNumber: string, url: string | null) => void;
 }
 
 const DataContext = createContext<DataContextType>({
@@ -46,6 +52,7 @@ const DataContext = createContext<DataContextType>({
   ensureDateLoaded: () => {},
   linkedJobsStale: false,
   resyncLinkedJobs: async () => {},
+  applyLegacyLink: () => {},
 });
 
 export function useData() {
@@ -69,6 +76,7 @@ function getMonthsInRange(start: string, end: string): Set<string> {
 }
 
 export default function DataProvider({ children }: { children: ReactNode }) {
+  const { role } = useAuth();
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [materialJobs, setMaterialJobs] = useState<MaterialJobData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -81,6 +89,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const monthLoadingRef = useRef<Set<string>>(new Set());
   const jobByPORef = useRef<Map<string, any>>(new Map());
   const jobsSigRef = useRef<string>("");
+  const purgedLegacyRef = useRef<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     abortRef.current?.abort();
@@ -114,7 +123,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       // The Map is also flattened into materialJobs state so Search and
       // UnscheduledJobs can consume it from context instead of re-fetching.
       try {
-        const jobByPO = await fetchMaterialJobs();
+        // Fetch material jobs + legacy install links together. fetchLegacyLinks
+        // populates the module cache that enrichWithMaterials reads by default.
+        const [jobByPO] = await Promise.all([fetchMaterialJobs(), fetchLegacyLinks()]);
         if (stale()) return;
         jobByPORef.current = jobByPO;
         setMaterialJobs(Array.from(jobByPO.values()) as MaterialJobData[]);
@@ -241,6 +252,35 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     setLinkedJobsStale(false);
   }, []);
 
+  const applyLegacyLink = useCallback((orderNumber: string, url: string | null) => {
+    setOrders((prev) => {
+      const next = prev.map((o) =>
+        o.orderNumber === orderNumber ? { ...o, legacyInstallUrl: url } : o
+      );
+      saveBoundedCache(next);
+      return next;
+    });
+  }, []);
+
+  // Auto-delete legacy links that a real material job now overrides (the real
+  // install instructions win). Best-effort + RLS-gated: only authorized roles
+  // can delete, so this runs once role resolves. The tile hides overridden
+  // legacy links regardless, so this is pure housekeeping. Tracked per order so
+  // it fires at most once each and never loops.
+  useEffect(() => {
+    if (!canEditLegacyLink(role)) return;
+    const overridden = orders.filter(
+      (o) => o.materialJob && o.legacyInstallUrl && !purgedLegacyRef.current.has(o.orderNumber)
+    );
+    if (overridden.length === 0) return;
+    for (const o of overridden) purgedLegacyRef.current.add(o.orderNumber);
+    Promise.all(overridden.map((o) => deleteLegacyLink(o.orderNumber).catch(() => {}))).then(() => {
+      setOrders((prev) =>
+        prev.map((o) => (o.materialJob && o.legacyInstallUrl ? { ...o, legacyInstallUrl: null } : o))
+      );
+    });
+  }, [orders, role]);
+
   // Detect linked-job changes when the tab regains focus — only flag when the
   // fingerprint actually differs from what we loaded (no false alarms).
   // Debounced to at most once per minute so backgrounding/foregrounding the app
@@ -302,6 +342,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         ensureDateLoaded,
         linkedJobsStale,
         resyncLinkedJobs,
+        applyLegacyLink,
       }}
     >
       {children}

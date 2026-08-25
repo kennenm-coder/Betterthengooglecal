@@ -196,6 +196,11 @@ function SearchOrderTile({
                 Linked
               </span>
             )}
+            {!order.materialJob && order.legacyInstallUrl && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-semibold">
+                Legacy Linked
+              </span>
+            )}
             {multiDay && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-light text-primary font-medium">
                 Multi-day

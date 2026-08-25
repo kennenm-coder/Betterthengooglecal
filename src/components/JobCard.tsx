@@ -22,14 +22,26 @@ import {
   Hammer,
   Ruler,
   BadgeDollarSign,
+  Link2,
 } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import ActionModal from "./ActionModal";
 import WriteUpModal from "./WriteUpModal";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork } from "@/lib/roles";
+import { canDoFieldWork, canEditLegacyLink } from "@/lib/roles";
+import { upsertLegacyLink, deleteLegacyLink } from "@/lib/store";
+import { useData } from "./DataProvider";
 import { parseISO, isSameDay } from "date-fns";
+
+function isValidHttpUrl(s: string): boolean {
+  try {
+    const u = new URL(s);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 function phoneHref(phone: string): string {
   return "tel:" + phone.replace(/[\s\-\(\)]/g, "");
@@ -103,13 +115,50 @@ export default function JobCard({
   const [expanded, setExpanded] = useState(false);
   const [showAction, setShowAction] = useState(false);
   const [showWriteUp, setShowWriteUp] = useState(false);
-  const { role } = useAuth();
+  const { user, role } = useAuth();
+  const { applyLegacyLink } = useData();
   const fieldWorker = canDoFieldWork(role);
+  const canEditLegacy = canEditLegacyLink(role);
   const router = useRouter();
   const typeBg = typeColor(order.workOrderType);
   const typeText = typeTileText(order.workOrderType);
   const multiDay = isMultiDay(order);
   const mat = order.materialJob;
+  const legacyUrl = order.legacyInstallUrl || null;
+
+  const [editingLegacy, setEditingLegacy] = useState(false);
+  const [legacyInput, setLegacyInput] = useState("");
+  const [savingLegacy, setSavingLegacy] = useState(false);
+
+  async function saveLegacyLink() {
+    const url = legacyInput.trim();
+    if (!isValidHttpUrl(url)) {
+      alert("Enter a valid URL starting with http:// or https://");
+      return;
+    }
+    setSavingLegacy(true);
+    const ok = await upsertLegacyLink(order.orderNumber, url, user?.email || undefined);
+    setSavingLegacy(false);
+    if (!ok) {
+      alert("Couldn't save the link — try again.");
+      return;
+    }
+    applyLegacyLink(order.orderNumber, url);
+    setEditingLegacy(false);
+  }
+
+  async function clearLegacyLink() {
+    if (!confirm("Remove the legacy install link for this job?")) return;
+    setSavingLegacy(true);
+    const ok = await deleteLegacyLink(order.orderNumber);
+    setSavingLegacy(false);
+    if (!ok) {
+      alert("Couldn't remove the link — try again.");
+      return;
+    }
+    applyLegacyLink(order.orderNumber, null);
+    setEditingLegacy(false);
+  }
 
   if (compact) {
     return (
@@ -139,6 +188,11 @@ export default function JobCard({
                 {mat && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#6DB344]/15 text-[#6DB344] font-semibold">
                     Linked
+                  </span>
+                )}
+                {!mat && legacyUrl && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 font-semibold">
+                    Legacy Linked
                   </span>
                 )}
                 {multiDay && (
@@ -179,6 +233,11 @@ export default function JobCard({
                   {order.workOrderType}
                 </span>
                 <StatusBadge status={order.appointmentStatus || order.status} />
+                {!mat && legacyUrl && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-semibold">
+                    Legacy Linked
+                  </span>
+                )}
                 {multiDay && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-primary-light text-primary font-medium">
                     Multi-day
@@ -365,6 +424,83 @@ export default function JobCard({
               <FileText className="w-4 h-4" />
               Open Install Instructions
             </button>
+          )}
+
+          {/* Legacy install instructions — only when there's no real material
+              job. Anyone can open the link; only scheduling/admin can edit it. */}
+          {!mat && (legacyUrl || canEditLegacy) && (
+            <div className="mt-3">
+              {legacyUrl && !editingLegacy && (
+                <>
+                  <a
+                    href={legacyUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-amber-500/10 text-amber-700 border border-amber-500/30 text-sm font-medium active:scale-[0.98] transition-transform"
+                  >
+                    <FileText className="w-4 h-4" />
+                    Legacy Install Instructions
+                  </a>
+                  {canEditLegacy && (
+                    <div className="flex gap-3 mt-1.5 justify-center">
+                      <button
+                        onClick={() => {
+                          setLegacyInput(legacyUrl);
+                          setEditingLegacy(true);
+                        }}
+                        className="text-xs text-muted underline"
+                      >
+                        Edit link
+                      </button>
+                      <button
+                        onClick={clearLegacyLink}
+                        disabled={savingLegacy}
+                        className="text-xs text-red-600 underline disabled:opacity-50"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {canEditLegacy && (editingLegacy || !legacyUrl) && (
+                <div className="rounded-lg bg-surface p-3 border border-border">
+                  <div className="flex items-center gap-1.5 mb-1.5 text-muted">
+                    <Link2 className="w-3.5 h-3.5" />
+                    <span className="text-xs font-semibold uppercase tracking-wide">
+                      Legacy install link
+                    </span>
+                  </div>
+                  <input
+                    type="url"
+                    inputMode="url"
+                    placeholder="https://drive.google.com/..."
+                    value={legacyInput}
+                    onChange={(e) => setLegacyInput(e.target.value)}
+                    className="w-full px-2.5 py-2 rounded-lg border border-border bg-background text-sm"
+                  />
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={saveLegacyLink}
+                      disabled={savingLegacy}
+                      className="flex-1 px-3 py-2 rounded-lg bg-primary text-white text-sm font-medium disabled:opacity-50"
+                    >
+                      {savingLegacy ? "Saving…" : "Save link"}
+                    </button>
+                    {editingLegacy && (
+                      <button
+                        onClick={() => setEditingLegacy(false)}
+                        disabled={savingLegacy}
+                        className="px-3 py-2 rounded-lg border border-border text-sm"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Product Specs — collapsible per-unit */}
