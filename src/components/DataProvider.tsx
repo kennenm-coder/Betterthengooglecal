@@ -76,7 +76,7 @@ function getMonthsInRange(start: string, end: string): Set<string> {
 }
 
 export default function DataProvider({ children }: { children: ReactNode }) {
-  const { role } = useAuth();
+  const { roles } = useAuth();
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [materialJobs, setMaterialJobs] = useState<MaterialJobData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -268,7 +268,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   // legacy links regardless, so this is pure housekeeping. Tracked per order so
   // it fires at most once each and never loops.
   useEffect(() => {
-    if (!canEditLegacyLink(role)) return;
+    if (!canEditLegacyLink(roles)) return;
     const overridden = orders.filter(
       (o) => o.materialJob && o.legacyInstallUrl && !purgedLegacyRef.current.has(o.orderNumber)
     );
@@ -279,7 +279,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         prev.map((o) => (o.materialJob && o.legacyInstallUrl ? { ...o, legacyInstallUrl: null } : o))
       );
     });
-  }, [orders, role]);
+  }, [orders, roles]);
 
   // Detect linked-job changes when the tab regains focus — only flag when the
   // fingerprint actually differs from what we loaded (no false alarms).

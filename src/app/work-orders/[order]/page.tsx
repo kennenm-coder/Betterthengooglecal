@@ -19,7 +19,7 @@ const ACCENT_TEXT = "#A16207"; // small text (vendor, etc.) for print contrast
 export default function WorkOrderDocPage() {
   const params = useParams();
   const router = useRouter();
-  const { role, loading: authLoading } = useAuth();
+  const { roles, loading: authLoading } = useAuth();
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -28,7 +28,7 @@ export default function WorkOrderDocPage() {
 
   const orderNumber = decodeURIComponent(String(params.order || ""));
   // Soft rollout: only admin + field-manager can view a write-up doc.
-  const canView = canSeeWriteUps(role);
+  const canView = canSeeWriteUps(roles);
 
   useEffect(() => {
     if (!orderNumber || authLoading || !canView) return;

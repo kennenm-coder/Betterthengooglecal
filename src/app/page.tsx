@@ -35,8 +35,8 @@ function CalendarPage() {
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
-  const { role } = useAuth();
-  const canManageTimeOff = canManageTimeOffRole(role);
+  const { roles } = useAuth();
+  const canManageTimeOff = canManageTimeOffRole(roles);
   const { isStale, staleAfter, nextUpdate, isDesktop, dismiss, resetBlock } = useStaleTab();
 
   useEffect(() => {
@@ -215,7 +215,7 @@ function CalendarPage() {
 
           <FilterPanel orders={orders} filters={filters} onChange={setFilters} />
 
-          {isAdmin(role) && (
+          {isAdmin(roles) && (
             <button
               onClick={() => setView(view === "list" ? "day" : "list")}
               className={`p-2 rounded-full transition-colors shrink-0 ${

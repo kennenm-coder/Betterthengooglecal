@@ -68,6 +68,28 @@ export function formatDateShort(iso: string | null): string {
   return format(parseISO(iso), "MMM d, yyyy");
 }
 
+// Open a work order in Salesforce. On mobile, deep-link into the Salesforce1
+// app (copying the order number to the clipboard as a fallback), then fall back
+// to the web console if the app doesn't take over.
+export function openSalesforce(workOrderNumber: string, orderNumber: string) {
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  const webUrl = `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${encodeURIComponent(workOrderNumber)}`;
+
+  if (isMobile) {
+    navigator.clipboard?.writeText(orderNumber).catch(() => {});
+    const appUrl = `salesforce1://search/${encodeURIComponent(workOrderNumber)}`;
+    const start = Date.now();
+    window.location.href = appUrl;
+    setTimeout(() => {
+      if (Date.now() - start < 1800) {
+        window.open(webUrl, "_blank");
+      }
+    }, 1500);
+  } else {
+    window.open(webUrl, "_blank");
+  }
+}
+
 export function typeColor(type: WorkOrder["workOrderType"]): string {
   switch (type) {
     case "Install":

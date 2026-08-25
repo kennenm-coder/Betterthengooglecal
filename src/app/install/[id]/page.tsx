@@ -130,8 +130,8 @@ export default function InstallInstructionsPage() {
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
   const [showWriteUp, setShowWriteUp] = useState(false);
   const [loading, setLoading] = useState(true);
-  const { role } = useAuth();
-  const fieldWorker = canDoFieldWork(role);
+  const { roles } = useAuth();
+  const fieldWorker = canDoFieldWork(roles);
 
   useEffect(() => {
     async function load() {
