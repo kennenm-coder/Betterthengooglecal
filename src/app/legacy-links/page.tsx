@@ -9,8 +9,9 @@ import { canEditLegacyLink } from "@/lib/roles";
 import { upsertLegacyLink } from "@/lib/store";
 import { WorkOrder } from "@/lib/types";
 import BottomNav from "@/components/BottomNav";
+import { typeColor, typeColorText, openSalesforce } from "@/lib/calendar-utils";
 import { subDays, parseISO, format } from "date-fns";
-import { ChevronLeft, Link2, Check, Loader2, CalendarClock } from "lucide-react";
+import { ChevronLeft, Link2, Check, Loader2, CalendarClock, ExternalLink } from "lucide-react";
 
 const TYPE_FILTERS = ["All", "Install", "Service", "Job Site Visit"] as const;
 type TypeFilter = (typeof TYPE_FILTERS)[number];
@@ -27,8 +28,8 @@ function isValidHttpUrl(s: string): boolean {
 export default function LegacyLinksPage() {
   const router = useRouter();
   const { orders, applyLegacyLink } = useData();
-  const { user, role } = useAuth();
-  const allowed = canEditLegacyLink(role);
+  const { user, role, roles } = useAuth();
+  const allowed = canEditLegacyLink(roles);
 
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("All");
   const [inputs, setInputs] = useState<Record<string, string>>({});
@@ -42,8 +43,9 @@ export default function LegacyLinksPage() {
 
   // Jobs needing a legacy link: not linked to a material job, no legacy link
   // yet, and scheduled within the last week or later. Deduped by order number
-  // (one order can span several appointments) and sorted soonest-first.
-  const needsLink = useMemo(() => {
+  // (one order can span several appointments) and sorted soonest-first. Not
+  // yet type-filtered — that happens below so the chip totals stay accurate.
+  const baseNeeds = useMemo(() => {
     const cutoff = subDays(new Date(), 7);
     const byOrder = new Map<string, WorkOrder>();
     for (const o of orders) {
@@ -51,7 +53,6 @@ export default function LegacyLinksPage() {
       if (o.legacyInstallUrl) continue;
       if (!o.scheduledStart) continue;
       if (parseISO(o.scheduledStart) < cutoff) continue;
-      if (typeFilter !== "All" && o.workOrderType !== typeFilter) continue;
       const existing = byOrder.get(o.orderNumber);
       if (!existing || (existing.scheduledStart && o.scheduledStart < existing.scheduledStart)) {
         byOrder.set(o.orderNumber, o);
@@ -60,7 +61,28 @@ export default function LegacyLinksPage() {
     return Array.from(byOrder.values()).sort((a, b) =>
       (a.scheduledStart || "").localeCompare(b.scheduledStart || "")
     );
-  }, [orders, typeFilter]);
+  }, [orders]);
+
+  // Per-type totals for the filter chips.
+  const counts = useMemo(() => {
+    const c: Record<TypeFilter, number> = {
+      All: baseNeeds.length,
+      Install: 0,
+      Service: 0,
+      "Job Site Visit": 0,
+    };
+    for (const o of baseNeeds) {
+      if (o.workOrderType === "Install") c.Install += 1;
+      else if (o.workOrderType === "Service") c.Service += 1;
+      else if (o.workOrderType === "Job Site Visit") c["Job Site Visit"] += 1;
+    }
+    return c;
+  }, [baseNeeds]);
+
+  const needsLink = useMemo(
+    () => (typeFilter === "All" ? baseNeeds : baseNeeds.filter((o) => o.workOrderType === typeFilter)),
+    [baseNeeds, typeFilter]
+  );
 
   async function save(order: WorkOrder) {
     const url = (inputs[order.id] || "").trim();
@@ -123,13 +145,23 @@ export default function LegacyLinksPage() {
           <button
             key={t}
             onClick={() => setTypeFilter(t)}
-            className={`text-xs px-2.5 py-1 rounded-full font-medium border transition-colors ${
+            className={`text-xs px-2.5 py-1 rounded-full font-medium border transition-colors flex items-center gap-1.5 ${
               typeFilter === t
                 ? "bg-primary text-white border-primary"
                 : "border-border text-muted hover:text-foreground"
             }`}
           >
-            {t}
+            {t !== "All" && (
+              <span className={`w-2 h-2 rounded-full ${typeColor(t)}`} />
+            )}
+            <span>{t}</span>
+            <span
+              className={`text-[10px] font-bold ${
+                typeFilter === t ? "text-white/80" : "text-muted"
+              }`}
+            >
+              {counts[t]}
+            </span>
           </button>
         ))}
       </div>
@@ -144,17 +176,30 @@ export default function LegacyLinksPage() {
           needsLink.map((order) => (
             <div
               key={order.id}
-              className="rounded-lg border border-border bg-surface p-3"
+              className="rounded-lg border border-border bg-surface overflow-hidden flex items-stretch"
             >
+              <div className={`w-1.5 shrink-0 ${typeColor(order.workOrderType)}`} />
+              <div className="flex-1 min-w-0 p-3">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium text-sm truncate">{order.customerName}</span>
-                <span className="text-xs text-muted whitespace-nowrap flex items-center gap-1">
-                  <CalendarClock className="w-3.5 h-3.5" />
-                  {order.scheduledStart ? format(parseISO(order.scheduledStart), "EEE MMM d") : "—"}
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs text-muted whitespace-nowrap flex items-center gap-1">
+                    <CalendarClock className="w-3.5 h-3.5" />
+                    {order.scheduledStart ? format(parseISO(order.scheduledStart), "EEE MMM d") : "—"}
+                  </span>
+                  <button
+                    onClick={() => openSalesforce(order.workOrderNumber, order.orderNumber)}
+                    className="p-1 rounded hover:bg-muted/10"
+                    title="Open in Salesforce"
+                  >
+                    <ExternalLink className="w-4 h-4 text-muted" />
+                  </button>
+                </div>
               </div>
               <div className="flex items-center gap-2 mt-0.5 mb-2">
-                <span className="text-xs text-muted">{order.workOrderType}</span>
+                <span className={`text-xs font-semibold ${typeColorText(order.workOrderType)}`}>
+                  {order.workOrderType}
+                </span>
                 <span className="text-xs text-muted">#{order.orderNumber}</span>
               </div>
               <div className="flex gap-2">
@@ -190,6 +235,7 @@ export default function LegacyLinksPage() {
                   Enter a valid URL starting with http:// or https://
                 </p>
               )}
+              </div>
             </div>
           ))
         )}

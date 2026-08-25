@@ -6,28 +6,48 @@
 import type { UserRole } from "@/hooks/useAuth";
 
 /**
+ * A user's roles. Accounts can hold several (allowed_emails.roles), so every
+ * capability gate takes the FULL set and grants access if ANY held role
+ * qualifies — the union of what all their roles allow. Callers pass the `roles`
+ * array from useAuth. A single role string (or null) is also accepted for
+ * convenience and normalized to an array.
+ */
+export type RoleInput = UserRole | string | string[] | null | undefined;
+
+function toList(input: RoleInput): string[] {
+  if (!input) return [];
+  return Array.isArray(input) ? input : [input];
+}
+
+/** True if the user holds any of the allowed roles. */
+function hasAny(input: RoleInput, allowed: readonly string[]): boolean {
+  const held = toList(input);
+  return held.some((r) => allowed.includes(r));
+}
+
+/**
  * The plain admin role always has access to everything. Every capability gate
  * below short-circuits through this, so an admin can never be locked out of a
  * feature no matter how the other role lists change.
  */
-export function isAdmin(role: UserRole | null | undefined): boolean {
-  return role === "admin";
+export function isAdmin(roles: RoleInput): boolean {
+  return toList(roles).includes("admin");
 }
 
 /** Roles allowed to create field write-ups and send field notes. */
 export const FIELD_WORK_ROLES: UserRole[] = ["admin", "field-manager"];
 
 /**
- * Can this role create field write-ups / send field notes?
+ * Can this user create field write-ups / send field notes?
  * Gates the Write-Up button and the Log Action (field notes) button.
  */
-export function canDoFieldWork(role: UserRole | null | undefined): boolean {
-  return isAdmin(role) || (!!role && FIELD_WORK_ROLES.includes(role));
+export function canDoFieldWork(roles: RoleInput): boolean {
+  return hasAny(roles, FIELD_WORK_ROLES);
 }
 
 /** Roles that can review/close write-ups and approve photo deletion (office). */
-export function canReviewWriteUps(role: UserRole | null | undefined): boolean {
-  return isAdmin(role) || role === "payroll-admin";
+export function canReviewWriteUps(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "payroll-admin"]);
 }
 
 /**
@@ -35,26 +55,26 @@ export function canReviewWriteUps(role: UserRole | null | undefined): boolean {
  * so the feature stays out of regular members' way during a soft rollout.
  * (Widen this later — e.g. add "payroll-admin" — to open it up.)
  */
-export function canSeeWriteUps(role: UserRole | null | undefined): boolean {
-  return isAdmin(role) || role === "field-manager";
+export function canSeeWriteUps(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "field-manager"]);
 }
 
 /** Who can open/manage the Time Off screen. */
-export function canManageTimeOff(role: UserRole | null | undefined): boolean {
-  return isAdmin(role) || role === "payroll-admin" || role === "field-manager";
+export function canManageTimeOff(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "payroll-admin", "field-manager"]);
 }
 
 /** Roles allowed to set/edit/clear the legacy install-instructions link. */
 export const LEGACY_LINK_ROLES: UserRole[] = ["admin", "scheduling", "scheduling_manager"];
 
 /**
- * Can this role add/edit/clear a legacy install-instructions link on a job?
+ * Can this user add/edit/clear a legacy install-instructions link on a job?
  * Everyone else can still see the link and open it — they just can't edit.
  * Keep in sync with the RLS policies in
- * supabase/migrations/015_legacy_install_links.sql.
+ * supabase/migrations/016_legacy_links_multirole.sql.
  */
-export function canEditLegacyLink(role: UserRole | null | undefined): boolean {
-  return isAdmin(role) || (!!role && LEGACY_LINK_ROLES.includes(role));
+export function canEditLegacyLink(roles: RoleInput): boolean {
+  return hasAny(roles, LEGACY_LINK_ROLES);
 }
 
 /** Assignable roles, in the order shown in the admin Team checkboxes. */

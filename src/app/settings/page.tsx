@@ -43,9 +43,9 @@ export default function SettingsPage() {
   const [deleteError, setDeleteError] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [showLoadingSchedule, setShowLoadingSchedule] = useState(false);
-  const { role } = useAuth();
-  const fieldManager = canDoFieldWork(role);
-  const canManageLegacyLinks = canEditLegacyLink(role);
+  const { roles } = useAuth();
+  const fieldManager = canDoFieldWork(roles);
+  const canManageLegacyLinks = canEditLegacyLink(roles);
 
   useEffect(() => {
     const supabase = createAuthClient();
@@ -186,7 +186,7 @@ export default function SettingsPage() {
         )}
 
         {/* Dev Page — admin & payroll-admin */}
-        {(role === "admin" || role === "payroll-admin") && (
+        {(roles.includes("admin") || roles.includes("payroll-admin")) && (
           <section>
             <Link
               href="/admin"

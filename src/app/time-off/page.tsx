@@ -61,7 +61,7 @@ function TimeOffContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const fromScheduler = searchParams.get("from") === "scheduler";
-  const { role, loading: authLoading } = useAuth();
+  const { roles, loading: authLoading } = useAuth();
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -232,7 +232,7 @@ function TimeOffContent() {
     );
   }
 
-  if (!canManageTimeOff(role)) {
+  if (!canManageTimeOff(roles)) {
     return (
       <div className="flex flex-col h-full bg-background items-center justify-center p-4">
         <div className="text-center space-y-3">

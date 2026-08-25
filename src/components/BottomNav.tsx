@@ -17,9 +17,9 @@ const NAV_ITEMS = [
 
 export default function BottomNav() {
   const pathname = usePathname();
-  const { role } = useAuth();
+  const { roles } = useAuth();
   // Hide the Write-Ups tab from regular members during the soft rollout.
-  const items = NAV_ITEMS.filter((i) => !i.writeUps || canSeeWriteUps(role));
+  const items = NAV_ITEMS.filter((i) => !i.writeUps || canSeeWriteUps(roles));
 
   return (
     <nav

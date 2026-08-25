@@ -1,7 +1,7 @@
 "use client";
 
 import { WorkOrder, MaterialJobData, MaterialUnit } from "@/lib/types";
-import { formatTime, formatDateShort, typeColor, typeTileText } from "@/lib/calendar-utils";
+import { formatTime, formatDateShort, typeColor, typeTileText, openSalesforce } from "@/lib/calendar-utils";
 import CopyButton from "./CopyButton";
 import {
   Phone,
@@ -63,25 +63,6 @@ function isMultiDay(order: WorkOrder): boolean {
   return !isSameDay(parseISO(order.scheduledStart), parseISO(order.scheduledEnd));
 }
 
-function openSalesforce(workOrderNumber: string, orderNumber: string) {
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  const webUrl = `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${encodeURIComponent(workOrderNumber)}`;
-
-  if (isMobile) {
-    navigator.clipboard?.writeText(orderNumber).catch(() => {});
-    const appUrl = `salesforce1://search/${encodeURIComponent(workOrderNumber)}`;
-    const start = Date.now();
-    window.location.href = appUrl;
-    setTimeout(() => {
-      if (Date.now() - start < 1800) {
-        window.open(webUrl, "_blank");
-      }
-    }, 1500);
-  } else {
-    window.open(webUrl, "_blank");
-  }
-}
-
 function StatusBadge({ status }: { status: string }) {
   let color = "bg-gray-100 text-gray-700";
   const s = status.toLowerCase();
@@ -115,10 +96,10 @@ export default function JobCard({
   const [expanded, setExpanded] = useState(false);
   const [showAction, setShowAction] = useState(false);
   const [showWriteUp, setShowWriteUp] = useState(false);
-  const { user, role } = useAuth();
+  const { user, roles } = useAuth();
   const { applyLegacyLink } = useData();
-  const fieldWorker = canDoFieldWork(role);
-  const canEditLegacy = canEditLegacyLink(role);
+  const fieldWorker = canDoFieldWork(roles);
+  const canEditLegacy = canEditLegacyLink(roles);
   const router = useRouter();
   const typeBg = typeColor(order.workOrderType);
   const typeText = typeTileText(order.workOrderType);

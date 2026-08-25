@@ -50,17 +50,17 @@ const FILTERS: { id: Filter; label: string }[] = [
 ];
 
 export default function WorkOrdersPage() {
-  const { role, user, loading: authLoading } = useAuth();
+  const { roles, user, loading: authLoading } = useAuth();
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("in_review");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // Soft rollout: only admin + field-manager can see write-ups for now.
-  const canView = canSeeWriteUps(role);
-  const canReview = canReviewWriteUps(role);
-  const canCreate = canDoFieldWork(role);
-  const canEdit = canDoFieldWork(role);
+  const canView = canSeeWriteUps(roles);
+  const canReview = canReviewWriteUps(roles);
+  const canCreate = canDoFieldWork(roles);
+  const canEdit = canDoFieldWork(roles);
 
   const [showPicker, setShowPicker] = useState(false);
   const [pending, setPending] = useState<{ target: WriteUpTarget; units: MaterialUnit[] } | null>(null);
