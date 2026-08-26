@@ -6,7 +6,10 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 export interface AuthenticatedUser {
   id: string;
   email: string;
+  /** Primary (collapsed) role — kept for callers/RLS that key off one role. */
   role: UserRole;
+  /** Full multi-role set. Access checks should use this, not `role`. */
+  roles: UserRole[];
 }
 
 interface AuthResult {
@@ -17,8 +20,12 @@ interface AuthResult {
 /**
  * Server-side role check for API routes.
  *
- * Returns the authenticated user with their role, or a ready-to-return
- * NextResponse error (401/403).
+ * Accounts can hold several roles (allowed_emails.roles). Access is the UNION
+ * of what all held roles allow: the request is authorized if ANY held role is
+ * in `allowed`. Mirrors the client-side gates in src/lib/roles.ts.
+ *
+ * Returns the authenticated user (with the full `roles` set and a collapsed
+ * primary `role`), or a ready-to-return NextResponse error (401/403).
  *
  * Usage:
  *   const { user, error } = await requireRole("admin");
@@ -40,10 +47,10 @@ export async function requireRole(
     };
   }
 
-  // Look up role from the allowlist — users not on the list are fully rejected
+  // Look up roles from the allowlist — users not on the list are fully rejected
   const { data: row } = await supabase
     .from("allowed_emails")
-    .select("role")
+    .select("role, roles")
     .eq("email", user.email.toLowerCase())
     .maybeSingle();
 
@@ -57,9 +64,19 @@ export async function requireRole(
     };
   }
 
-  const role: UserRole = (row.role as UserRole) || "member";
+  // Normalize to the full role set (handles legacy rows with only `role`).
+  const roles: UserRole[] = (
+    Array.isArray(row.roles) && row.roles.length
+      ? (row.roles as UserRole[])
+      : row.role
+        ? [row.role as UserRole]
+        : ["member"]
+  );
+  // Collapsed primary role, kept for callers/RLS that expect a single value.
+  const role: UserRole = (row.role as UserRole) || roles[0] || "member";
 
-  if (allowed.length > 0 && !allowed.includes(role)) {
+  // Grant if ANY held role qualifies — the union of every role's "yeses".
+  if (allowed.length > 0 && !roles.some((r) => allowed.includes(r))) {
     return {
       user: null,
       error: NextResponse.json(
@@ -70,7 +87,7 @@ export async function requireRole(
   }
 
   return {
-    user: { id: user.id, email: user.email, role },
+    user: { id: user.id, email: user.email, role, roles },
     error: null,
   };
 }
