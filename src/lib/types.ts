@@ -206,7 +206,7 @@ export interface WriteUpNewProduct {
 //  • in_review — submitted; office reviews each work item (marks it reviewed)
 //  • open       — all work items reviewed; an approved work order for the field
 //  • closed     — work installed and the write-up marked closed
-export type WriteUpStatus = "draft" | "in_review" | "open" | "closed";
+export type WriteUpStatus = "draft" | "in_review" | "open" | "closed" | "archived";
 
 export interface FieldWorkOrder {
   id: string;

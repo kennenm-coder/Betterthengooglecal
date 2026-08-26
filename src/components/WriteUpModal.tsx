@@ -1267,7 +1267,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                       status === s ? "bg-amber-500 border-amber-500 text-white" : "border-border text-muted"
                     }`}
                   >
-                    {{ draft: "Draft", in_review: "In review", open: "Open", closed: "Closed" }[s]}
+                    {{ draft: "Draft", in_review: "In review", open: "Open", closed: "Closed", archived: "Archived" }[s]}
                   </button>
                 ))}
               </div>

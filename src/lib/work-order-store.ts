@@ -970,10 +970,13 @@ export function buildWriteUpMailto(
 export async function fetchWriteUpsForOrder(orderNumber: string): Promise<FieldWorkOrder[]> {
   const supabase = getSupabase();
   if (!supabase || !orderNumber) return [];
+  // Archived write-ups are excluded so they never appear on the joined
+  // doc / PDF / copied text (e.g. a test write-up superseded by a real one).
   const { data, error } = await supabase
     .from("field_work_orders")
     .select("*")
     .eq("order_number", orderNumber)
+    .neq("status", "archived")
     .order("created_at", { ascending: false });
   if (error || !data) return [];
   return (data as FieldWorkOrderRow[]).map(rowToWriteUp);
