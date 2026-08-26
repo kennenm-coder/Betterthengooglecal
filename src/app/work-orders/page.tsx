@@ -36,16 +36,18 @@ import {
   AlertTriangle,
   Send,
   Camera,
+  Archive,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
-type Filter = "draft" | "in_review" | "open" | "closed" | "all";
+type Filter = "draft" | "in_review" | "open" | "closed" | "archived" | "all";
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "draft", label: "Drafts" },
   { id: "in_review", label: "In Review" },
   { id: "open", label: "Open" },
   { id: "closed", label: "Closed" },
+  { id: "archived", label: "Archived" },
   { id: "all", label: "All" },
 ];
 
@@ -195,7 +197,12 @@ export default function WorkOrdersPage() {
   }
 
   const visible = useMemo(
-    () => (filter === "all" ? writeUps : writeUps.filter((w) => w.status === filter)),
+    () =>
+      // "All" shows everything except archived; archived lives behind its own
+      // filter so superseded/test write-ups stay out of the way.
+      filter === "all"
+        ? writeUps.filter((w) => w.status !== "archived")
+        : writeUps.filter((w) => w.status === filter),
     [writeUps, filter]
   );
 
@@ -451,12 +458,14 @@ const STATUS_STYLE: Record<WriteUpStatus, string> = {
   in_review: "bg-blue-500/15 text-blue-600",
   open: "bg-amber-500/15 text-amber-600",
   closed: "bg-green-600/15 text-green-700",
+  archived: "bg-surface border border-border text-muted",
 };
 const STATUS_LABEL: Record<WriteUpStatus, string> = {
   draft: "Draft",
   in_review: "In Review",
   open: "Open",
   closed: "Closed",
+  archived: "Archived",
 };
 
 function StatusPill({ status }: { status: WriteUpStatus }) {
@@ -770,6 +779,26 @@ function ReviewSection({
           >
             <RotateCcw className="w-3.5 h-3.5" />
             Reopen
+          </button>
+        )}
+        {section.status === "closed" && canReview && (
+          <button
+            onClick={() => onStatus("archived")}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-surface text-muted border border-border"
+            title="Hide this write-up from the joined PDF / doc"
+          >
+            <Archive className="w-3.5 h-3.5" />
+            Archive
+          </button>
+        )}
+        {section.status === "archived" && canReview && (
+          <button
+            onClick={() => onStatus("closed")}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-surface text-muted border border-border"
+            title="Restore this write-up (back to Closed)"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            Unarchive
           </button>
         )}
       </div>
