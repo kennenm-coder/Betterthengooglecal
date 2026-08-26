@@ -45,9 +45,13 @@ export function canDoFieldWork(roles: RoleInput): boolean {
   return hasAny(roles, FIELD_WORK_ROLES);
 }
 
-/** Roles that can review/close write-ups and approve photo deletion (office). */
+/**
+ * Roles that can review/close write-ups and approve photo deletion.
+ * Field managers run the full review lifecycle alongside the office
+ * (admin + payroll-admin): mark reviewed, close, reopen, archive.
+ */
 export function canReviewWriteUps(roles: RoleInput): boolean {
-  return hasAny(roles, ["admin", "payroll-admin"]);
+  return hasAny(roles, ["admin", "payroll-admin", "field-manager"]);
 }
 
 /**
