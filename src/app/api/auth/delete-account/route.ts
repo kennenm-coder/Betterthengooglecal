@@ -6,7 +6,7 @@ export async function DELETE() {
   if (authError) return authError;
 
   // Prevent the last admin from deleting themselves
-  if (user!.role === "admin") {
+  if (user!.roles.includes("admin")) {
     const last = await isLastAdmin(user!.email);
     if (last) {
       return NextResponse.json(

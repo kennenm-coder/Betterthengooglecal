@@ -34,14 +34,14 @@ import {
 } from "lucide-react";
 import { createAuthClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { ROLE_OPTIONS, ROLE_STYLES } from "@/lib/roles";
+import { ROLE_OPTIONS, ROLE_STYLES, isAdmin } from "@/lib/roles";
 import { getWriteUpPresets, setWriteUpPresets } from "@/lib/work-order-store";
 import { format, parseISO } from "date-fns";
 
 type DevTab = "settings" | "log" | "upload" | "team";
 
 export default function AdminPage() {
-  const { role, loading } = useAuth();
+  const { roles, loading } = useAuth();
 
   if (loading) {
     return (
@@ -54,8 +54,12 @@ export default function AdminPage() {
     );
   }
 
-  // Payroll admins get access to Team tab only
-  if (role === "payroll-admin") {
+  // Admins (holding admin among any of their roles) get the full page.
+  // Checked before payroll so an admin+payroll account isn't limited to Team.
+  const admin = isAdmin(roles);
+
+  // Payroll admins (without admin) get access to the Team tab only.
+  if (!admin && roles.includes("payroll-admin")) {
     return (
       <div className="flex flex-col h-full">
         <header className="bg-background border-b border-border px-4 py-3">
@@ -69,7 +73,7 @@ export default function AdminPage() {
     );
   }
 
-  if (role !== "admin") {
+  if (!admin) {
     return (
       <div className="flex flex-col h-full">
         <header className="bg-background border-b border-border px-4 py-3">

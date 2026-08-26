@@ -1030,12 +1030,12 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
   const summaryOv = job.materialSummaryOverrides || {};
   if (Object.keys(summaryOv).length) {
     const norm = (s: string) => (!s || s === "--" || s === "—") ? "" : s;
-    const sumDelta = (d: any): number => {
-      if (typeof d === "number") return d;
-      if (d && typeof d === "object") return Object.keys(d).reduce((s: number, kk: string) => s + (Number(d[kk]) || 0), 0);
-      return 0;
-    };
-    const deltaMap: Record<string, number> = {};
+    // Keep per-length deltas (from the Section 4 length picker, e.g. { "8'": 1 })
+    // separate from any plain numeric delta so stock rows update BOTH qty and the
+    // Lengths column — matching JobEditor's Section 4 table. Summing to a single
+    // number here would bump qty but leave Lengths stale in the install PDF.
+    const deltaMap: Record<string, { perLen: Record<string, number>; numeric: number }> = {};
+    const ensure = (nk: string) => (deltaMap[nk] = deltaMap[nk] || { perLen: {}, numeric: 0 });
     for (const k of Object.keys(summaryOv)) {
       const d = summaryOv[k];
       const p = k.split("|");
@@ -1045,12 +1045,43 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
       else if (p[0] === "extra") nk = p[1] + "|" + norm(p[2]) + "|" + norm(p[3]);
       else if (p[0] === "secone") nk = p[1] + "|" + norm(p[2]) + "|";
       // unit|... intentionally skipped — handled by the packer.
-      if (nk) deltaMap[nk] = (deltaMap[nk] || 0) + sumDelta(d);
+      if (!nk) continue;
+      const acc = ensure(nk);
+      if (d && typeof d === "object") {
+        for (const len of Object.keys(d)) acc.perLen[len] = (acc.perLen[len] || 0) + (Number(d[len]) || 0);
+      } else {
+        acc.numeric += Number(d) || 0;
+      }
     }
+    const sk = (s: string) => { const n = parseFloat(s); return isNaN(n) ? 0 : n; };
     for (const r of merged) {
       const key = r.item + "|" + norm(r.color) + "|" + norm(r.species);
-      const delta = deltaMap[key];
-      if (delta) r.qty = Math.max(0, r.qty + delta);
+      const acc = deltaMap[key];
+      if (!acc) continue;
+      const perLenKeys = Object.keys(acc.perLen);
+      const stockParts = (r.lengths || "").match(/(\d+)@(\S+)/g) || [];
+      const isStockRow = stockParts.length > 0 && stockParts.every((t: string) => t.indexOf("'") !== -1);
+      if (isStockRow) {
+        const entries = stockParts
+          .map((t: string) => { const m = t.match(/^(\d+)@(.+)$/); return m ? { count: Number(m[1]), length: m[2] } : null; })
+          .filter(Boolean) as { count: number; length: string }[];
+        for (const len of perLenKeys) {
+          const dl = Number(acc.perLen[len]) || 0;
+          const ex = entries.find((e) => e.length === len);
+          if (ex) ex.count = Math.max(0, ex.count + dl);
+          else if (dl > 0) entries.push({ count: dl, length: len });
+        }
+        if (acc.numeric) {
+          const target = [...entries].sort((a, b) => b.count - a.count)[0];
+          if (target) target.count = Math.max(0, target.count + acc.numeric);
+        }
+        const live = entries.filter((e) => e.count > 0).sort((a, b) => sk(a.length) - sk(b.length));
+        r.lengths = live.length ? live.map((e) => `${e.count}@${e.length}`).join(" ") : "—";
+        r.qty = entries.reduce((s, e) => s + Math.max(0, e.count), 0);
+      } else {
+        const totalDelta = acc.numeric + perLenKeys.reduce((s, len) => s + (Number(acc.perLen[len]) || 0), 0);
+        if (totalDelta) r.qty = Math.max(0, r.qty + totalDelta);
+      }
     }
   }
 
