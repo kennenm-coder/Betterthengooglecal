@@ -62,6 +62,7 @@ import {
   MessageSquare,
   StickyNote,
   AlertTriangle,
+  FileText,
 } from "lucide-react";
 
 export type WriteUpTarget = Pick<
@@ -1158,6 +1159,13 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     onClose();
   }
 
+  // LINKED FEATURE: this write-up email send is mirrored by the "field notes"
+  // send in ActionModal.tsx. Both post to POST /api/writeups/notify (generic
+  // Gmail sender), both show a Sent/Failed state, and both fall back to the
+  // user's local mail app on failure. The desktop resend button in
+  // work-orders/page.tsx reuses this same route. If you change the send flow,
+  // the failure UX, or the fallback here, check whether those need the same
+  // change — and vice versa.
   /** POST the notification to the server, which sends it from the generic
    *  mailbox. Returns ok/false so the caller can offer a resend on failure. */
   async function sendWriteUpNotify(
@@ -1196,6 +1204,20 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     } else {
       setError(sent.error ? `Still couldn't send: ${sent.error}` : "Still couldn't send the email.");
     }
+  }
+
+  /** Safety-net fallback (e.g. the Gmail daily cap is hit): open the user's own
+   *  mail app with the same message pre-filled — the original pre-Gmail path. */
+  function resendViaLocalMail() {
+    if (!emailFailed) return;
+    const { to, cc, subject, body } = emailFailed;
+    const ccPart = cc.length ? `&cc=${encodeURIComponent(cc.join(","))}` : "";
+    const mailto = `mailto:${to.join(",")}?subject=${encodeURIComponent(subject)}${ccPart}&body=${encodeURIComponent(
+      body
+    )}`;
+    if (typeof window !== "undefined") window.location.href = mailto;
+    setEmailFailed(null);
+    onClose();
   }
 
   const totalUnits = buildInputs().length;
@@ -1259,13 +1281,20 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 )}
               </button>
               <button
+                onClick={resendViaLocalMail}
+                disabled={resending}
+                className="w-full py-3 rounded-xl border border-border text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <FileText className="w-4 h-4" /> Send from my mail app instead
+              </button>
+              <button
                 onClick={() => {
                   setEmailFailed(null);
                   setError("");
                   onClose();
                 }}
                 disabled={resending}
-                className="w-full py-3 rounded-xl border border-border text-sm font-medium disabled:opacity-60"
+                className="w-full py-3 rounded-xl text-sm font-medium text-muted disabled:opacity-60"
               >
                 Close without sending
               </button>

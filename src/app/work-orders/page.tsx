@@ -15,7 +15,11 @@ import {
   loadCachedWriteUps,
   writeUpsCacheFresh,
   invalidateWriteUpsCache,
+  buildWriteUpEmailContent,
+  WRITEUP_EMAIL_TO,
+  type WriteUpEntryInput,
 } from "@/lib/work-order-store";
+import { getWriteUpEmails } from "@/lib/action-settings";
 import { groupWriteUpSections, padSeq, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
@@ -52,7 +56,7 @@ const FILTERS: { id: Filter; label: string }[] = [
 ];
 
 export default function WorkOrdersPage() {
-  const { roles, user, loading: authLoading } = useAuth();
+  const { roles, user, autoCc, loading: authLoading } = useAuth();
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("in_review");
@@ -63,11 +67,67 @@ export default function WorkOrdersPage() {
   const canReview = canReviewWriteUps(roles);
   const canCreate = canDoFieldWork(roles);
   const canEdit = canDoFieldWork(roles);
+  // Desktop resend-notification button: field managers + admin only.
+  const canResendEmail = canDoFieldWork(roles);
 
   const [showPicker, setShowPicker] = useState(false);
   const [pending, setPending] = useState<{ target: WriteUpTarget; units: MaterialUnit[] } | null>(null);
   // Editing a whole submission (all its unit rows) through the guided flow.
   const [editing, setEditing] = useState<FieldWorkOrder[] | null>(null);
+
+  // Desktop-only resend: field managers reviewing on a computer can re-fire the
+  // submission email if it didn't go through the first time. Mobile is hidden to
+  // keep the tile clean (matches the pointer:fine check used by useStaleTab).
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setIsDesktop(window.matchMedia("(pointer: fine)").matches);
+  }, []);
+  /** Rebuild the notification email (recipients + subject + body) for one order
+   *  from its saved write-up rows, for the local mail-app resend. */
+  async function buildOrderEmail(orderNumber: string, items: FieldWorkOrder[]) {
+    const first = items[0];
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const docLink = `${origin}/work-orders/${encodeURIComponent(orderNumber)}`;
+    const ctx = {
+      orderNumber,
+      workOrderNumber: first.workOrderNumber,
+      jobId: first.jobId,
+      customerName: first.customerName,
+      address: first.address,
+      createdBy: first.createdBy,
+      createdByName: first.createdByName,
+      status: first.status,
+    };
+    // Only photo counts are used in the body, so mapping path/name is enough.
+    const entries: WriteUpEntryInput[] = items.map((w) => ({
+      unitLabel: w.unitLabel,
+      lineItems: w.lineItems,
+      specChanges: w.specChanges,
+      materialItems: w.materialItems,
+      newProduct: w.newProduct,
+      notes: w.notes,
+      photos: w.photos.map((p) => ({ path: p.path, name: p.name })),
+    }));
+    const { subject, body } = buildWriteUpEmailContent(ctx, entries, docLink);
+    const toEmails = await getWriteUpEmails();
+    const to = toEmails.length ? toEmails : [WRITEUP_EMAIL_TO];
+    return { to, cc: autoCc, subject, body };
+  }
+
+  /** Resend the write-up notification by opening the user's own mail app with
+   *  the message pre-filled. Intentionally mailto: (not the Gmail route) — this
+   *  button is admin/field-manager-only and low-volume, so it doesn't need to
+   *  spend the shared Gmail daily quota. */
+  async function resendViaLocalMail(orderNumber: string, items: FieldWorkOrder[]) {
+    if (items.length === 0) return;
+    const { to, cc, subject, body } = await buildOrderEmail(orderNumber, items);
+    const ccPart = cc.length ? `&cc=${encodeURIComponent(cc.join(","))}` : "";
+    const mailto = `mailto:${to.join(",")}?subject=${encodeURIComponent(subject)}${ccPart}&body=${encodeURIComponent(
+      body
+    )}`;
+    if (typeof window !== "undefined") window.location.href = mailto;
+  }
 
   useEffect(() => {
     if (!canView) return;
@@ -381,6 +441,17 @@ export default function WorkOrdersPage() {
                   </div>
 
                   <div className={isOpen ? "block" : "hidden print-open"}>
+                    {isDesktop && canResendEmail && (
+                      <div className="border-t-2 border-border px-4 py-2.5 flex flex-wrap items-center gap-2 no-print">
+                        <button
+                          onClick={() => resendViaLocalMail(orderNumber, items)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border"
+                        >
+                          <Send className="w-3.5 h-3.5" /> Resend notification
+                        </button>
+                        <span className="text-[11px] text-muted">Opens your mail app</span>
+                      </div>
+                    )}
                     {sections.map((sec) => (
                       <div key={sec.key} className="border-t-2 border-border">
                         <ReviewSection
