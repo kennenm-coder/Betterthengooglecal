@@ -15,7 +15,11 @@ import {
   loadCachedWriteUps,
   writeUpsCacheFresh,
   invalidateWriteUpsCache,
+  buildWriteUpEmailContent,
+  WRITEUP_EMAIL_TO,
+  type WriteUpEntryInput,
 } from "@/lib/work-order-store";
+import { getWriteUpEmails } from "@/lib/action-settings";
 import { groupWriteUpSections, padSeq, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
@@ -52,7 +56,7 @@ const FILTERS: { id: Filter; label: string }[] = [
 ];
 
 export default function WorkOrdersPage() {
-  const { roles, user, loading: authLoading } = useAuth();
+  const { roles, user, autoCc, loading: authLoading } = useAuth();
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("in_review");
@@ -63,11 +67,67 @@ export default function WorkOrdersPage() {
   const canReview = canReviewWriteUps(roles);
   const canCreate = canDoFieldWork(roles);
   const canEdit = canDoFieldWork(roles);
+  // Desktop resend-notification button: field managers + admin only.
+  const canResendEmail = canDoFieldWork(roles);
 
   const [showPicker, setShowPicker] = useState(false);
   const [pending, setPending] = useState<{ target: WriteUpTarget; units: MaterialUnit[] } | null>(null);
   // Editing a whole submission (all its unit rows) through the guided flow.
   const [editing, setEditing] = useState<FieldWorkOrder[] | null>(null);
+
+  // Desktop-only resend: field managers reviewing on a computer can re-fire the
+  // submission email if it didn't go through the first time. Mobile is hidden to
+  // keep the tile clean (matches the pointer:fine check used by useStaleTab).
+  const [isDesktop, setIsDesktop] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setIsDesktop(window.matchMedia("(pointer: fine)").matches);
+  }, []);
+  /** Rebuild the notification email (recipients + subject + body) for one order
+   *  from its saved write-up rows, for the local mail-app resend. */
+  async function buildOrderEmail(orderNumber: string, items: FieldWorkOrder[]) {
+    const first = items[0];
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const docLink = `${origin}/work-orders/${encodeURIComponent(orderNumber)}`;
+    const ctx = {
+      orderNumber,
+      workOrderNumber: first.workOrderNumber,
+      jobId: first.jobId,
+      customerName: first.customerName,
+      address: first.address,
+      createdBy: first.createdBy,
+      createdByName: first.createdByName,
+      status: first.status,
+    };
+    // Only photo counts are used in the body, so mapping path/name is enough.
+    const entries: WriteUpEntryInput[] = items.map((w) => ({
+      unitLabel: w.unitLabel,
+      lineItems: w.lineItems,
+      specChanges: w.specChanges,
+      materialItems: w.materialItems,
+      newProduct: w.newProduct,
+      notes: w.notes,
+      photos: w.photos.map((p) => ({ path: p.path, name: p.name })),
+    }));
+    const { subject, body } = buildWriteUpEmailContent(ctx, entries, docLink);
+    const toEmails = await getWriteUpEmails();
+    const to = toEmails.length ? toEmails : [WRITEUP_EMAIL_TO];
+    return { to, cc: autoCc, subject, body };
+  }
+
+  /** Resend the write-up notification by opening the user's own mail app with
+   *  the message pre-filled. Intentionally mailto: (not the Gmail route) — this
+   *  button is admin/field-manager-only and low-volume, so it doesn't need to
+   *  spend the shared Gmail daily quota. */
+  async function resendViaLocalMail(orderNumber: string, items: FieldWorkOrder[]) {
+    if (items.length === 0) return;
+    const { to, cc, subject, body } = await buildOrderEmail(orderNumber, items);
+    const ccPart = cc.length ? `&cc=${encodeURIComponent(cc.join(","))}` : "";
+    const mailto = `mailto:${to.join(",")}?subject=${encodeURIComponent(subject)}${ccPart}&body=${encodeURIComponent(
+      body
+    )}`;
+    if (typeof window !== "undefined") window.location.href = mailto;
+  }
 
   useEffect(() => {
     if (!canView) return;
@@ -381,6 +441,17 @@ export default function WorkOrdersPage() {
                   </div>
 
                   <div className={isOpen ? "block" : "hidden print-open"}>
+                    {isDesktop && canResendEmail && (
+                      <div className="border-t-2 border-border px-4 py-2.5 flex flex-wrap items-center gap-2 no-print">
+                        <button
+                          onClick={() => resendViaLocalMail(orderNumber, items)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border"
+                        >
+                          <Send className="w-3.5 h-3.5" /> Resend notification
+                        </button>
+                        <span className="text-[11px] text-muted">Opens your mail app</span>
+                      </div>
+                    )}
                     {sections.map((sec) => (
                       <div key={sec.key} className="border-t-2 border-border">
                         <ReviewSection
@@ -501,13 +572,15 @@ function ReviewSection({
   onEdit: () => void;
   onReviewItems: (items: NumberedWorkItem[], reviewed: boolean) => void;
   onToggleCompleted: (items: NumberedWorkItem[], completed: boolean) => void;
-  onStatus: (status: WriteUpStatus) => void;
+  onStatus: (status: WriteUpStatus) => void | Promise<void>;
   onDeletePhotos: () => Promise<void>;
 }) {
   const allWork = [...section.outstanding, ...section.completed].sort((a, b) => a.seq - b.seq);
   const allReviewed = allWork.length > 0 && allWork.every((i) => i.reviewed);
   const [confirmPhotos, setConfirmPhotos] = useState(false);
   const [deletingPhotos, setDeletingPhotos] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   // Whole-job note → what's wrong / financing / paint (matches the create screen).
   let background = "", financing = "", paint = "";
@@ -527,7 +600,8 @@ function ReviewSection({
     if (bg) background = background ? `${background}\n\n${bg}` : bg;
   }
   const unitRows = section.rows.filter((r) => r.unitLabel);
-  const canDeletePhotos = canEdit && section.status === "closed" && section.photos.length > 0;
+  const canDeletePhotos =
+    canEdit && (section.status === "closed" || section.status === "archived") && section.photos.length > 0;
 
   return (
     <div className="px-4 py-3 bg-background/40 space-y-3">
@@ -699,7 +773,7 @@ function ReviewSection({
         </div>
       )}
 
-      {/* Delete photos — closed write-ups only, admins/field managers */}
+      {/* Delete photos — closed or archived write-ups, admins/field managers */}
       {canDeletePhotos && (
         <div className="no-print">
           {confirmPhotos ? (
@@ -782,14 +856,50 @@ function ReviewSection({
           </button>
         )}
         {section.status === "closed" && canReview && (
-          <button
-            onClick={() => onStatus("archived")}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-surface text-muted border border-border"
-            title="Hide this write-up from the joined PDF / doc"
-          >
-            <Archive className="w-3.5 h-3.5" />
-            Archive
-          </button>
+          confirmArchive ? (
+            <div className="w-full rounded-lg border border-danger/40 bg-danger/5 px-3 py-2 no-print">
+              <p className="text-xs font-medium text-danger flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Archiving hides this write-up from the joined PDF
+                {section.photos.length > 0
+                  ? ` and permanently deletes all ${section.photos.length} photo${section.photos.length !== 1 ? "s" : ""}.`
+                  : "."}{" "}
+                This can&apos;t be undone.
+              </p>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => setConfirmArchive(false)}
+                  disabled={archiving}
+                  className="flex-1 py-2 rounded-lg text-xs font-medium border border-border disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setArchiving(true);
+                    if (section.photos.length > 0) await onDeletePhotos();
+                    await onStatus("archived");
+                    setArchiving(false);
+                    setConfirmArchive(false);
+                  }}
+                  disabled={archiving}
+                  className="flex-1 py-2 rounded-lg text-xs font-semibold bg-danger text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {archiving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />}
+                  Archive
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmArchive(true)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-surface text-muted border border-border"
+              title="Hide this write-up from the joined PDF / doc and delete its photos"
+            >
+              <Archive className="w-3.5 h-3.5" />
+              Archive
+            </button>
+          )
         )}
         {section.status === "archived" && canReview && (
           <button

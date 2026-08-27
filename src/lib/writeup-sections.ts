@@ -71,6 +71,7 @@ function sectionKey(w: FieldWorkOrder): string {
 
 function statusOf(rows: FieldWorkOrder[]): WriteUpStatus {
   if (rows.every((r) => r.status === "draft")) return "draft";
+  if (rows.every((r) => r.status === "archived")) return "archived";
   if (rows.every((r) => r.status === "closed")) return "closed";
   if (rows.some((r) => r.status === "open")) return "open";
   if (rows.some((r) => r.status === "in_review")) return "in_review";

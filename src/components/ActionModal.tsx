@@ -9,8 +9,17 @@ import {
   DEFAULT_FIELDNOTES_EMAIL,
 } from "@/lib/action-settings";
 import { useAuth } from "@/hooks/useAuth";
-import { X, ChevronRight, Phone, FileText, AlertTriangle, Mic, MicOff } from "lucide-react";
+import { X, ChevronRight, Phone, FileText, AlertTriangle, Mic, MicOff, Loader2, Send } from "lucide-react";
 import { format } from "date-fns";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LINKED FEATURE: this "field notes" email send mirrors the write-up submission
+// email in WriteUpModal.tsx. Both send through POST /api/writeups/notify (the
+// generic Gmail sender), both show a Sent/Failed state, and both fall back to
+// the user's local mail app on failure. If you change the send flow, the
+// failure UX, or the fallback here, check whether WriteUpModal.tsx needs the
+// same change — and vice versa.
+// ─────────────────────────────────────────────────────────────────────────────
 
 function getSalesforceUrl(workOrderNumber: string): string {
   return `https://renewalbyandersen.my.site.com/rForceLEX/s/global-search/${encodeURIComponent(workOrderNumber)}`;
@@ -31,6 +40,15 @@ export default function ActionModal({
   const [listening, setListening] = useState(false);
   const [recognition, setRecognition] = useState<any>(null);
   const { user, autoCc } = useAuth();
+  const [sending, setSending] = useState(false);
+  // Set when the action was logged but its email didn't send — holds everything
+  // needed to resend (or fall back to the local mail app) without re-logging.
+  const [emailFailed, setEmailFailed] = useState<{
+    to: string[];
+    cc: string[];
+    subject: string;
+    body: string;
+  } | null>(null);
 
   const person: ActionPerson | null = user
     ? { name: (user.user_metadata?.full_name as string) || user.email || "Unknown", email: user.email || "" }
@@ -78,7 +96,7 @@ export default function ActionModal({
     setStep("notes");
   }
 
-  function submit() {
+  async function submit() {
     if (!person || !actionType) return;
 
     const now = new Date();
@@ -97,10 +115,10 @@ export default function ActionModal({
       `Salesforce Link: ${sfUrl}`,
     ].join("\n");
 
-    const toEmails = [person.email, fieldNotesEmail || DEFAULT_FIELDNOTES_EMAIL].join(",");
-    const ccPart = autoCc.length > 0 ? `&cc=${encodeURIComponent(autoCc.join(","))}` : "";
-    const mailto = `mailto:${toEmails}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}${ccPart}`;
+    // Email goes to the field-notes inbox + the person logging it.
+    const to = [person.email, fieldNotesEmail || DEFAULT_FIELDNOTES_EMAIL].filter(Boolean);
 
+    // Log the action regardless of whether the email sends — the log is the record.
     addActionLog({
       id: crypto.randomUUID(),
       timestamp: now.toISOString(),
@@ -114,7 +132,66 @@ export default function ActionModal({
       address: order.address,
     });
 
-    window.location.href = mailto;
+    setSending(true);
+    const sent = await sendFieldNoteEmail(to, autoCc, subject, body);
+    setSending(false);
+    if (sent.ok) {
+      onClose();
+    } else {
+      // Keep the modal open on a resend prompt so the email isn't silently lost.
+      setEmailFailed({ to, cc: autoCc, subject, body });
+    }
+  }
+
+  /** POST the field note to the server (generic Gmail sender). Mirrors
+   *  sendWriteUpNotify() in WriteUpModal.tsx — see the LINKED FEATURE note above. */
+  async function sendFieldNoteEmail(
+    to: string[],
+    cc: string[],
+    subject: string,
+    body: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await fetch("/api/writeups/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to, cc, subject, body }),
+      });
+      if (res.ok) return { ok: true };
+      const data = await res.json().catch(() => ({}));
+      return { ok: false, error: (data as { error?: string })?.error };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : "Network error" };
+    }
+  }
+
+  async function resendFieldNote() {
+    if (!emailFailed) return;
+    setSending(true);
+    const sent = await sendFieldNoteEmail(
+      emailFailed.to,
+      emailFailed.cc,
+      emailFailed.subject,
+      emailFailed.body
+    );
+    setSending(false);
+    if (sent.ok) {
+      setEmailFailed(null);
+      onClose();
+    }
+  }
+
+  /** Safety-net fallback (e.g. the Gmail daily cap is hit): open the user's own
+   *  mail app with the same message pre-filled — the original pre-Gmail path. */
+  function resendViaLocalMail() {
+    if (!emailFailed) return;
+    const { to, cc, subject, body } = emailFailed;
+    const ccPart = cc.length ? `&cc=${encodeURIComponent(cc.join(","))}` : "";
+    const mailto = `mailto:${to.join(",")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(
+      body
+    )}${ccPart}`;
+    if (typeof window !== "undefined") window.location.href = mailto;
+    setEmailFailed(null);
     onClose();
   }
 
@@ -127,6 +204,55 @@ export default function ActionModal({
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+
+      {/* Action logged, but its email didn't send */}
+      {emailFailed && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-6">
+          <div className="bg-background rounded-2xl shadow-xl w-full max-w-xs p-5 text-center">
+            <AlertTriangle className="w-8 h-8 text-amber-600 mx-auto mb-2" />
+            <p className="font-semibold">Logged — but the email didn&apos;t send</p>
+            <p className="text-xs text-muted mt-1">
+              The action is saved to the log. The email to {emailFailed.to.join(", ")} didn&apos;t go
+              through. Resend it now?
+            </p>
+            <div className="mt-4 space-y-2">
+              <button
+                onClick={resendFieldNote}
+                disabled={sending}
+                className="w-full py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {sending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Sending…
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" /> Resend email
+                  </>
+                )}
+              </button>
+              <button
+                onClick={resendViaLocalMail}
+                disabled={sending}
+                className="w-full py-3 rounded-xl border border-border text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <FileText className="w-4 h-4" /> Send from my mail app instead
+              </button>
+              <button
+                onClick={() => {
+                  setEmailFailed(null);
+                  onClose();
+                }}
+                disabled={sending}
+                className="w-full py-3 rounded-xl text-sm font-medium text-muted disabled:opacity-60"
+              >
+                Close without sending
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="relative w-full max-w-md bg-background rounded-t-2xl sm:rounded-2xl animate-slide-up max-h-[85vh] flex flex-col safe-area-bottom">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
@@ -224,13 +350,21 @@ export default function ActionModal({
               {/* Submit */}
               <button
                 onClick={submit}
-                disabled={!notes.trim()}
-                className="w-full py-3 rounded-lg bg-primary text-white font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-transform"
+                disabled={!notes.trim() || sending}
+                className="w-full py-3 rounded-lg bg-primary text-white font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-transform flex items-center justify-center gap-2"
               >
-                Open in Mail App
+                {sending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Sending…
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" /> Send
+                  </>
+                )}
               </button>
               <p className="text-xs text-muted text-center">
-                This will compose the email in your default mail app. You just need to hit send.
+                Logs the action and emails it automatically — no need to open your mail app.
               </p>
             </div>
           )}
