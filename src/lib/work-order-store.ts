@@ -920,17 +920,14 @@ export async function deleteWriteUp(
  *  Dev Settings → Config → Email Defaults section; see getWriteUpEmails()). */
 export const WRITEUP_EMAIL_TO = "fieldnotes@rbanwo.com";
 
-/** Build a mailto: link with a pre-written summary + a link to the doc.
- *  `to` is the list of default recipients (falls back to WRITEUP_EMAIL_TO);
- *  `cc` is the submitting user's per-account auto-CC list. */
-export function buildWriteUpMailto(
+/** Build the subject + plain-text body for a submitted write-up notification.
+ *  Shared by both the in-app server send (POST /api/writeups/notify) and the
+ *  legacy mailto: fallback so the two stay identical. */
+export function buildWriteUpEmailContent(
   ctx: SubmitContext,
   entries: WriteUpEntryInput[],
-  docLink: string,
-  to?: string[],
-  cc?: string[]
-): string {
-  const toList = to && to.length ? to : [WRITEUP_EMAIL_TO];
+  docLink: string
+): { subject: string; body: string } {
   const subject = `Field Write-Up - ${ctx.customerName || ""} - ${ctx.orderNumber}`;
   const lines: string[] = [
     "A field write-up was completed:",
@@ -938,6 +935,9 @@ export function buildWriteUpMailto(
     `Customer: ${ctx.customerName || "—"}`,
     `Job #: ${ctx.orderNumber}`,
   ];
+  // Log who submitted it — the send is from a generic mailbox, so the identity
+  // lives in the body (and the Reply-To header the server sets).
+  if (ctx.createdBy) lines.push(`Submitted by: ${ctx.createdByName || ctx.createdBy} <${ctx.createdBy}>`);
   if (ctx.address) lines.push(`Address: ${ctx.address}`);
   lines.push("", "Work:");
   for (const e of entries) {
@@ -960,10 +960,25 @@ export function buildWriteUpMailto(
     if (e.notes) lines.push(`   - Notes: ${e.notes}`);
   }
   lines.push("", "View the full write-up (Duck Force sign-in required):", docLink);
+  return { subject, body: lines.join("\n") };
+}
 
+/** Build a mailto: link with a pre-written summary + a link to the doc.
+ *  Kept as a fallback path; the primary send now goes through the server.
+ *  `to` is the list of default recipients (falls back to WRITEUP_EMAIL_TO);
+ *  `cc` is the submitting user's per-account auto-CC list. */
+export function buildWriteUpMailto(
+  ctx: SubmitContext,
+  entries: WriteUpEntryInput[],
+  docLink: string,
+  to?: string[],
+  cc?: string[]
+): string {
+  const toList = to && to.length ? to : [WRITEUP_EMAIL_TO];
+  const { subject, body } = buildWriteUpEmailContent(ctx, entries, docLink);
   const ccPart = cc && cc.length ? `&cc=${encodeURIComponent(cc.join(","))}` : "";
   return `mailto:${toList.join(",")}?subject=${encodeURIComponent(subject)}${ccPart}&body=${encodeURIComponent(
-    lines.join("\n")
+    body
   )}`;
 }
 
