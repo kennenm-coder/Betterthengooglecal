@@ -2036,6 +2036,9 @@ function MaterialSection({
   colorOptions: string[];
   speciesOptions: string[];
 }) {
+  // Which row (if any) is currently open for inline editing.
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+
   return (
     <div>
       <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
@@ -2043,24 +2046,142 @@ function MaterialSection({
       </span>
       {materials.length > 0 && (
         <div className="mt-2 space-y-2">
-          {materials.map((m, i) => (
-            <div key={i} className="flex items-center justify-between gap-2 px-3 py-3 rounded-xl bg-surface border border-border">
-              <div className="min-w-0 text-sm">
-                <span className="font-semibold">
-                  {m.qty} {m.unit} · {m.item}
-                </span>
-                <span className="text-muted">
-                  {[m.color, m.species, m.lengths, m.vendor].filter(Boolean).map((s) => ` · ${s}`).join("")}
-                </span>
+          {materials.map((m, i) =>
+            editingIndex === i ? (
+              <MaterialRowEditor
+                key={i}
+                initial={m}
+                colorOptions={colorOptions}
+                speciesOptions={speciesOptions}
+                onSave={(updated) => {
+                  onChange(materials.map((row, j) => (j === i ? updated : row)));
+                  setEditingIndex(null);
+                }}
+                onCancel={() => setEditingIndex(null)}
+              />
+            ) : (
+              <div key={i} className="flex items-center justify-between gap-2 px-3 py-3 rounded-xl bg-surface border border-border">
+                <div className="min-w-0 text-sm">
+                  <span className="font-semibold">
+                    {m.qty} {m.unit} · {m.item}
+                  </span>
+                  <span className="text-muted">
+                    {[m.color, m.species, m.lengths, m.vendor].filter(Boolean).map((s) => ` · ${s}`).join("")}
+                  </span>
+                </div>
+                <div className="flex items-center shrink-0">
+                  <button
+                    onClick={() => setEditingIndex(i)}
+                    className="p-2 rounded-lg text-muted hover:text-amber-600"
+                    title="Edit this item"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => onChange(materials.filter((_, j) => j !== i))}
+                    className="p-2 rounded-lg text-muted hover:text-danger"
+                    title="Remove this item"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-              <button onClick={() => onChange(materials.filter((_, j) => j !== i))} className="p-2 rounded-lg text-muted hover:text-danger shrink-0">
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
+            )
+          )}
         </div>
       )}
       <MaterialAdder catalog={catalog} colorOptions={colorOptions} speciesOptions={speciesOptions} onAdd={(m) => onChange([...materials, m])} />
+    </div>
+  );
+}
+
+/* ── Inline editor for one already-added trim / material item ── */
+function MaterialRowEditor({
+  initial,
+  colorOptions,
+  speciesOptions,
+  onSave,
+  onCancel,
+}: {
+  initial: WriteUpMaterialItem;
+  colorOptions: string[];
+  speciesOptions: string[];
+  onSave: (m: WriteUpMaterialItem) => void;
+  onCancel: () => void;
+}) {
+  const [item, setItem] = useState(initial.item);
+  const [unit, setUnit] = useState(initial.unit || "PCS");
+  const [color, setColor] = useState(initial.color || "");
+  const [species, setSpecies] = useState(initial.species || "");
+  const [lengths, setLengths] = useState(initial.lengths || "");
+  const [vendor, setVendor] = useState(initial.vendor || "");
+
+  // Same rule as the adder: quantity is derived from the lengths field so it's
+  // never double-entered. Fall back to the saved qty for older items that were
+  // stored without a lengths string.
+  const computedQty = lengthsToQty(lengths);
+  const effectiveQty = lengths.trim() ? computedQty : Math.max(1, initial.qty);
+
+  function save() {
+    const name = item.trim();
+    if (!name || effectiveQty < 1) return;
+    onSave({
+      ...initial,
+      item: name,
+      color: color.trim(),
+      species: species.trim(),
+      qty: effectiveQty,
+      unit: unit.trim() || "PCS",
+      lengths: lengths.trim(),
+      vendor: vendor.trim(),
+    });
+  }
+
+  return (
+    <div className="rounded-xl border border-amber-400/60 bg-surface p-3 space-y-3">
+      <div>
+        <label className="text-xs text-muted block mb-1">Item</label>
+        <input
+          value={item}
+          onChange={(e) => setItem(e.target.value)}
+          placeholder="Profile / item name"
+          className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+        />
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <div className="col-span-2">
+          <label className="text-xs text-muted block mb-1">Lengths / count</label>
+          <input
+            value={lengths}
+            onChange={(e) => setLengths(e.target.value)}
+            placeholder="5@8' 10@10'  ·  or just  5"
+            className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+          />
+        </div>
+        <StackedInput label="Unit" value={unit} onChange={setUnit} />
+      </div>
+      <p className="text-[11px] text-muted -mt-1">
+        Counts to <strong className="text-foreground">{effectiveQty} {unit.trim() || "PCS"}</strong>
+      </p>
+      <ComboInput label="Color" value={color} onChange={setColor} options={colorOptions} placeholder="Start typing a color or stain…" />
+      <ComboInput label="Species" value={species} onChange={setSpecies} options={speciesOptions} placeholder="Start typing a species…" />
+      <StackedInput label="Vendor" value={vendor} onChange={setVendor} />
+      <div className="flex gap-2">
+        <button
+          onClick={onCancel}
+          className="flex-1 py-3 rounded-xl border border-border text-sm font-medium"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={save}
+          disabled={!item.trim() || effectiveQty < 1}
+          className="flex-1 py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold flex items-center justify-center gap-1 disabled:opacity-40"
+        >
+          <Check className="w-4 h-4" />
+          Save changes
+        </button>
+      </div>
     </div>
   );
 }
