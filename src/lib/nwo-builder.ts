@@ -41,6 +41,10 @@ const MC_DEFAULT_STAINS = [
   "OM-6","OM-7","OM-28","56 Kona","Chestnut","Warm Chestnut","63 Black Base",
   "Minwax Cherry","Cognac","Walnut 224","Teak 120","RAW","Custom"
 ];
+const MC_DEFAULT_PAINTS = [
+  "White[RBA]","Snowmist","Dark Bronze","Canvas","Sandtone","Terratone",
+  "Cocoa Bean","Forest Green","Black","Red Rock","Clear","Primed","RAW","Custom"
+];
 
 // ─── TYPES ──────────────────────────────────────────────────────────────────
 
@@ -74,6 +78,7 @@ interface CatalogItem {
 interface MaterialCatalog {
   items?: CatalogItem[];
   stains?: string[];
+  paints?: string[];
   calcMethods?: { id: string; formula: string; multiplier?: number; stockLengths?: number[] }[];
 }
 
@@ -230,34 +235,71 @@ const PAINT_NAME_MAP: Record<string, string> = {
   "raw": "RAW",
 };
 
+// Interior caulk takes color cues ONLY from interior trim. Exterior trim
+// (e.g. J Channel) uses our color names but must not drive interior caulk color.
+const CAULK_CUE_CATEGORIES = new Set([
+  "Casing", "EJ", "Sill", "Door Stop", "Base Shoe", "Threshold",
+]);
+// Interior "Other"-category items that SHOULD still cue caulk color. They share
+// the "Other" bucket with exterior J Channel, so they're allowed by id.
+const CAULK_CUE_EXTRA_IDS = new Set([
+  "item-1783015967148", // 1/4x1-3/4 Lattice
+  "item-1783016312177", // 3" Lattice
+  "item-1783015750562", // Parting stop 1/2x3/4
+]);
+
+// Three buckets per color: stain (or RAW / Pine-Oak units) -> Clear caulk;
+// a real paint-list color -> that color; anything else typed -> a "Custom" line
+// (caulk doesn't come in arbitrary custom colors). Only interior trim contributes
+// a color — exterior parts like J Channel are ignored.
 function detectTrimCaulkColors(globalMaterials: any[], materialCatalog: MaterialCatalog | null, units: any[], additionalMaterials: any[]): string[] {
   const stainSet = new Set(Array.isArray(materialCatalog?.stains) ? materialCatalog!.stains : MC_DEFAULT_STAINS);
+  const paintSet = new Set(Array.isArray(materialCatalog?.paints) ? materialCatalog!.paints : MC_DEFAULT_PAINTS);
+  const items = Array.isArray(materialCatalog?.items) ? materialCatalog!.items! : [];
+  const catById = new Map(items.map(it => [it.id, it]));
+  const catByProfile = new Map(items.map(it => [it.profile, it]));
+
   let hasStain = false;
+  let hasCustom = false;
   const paintColors = new Set<string>();
 
   // Normalize color names so variants like "Snow Mist" / "Snowmist" merge
   const normColor = (c: string) => PAINT_NAME_MAP[(c || "").toLowerCase()] || c;
 
+  // Unknown/freeform items (no catalog match) are included — they're manually
+  // entered interior trim.
+  const cuesCaulk = (catItem?: CatalogItem) => !catItem
+    || CAULK_CUE_CATEGORIES.has(catItem.category)
+    || CAULK_CUE_EXTRA_IDS.has(catItem.id);
+
+  const classify = (rawColor: string) => {
+    const nc = normColor(rawColor);
+    if (!nc) return;
+    if (nc === "Custom") { hasCustom = true; return; }
+    if (stainSet.has(nc) || nc === "RAW") { hasStain = true; return; }
+    if (paintSet.has(nc)) { paintColors.add(nc); return; }
+    hasCustom = true; // typed color that's on neither the paint nor stain list
+  };
+
   for (const m of (globalMaterials || []).filter(m => !m.autoFormula && m.color)) {
-    const nc = normColor(m.color);
-    if (stainSet.has(nc) || nc === "RAW") hasStain = true;
-    else paintColors.add(nc);
+    if (!cuesCaulk(catById.get(m.profileId))) continue;
+    classify(m.color);
   }
   for (const m of (additionalMaterials || [])) {
     if (!m.color) continue;
-    const nc = normColor(m.color);
-    if (stainSet.has(nc) || nc === "RAW") hasStain = true;
-    else paintColors.add(nc);
+    if (!cuesCaulk(catByProfile.get(m.profile))) continue;
+    classify(m.color);
   }
   for (const u of (units || [])) {
     if (u.isMisc) continue;
     if ((u.interiorColor || "").match(/pine|oak/i)) hasStain = true;
   }
 
-  const paintList = [...paintColors];
-  if (hasStain && paintList.length) return ["Clear", ...paintList];
-  if (hasStain) return ["Clear"];
-  return paintList.length ? paintList : ["White[RBA]"];
+  const out: string[] = [];
+  if (hasStain) out.push("Clear");
+  [...paintColors].forEach(c => out.push(c));
+  if (hasCustom) out.push("Custom");
+  return out.length ? out : ["White[RBA]"];
 }
 
 function resolveProfileNickname(typed: string, catalogItems: CatalogItem[] | undefined): string {
@@ -1109,14 +1151,14 @@ export function buildBoardSummaryByUnit(
   offsets: any
 ): BoardSummaryEntry[] {
   const gmNonAuto = (job.globalMaterials || []).filter((m: any) => !m.autoFormula && m.profileId);
-  if (!gmNonAuto.length) return [];
 
-  const { boards } = buildGlobalMaterialBoards(
-    (job.globalMaterials || []).filter((m: any) => !m.autoFormula),
-    units, materialCatalog, offsets?.boardWaste, job.mullLayouts,
-    { doors3pc: job.doors3pc !== false, summaryOverrides: job.materialSummaryOverrides }
-  );
-  if (!boards.length) return [];
+  const boards = gmNonAuto.length
+    ? buildGlobalMaterialBoards(
+        (job.globalMaterials || []).filter((m: any) => !m.autoFormula),
+        units, materialCatalog, offsets?.boardWaste, job.mullLayouts,
+        { doors3pc: job.doors3pc !== false, summaryOverrides: job.materialSummaryOverrides }
+      ).boards
+    : [];
 
   const SL: Record<number, string> = { 96:"8'", 120:"10'", 144:"12'", 168:"14'", 192:"16'", 216:"18'", 240:"20'" };
 
@@ -1139,9 +1181,42 @@ export function buildBoardSummaryByUnit(
     byUnit[owner][b.profile][b.stockLength] = (byUnit[owner][b.profile][b.stockLength] || 0) + 1;
   }
 
-  // Group units with identical board breakdowns
+  // Per-unit "extra" materials: non-consumable Additional Materials (using their
+  // per-unit allocation m.unitQtys) + approved misc items. Consumables (catalog
+  // category "Consumable") are excluded. Mirrors buildUnitExtras in the material-list
+  // app's ReportView.jsx.
+  const items = materialCatalog?.items || [];
+  const extras: Record<string, string[]> = {};
+  const pushExtra = (label: string, str: string) => {
+    if (!label || !str) return;
+    (extras[label] = extras[label] || []).push(str);
+  };
+  for (const m of (job.additionalMaterials || [])) {
+    if (!m.profile) continue;
+    const canon = resolveProfileNickname(m.profile, items) || m.profile;
+    const catItem = items.find((it) => it.profile === canon);
+    if (catItem && (catItem as any).category === "Consumable") continue;
+    const qtys = m.unitQtys || {};
+    for (const lbl of (m.includeUnits || [])) {
+      const raw = qtys[lbl];
+      const hasQ = raw !== undefined && raw !== null && String(raw).trim() !== "" && !isNaN(Number(raw));
+      pushExtra(String(lbl), hasQ ? `${Number(raw)} ${canon}` : canon);
+    }
+  }
+  for (const u of (units || [])) {
+    if (!u.isMisc || !u.approved) continue;
+    const desc = u.description || "Misc item";
+    const q = u.qty ?? 1;
+    pushExtra(desc, `${q} pcs`);
+  }
+
+  if (!boards.length && !Object.keys(extras).length) return [];
+
+  // Group units with identical (boards + extras) breakdown
   const sigMap: Record<string, string[]> = {};
-  for (const [label, profiles] of Object.entries(byUnit)) {
+  const allLabels = new Set([...Object.keys(byUnit), ...Object.keys(extras)]);
+  for (const label of allLabels) {
+    const profiles = byUnit[label] || {};
     const parts = Object.entries(profiles)
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([prof, stocks]) => {
@@ -1152,15 +1227,18 @@ export function buildBoardSummaryByUnit(
         const displayProf = getDisplayNameByProfile(prof, materialCatalog?.items);
         return `${stockStr} ${displayProf}`;
       });
-    const sig = parts.join(", ");
+    const sig = [...parts, ...(extras[label] || [])].join(", ");
+    if (!sig) continue;
     if (!sigMap[sig]) sigMap[sig] = [];
     sigMap[sig].push(label);
   }
 
   return Object.entries(sigMap)
     .sort((a, b) => {
-      const aFirst = parseInt(a[1][0]) || 0;
-      const bFirst = parseInt(b[1][0]) || 0;
+      const an = parseInt(a[1][0]);
+      const bn = parseInt(b[1][0]);
+      const aFirst = isNaN(an) ? Number.MAX_SAFE_INTEGER : an;
+      const bFirst = isNaN(bn) ? Number.MAX_SAFE_INTEGER : bn;
       return aFirst - bFirst;
     })
     .map(([sig, labels]) => ({ sig, unitLabels: labels }));
