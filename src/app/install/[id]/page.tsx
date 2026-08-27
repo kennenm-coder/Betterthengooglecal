@@ -279,11 +279,11 @@ export default function InstallInstructionsPage() {
               <div className="text-xs text-muted mt-1">
                 {job.units.length} unit{job.units.length !== 1 ? "s" : ""}
               </div>
+              <div className="text-[17px] font-bold text-foreground mt-1.5">PO# {job.job.poNumber || "—"}</div>
             </div>
             <div className="text-right text-sm leading-relaxed">
               <div className="font-bold text-foreground">{job.job.customerName || "—"}</div>
               <div className="text-muted">{job.job.address || "—"}</div>
-              <div className="text-muted">PO# {job.job.poNumber || "—"}</div>
               <div className="text-xs text-muted">
                 Tech: {job.job.techMeasurer || "—"} | {job.job.date || "—"}
               </div>
