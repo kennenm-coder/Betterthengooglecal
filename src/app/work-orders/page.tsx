@@ -501,13 +501,15 @@ function ReviewSection({
   onEdit: () => void;
   onReviewItems: (items: NumberedWorkItem[], reviewed: boolean) => void;
   onToggleCompleted: (items: NumberedWorkItem[], completed: boolean) => void;
-  onStatus: (status: WriteUpStatus) => void;
+  onStatus: (status: WriteUpStatus) => void | Promise<void>;
   onDeletePhotos: () => Promise<void>;
 }) {
   const allWork = [...section.outstanding, ...section.completed].sort((a, b) => a.seq - b.seq);
   const allReviewed = allWork.length > 0 && allWork.every((i) => i.reviewed);
   const [confirmPhotos, setConfirmPhotos] = useState(false);
   const [deletingPhotos, setDeletingPhotos] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   // Whole-job note → what's wrong / financing / paint (matches the create screen).
   let background = "", financing = "", paint = "";
@@ -527,7 +529,8 @@ function ReviewSection({
     if (bg) background = background ? `${background}\n\n${bg}` : bg;
   }
   const unitRows = section.rows.filter((r) => r.unitLabel);
-  const canDeletePhotos = canEdit && section.status === "closed" && section.photos.length > 0;
+  const canDeletePhotos =
+    canEdit && (section.status === "closed" || section.status === "archived") && section.photos.length > 0;
 
   return (
     <div className="px-4 py-3 bg-background/40 space-y-3">
@@ -699,7 +702,7 @@ function ReviewSection({
         </div>
       )}
 
-      {/* Delete photos — closed write-ups only, admins/field managers */}
+      {/* Delete photos — closed or archived write-ups, admins/field managers */}
       {canDeletePhotos && (
         <div className="no-print">
           {confirmPhotos ? (
@@ -782,14 +785,50 @@ function ReviewSection({
           </button>
         )}
         {section.status === "closed" && canReview && (
-          <button
-            onClick={() => onStatus("archived")}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-surface text-muted border border-border"
-            title="Hide this write-up from the joined PDF / doc"
-          >
-            <Archive className="w-3.5 h-3.5" />
-            Archive
-          </button>
+          confirmArchive ? (
+            <div className="w-full rounded-lg border border-danger/40 bg-danger/5 px-3 py-2 no-print">
+              <p className="text-xs font-medium text-danger flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Archiving hides this write-up from the joined PDF
+                {section.photos.length > 0
+                  ? ` and permanently deletes all ${section.photos.length} photo${section.photos.length !== 1 ? "s" : ""}.`
+                  : "."}{" "}
+                This can&apos;t be undone.
+              </p>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => setConfirmArchive(false)}
+                  disabled={archiving}
+                  className="flex-1 py-2 rounded-lg text-xs font-medium border border-border disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setArchiving(true);
+                    if (section.photos.length > 0) await onDeletePhotos();
+                    await onStatus("archived");
+                    setArchiving(false);
+                    setConfirmArchive(false);
+                  }}
+                  disabled={archiving}
+                  className="flex-1 py-2 rounded-lg text-xs font-semibold bg-danger text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {archiving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />}
+                  Archive
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmArchive(true)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-surface text-muted border border-border"
+              title="Hide this write-up from the joined PDF / doc and delete its photos"
+            >
+              <Archive className="w-3.5 h-3.5" />
+              Archive
+            </button>
+          )
         )}
         {section.status === "archived" && canReview && (
           <button
