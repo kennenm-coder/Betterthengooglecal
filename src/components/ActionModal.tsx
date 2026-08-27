@@ -9,6 +9,7 @@ import {
   DEFAULT_FIELDNOTES_EMAIL,
 } from "@/lib/action-settings";
 import { useAuth } from "@/hooks/useAuth";
+import { dedupeRecipients } from "@/lib/email-recipients";
 import { X, ChevronRight, Phone, FileText, AlertTriangle, Mic, MicOff, Loader2, Send } from "lucide-react";
 import { format } from "date-fns";
 
@@ -115,8 +116,12 @@ export default function ActionModal({
       `Salesforce Link: ${sfUrl}`,
     ].join("\n");
 
-    // Email goes to the field-notes inbox + the person logging it.
-    const to = [person.email, fieldNotesEmail || DEFAULT_FIELDNOTES_EMAIL].filter(Boolean);
+    // Email goes to the field-notes inbox + the person logging it. Dedupe so an
+    // address on both the To list and the user's auto-CC isn't on both lines.
+    const { to, cc } = dedupeRecipients(
+      [person.email, fieldNotesEmail || DEFAULT_FIELDNOTES_EMAIL].filter(Boolean),
+      autoCc
+    );
 
     // Log the action regardless of whether the email sends — the log is the record.
     addActionLog({
@@ -133,13 +138,13 @@ export default function ActionModal({
     });
 
     setSending(true);
-    const sent = await sendFieldNoteEmail(to, autoCc, subject, body);
+    const sent = await sendFieldNoteEmail(to, cc, subject, body);
     setSending(false);
     if (sent.ok) {
       onClose();
     } else {
       // Keep the modal open on a resend prompt so the email isn't silently lost.
-      setEmailFailed({ to, cc: autoCc, subject, body });
+      setEmailFailed({ to, cc, subject, body });
     }
   }
 

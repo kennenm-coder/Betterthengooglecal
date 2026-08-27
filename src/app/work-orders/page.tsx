@@ -20,6 +20,7 @@ import {
   type WriteUpEntryInput,
 } from "@/lib/work-order-store";
 import { getWriteUpEmails } from "@/lib/action-settings";
+import { dedupeRecipients } from "@/lib/email-recipients";
 import { groupWriteUpSections, padSeq, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
@@ -111,8 +112,11 @@ export default function WorkOrdersPage() {
     }));
     const { subject, body } = buildWriteUpEmailContent(ctx, entries, docLink);
     const toEmails = await getWriteUpEmails();
-    const to = toEmails.length ? toEmails : [WRITEUP_EMAIL_TO];
-    return { to, cc: autoCc, subject, body };
+    const { to, cc } = dedupeRecipients(
+      toEmails.length ? toEmails : [WRITEUP_EMAIL_TO],
+      autoCc
+    );
+    return { to, cc, subject, body };
   }
 
   /** Resend the write-up notification by opening the user's own mail app with

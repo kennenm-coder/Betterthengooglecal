@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { requireAuth } from "@/lib/auth";
+import { dedupeRecipients } from "@/lib/email-recipients";
 
 // Nodemailer needs the Node runtime (not edge).
 export const runtime = "nodejs";
@@ -55,8 +56,9 @@ export async function POST(request: Request) {
       .map((x) => x.trim())
       .filter(Boolean);
 
-  const to = toEmail(payload.to);
-  const cc = toEmail(payload.cc);
+  // Dedupe as a backstop so an address never lands on both To and CC, even if a
+  // caller forgets to (To wins). Clients dedupe too; this guarantees it.
+  const { to, cc } = dedupeRecipients(toEmail(payload.to), toEmail(payload.cc));
   const subject = typeof payload.subject === "string" ? payload.subject : "";
   const body = typeof payload.body === "string" ? payload.body : "";
 

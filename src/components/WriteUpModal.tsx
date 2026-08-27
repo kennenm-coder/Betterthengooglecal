@@ -46,6 +46,7 @@ import {
   deleteDraftPhoto,
 } from "@/lib/writeup-draft";
 import { getWriteUpEmails } from "@/lib/action-settings";
+import { dedupeRecipients } from "@/lib/email-recipients";
 import {
   X,
   Plus,
@@ -1142,15 +1143,18 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       const origin = typeof window !== "undefined" ? window.location.origin : "";
       const docLink = `${origin}/work-orders/${encodeURIComponent(order.orderNumber)}`;
       const toEmails = await getWriteUpEmails();
-      const to = toEmails.length ? toEmails : [WRITEUP_EMAIL_TO];
+      const { to, cc } = dedupeRecipients(
+        toEmails.length ? toEmails : [WRITEUP_EMAIL_TO],
+        autoCc
+      );
       const { subject, body } = buildWriteUpEmailContent(ctx, inputs, docLink);
 
-      const sent = await sendWriteUpNotify(to, autoCc, subject, body);
+      const sent = await sendWriteUpNotify(to, cc, subject, body);
       if (!sent.ok) {
         // The write-up IS saved — refresh the list so it shows up, but keep the
         // modal open on a resend prompt so the notification isn't silently lost.
         onSaved?.();
-        setEmailFailed({ to, cc: autoCc, subject, body });
+        setEmailFailed({ to, cc, subject, body });
         return;
       }
     }
