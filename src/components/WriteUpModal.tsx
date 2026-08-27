@@ -29,7 +29,8 @@ import {
   unitLabelOf,
   submitWriteUpBatch,
   saveWriteUpBatchEdit,
-  buildWriteUpMailto,
+  buildWriteUpEmailContent,
+  WRITEUP_EMAIL_TO,
   updateWriteUp,
   deleteWriteUp,
   getSignedPhotoUrl,
@@ -313,6 +314,15 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState("");
+  // Set when the write-up saved but its notification email didn't send. Holds
+  // everything needed to resend without re-saving (avoids duplicate write-ups).
+  const [emailFailed, setEmailFailed] = useState<{
+    to: string[];
+    cc: string[];
+    subject: string;
+    body: string;
+  } | null>(null);
+  const [resending, setResending] = useState(false);
   // Edit mode: status + saving flag
   const [status, setStatus] = useState<WriteUpStatus>(editWriteUp?.status || "open");
   const [saving, setSaving] = useState(false);
@@ -1131,12 +1141,61 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       const origin = typeof window !== "undefined" ? window.location.origin : "";
       const docLink = `${origin}/work-orders/${encodeURIComponent(order.orderNumber)}`;
       const toEmails = await getWriteUpEmails();
-      const mailto = buildWriteUpMailto(ctx, inputs, docLink, toEmails, autoCc);
-      if (typeof window !== "undefined") window.location.href = mailto;
+      const to = toEmails.length ? toEmails : [WRITEUP_EMAIL_TO];
+      const { subject, body } = buildWriteUpEmailContent(ctx, inputs, docLink);
+
+      const sent = await sendWriteUpNotify(to, autoCc, subject, body);
+      if (!sent.ok) {
+        // The write-up IS saved — refresh the list so it shows up, but keep the
+        // modal open on a resend prompt so the notification isn't silently lost.
+        onSaved?.();
+        setEmailFailed({ to, cc: autoCc, subject, body });
+        return;
+      }
     }
 
     onSaved?.();
     onClose();
+  }
+
+  /** POST the notification to the server, which sends it from the generic
+   *  mailbox. Returns ok/false so the caller can offer a resend on failure. */
+  async function sendWriteUpNotify(
+    to: string[],
+    cc: string[],
+    subject: string,
+    body: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await fetch("/api/writeups/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to, cc, subject, body }),
+      });
+      if (res.ok) return { ok: true };
+      const data = await res.json().catch(() => ({}));
+      return { ok: false, error: (data as { error?: string })?.error };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : "Network error" };
+    }
+  }
+
+  async function resendWriteUpEmail() {
+    if (!emailFailed) return;
+    setResending(true);
+    const sent = await sendWriteUpNotify(
+      emailFailed.to,
+      emailFailed.cc,
+      emailFailed.subject,
+      emailFailed.body
+    );
+    setResending(false);
+    if (sent.ok) {
+      setEmailFailed(null);
+      onClose();
+    } else {
+      setError(sent.error ? `Still couldn't send: ${sent.error}` : "Still couldn't send the email.");
+    }
   }
 
   const totalUnits = buildInputs().length;
@@ -1166,6 +1225,49 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
               </button>
               <button onClick={discardAndClose} className="w-full py-3 rounded-xl text-sm font-medium text-danger">
                 Discard write-up
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Write-up saved, but its notification email failed to send */}
+      {emailFailed && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-6">
+          <div className="bg-background rounded-2xl shadow-xl w-full max-w-xs p-5 text-center">
+            <AlertTriangle className="w-8 h-8 text-amber-600 mx-auto mb-2" />
+            <p className="font-semibold">Saved — but the email didn&apos;t send</p>
+            <p className="text-xs text-muted mt-1">
+              The write-up is saved. The notification to {emailFailed.to.join(", ")} didn&apos;t go
+              through. Resend it now?
+            </p>
+            {error && <p className="text-xs text-danger mt-2">{error}</p>}
+            <div className="mt-4 space-y-2">
+              <button
+                onClick={resendWriteUpEmail}
+                disabled={resending}
+                className="w-full py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {resending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Sending…
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" /> Resend email
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setEmailFailed(null);
+                  setError("");
+                  onClose();
+                }}
+                disabled={resending}
+                className="w-full py-3 rounded-xl border border-border text-sm font-medium disabled:opacity-60"
+              >
+                Close without sending
               </button>
             </div>
           </div>
