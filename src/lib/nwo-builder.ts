@@ -235,6 +235,13 @@ const PAINT_NAME_MAP: Record<string, string> = {
   "raw": "RAW",
 };
 
+// Canonicalize a color name to its single spelling (e.g. "white"/"White" ->
+// "White[RBA]", "Snow Mist" -> "Snowmist") so variants of the same color never
+// appear as two separate entries. Mirrors canonicalColor in the material-list app.
+function canonicalColor(c: string): string {
+  return PAINT_NAME_MAP[(c || "").toLowerCase()] || c;
+}
+
 // Interior caulk takes color cues ONLY from interior trim. Exterior trim
 // (e.g. J Channel) uses our color names but must not drive interior caulk color.
 const CAULK_CUE_CATEGORIES = new Set([
@@ -264,7 +271,7 @@ function detectTrimCaulkColors(globalMaterials: any[], materialCatalog: Material
   const paintColors = new Set<string>();
 
   // Normalize color names so variants like "Snow Mist" / "Snowmist" merge
-  const normColor = (c: string) => PAINT_NAME_MAP[(c || "").toLowerCase()] || c;
+  const normColor = canonicalColor;
 
   // Unknown/freeform items (no catalog match) are included — they're manually
   // entered interior trim.
@@ -991,12 +998,12 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
     if (!mat.customOverride && (mat.extraColors || []).length > 0) {
       const autoColors = new Set<string>();
       if (mat.profileId === "coil" || mat.profileId === "paint-caulk") {
-        getExteriorColorQtys(mat.autoFormula, _allRows, mat.profileId).forEach(c => autoColors.add(c.color));
+        getExteriorColorQtys(mat.autoFormula, _allRows, mat.profileId).forEach(c => autoColors.add(canonicalColor(c.color)));
       } else if (mat.profileId === "silicone-caulk") {
-        detectTrimCaulkColors(gmItems, materialCatalog, units, job.additionalMaterials).forEach(c => autoColors.add(c));
+        detectTrimCaulkColors(gmItems, materialCatalog, units, job.additionalMaterials).forEach(c => autoColors.add(canonicalColor(c)));
       }
-      for (const color of (mat.extraColors as string[]).filter(c => !autoColors.has(c))) {
-        consumableRows.push({ qty: baseQty, unit: mat.unit || "PCS", item: mat.profile, color, species: "—", lengths: "—", vendor: mat.vendor || "WAREHOUSE" });
+      for (const color of (mat.extraColors as string[]).filter(c => !autoColors.has(canonicalColor(c)))) {
+        consumableRows.push({ qty: baseQty, unit: mat.unit || "PCS", item: mat.profile, color: canonicalColor(color), species: "—", lengths: "—", vendor: mat.vendor || "WAREHOUSE" });
       }
     }
   }
