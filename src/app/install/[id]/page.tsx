@@ -287,6 +287,12 @@ export default function InstallInstructionsPage() {
               <div className="text-xs text-muted">
                 Tech: {job.job.techMeasurer || "—"} | {job.job.date || "—"}
               </div>
+              {job.job.submittedBy && (
+                <div className="text-xs text-muted">Configured by: {job.job.submittedBy}</div>
+              )}
+              {job.job.trimOrderedBy && (
+                <div className="text-xs text-muted">Trim ordered by: {job.job.trimOrderedBy}</div>
+              )}
             </div>
           </div>
         </div>
