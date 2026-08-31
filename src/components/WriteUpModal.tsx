@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   WorkOrder,
   MaterialUnit,
@@ -325,6 +325,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     body: string;
   } | null>(null);
   const [resending, setResending] = useState(false);
+  // Brief success confirmation shown after a submit before the modal closes.
+  const [sentOk, setSentOk] = useState<null | "emailed" | "saved">(null);
   // Edit mode: status + saving flag
   const [status, setStatus] = useState<WriteUpStatus>(editWriteUp?.status || "open");
   const [saving, setSaving] = useState(false);
@@ -575,6 +577,59 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     return opts;
   }, [units]);
 
+  // Every vendor seen anywhere in the material catalog (not just the picked
+  // profile's) so the trim adder's vendor list includes shop / warehouse / etc.
+  const vendorOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of catalog) for (const v of c.vendors) if (v && v.trim()) s.add(v.trim());
+    return [...s].sort((a, b) => a.localeCompare(b));
+  }, [catalog]);
+
+  // Trim/part adders register a "flush" here that commits any typed-but-not-added
+  // entry. Submit calls them all so a half-filled adder is saved instead of lost,
+  // even for custom items where the "Add" button wasn't pressed.
+  const flushers = useRef<Map<string, () => WriteUpMaterialItem | PartItem | null>>(new Map());
+  const registerFlush = useCallback(
+    (key: string, fn: (() => WriteUpMaterialItem | PartItem | null) | null) => {
+      if (fn) flushers.current.set(key, fn);
+      else flushers.current.delete(key);
+    },
+    []
+  );
+  /** Commit every adder's pending entry into the model right before a save.
+   *  Returns the merged issues (create flow) + any flushed edit-mode materials. */
+  function flushAdders(): { mergedIssues: WuIssue[]; editMats: WriteUpMaterialItem[] } {
+    const matByIssue = new Map<string, WriteUpMaterialItem[]>();
+    const partByIssue = new Map<string, PartItem[]>();
+    const editMats: WriteUpMaterialItem[] = [];
+    for (const [key, fn] of flushers.current) {
+      const res = fn();
+      if (!res) continue;
+      const sep = key.indexOf(":");
+      const kind = key.slice(0, sep);
+      const id = key.slice(sep + 1);
+      if (kind === "mat" && id === "edit") editMats.push(res as WriteUpMaterialItem);
+      else if (kind === "mat") matByIssue.set(id, [...(matByIssue.get(id) || []), res as WriteUpMaterialItem]);
+      else if (kind === "parts") partByIssue.set(id, [...(partByIssue.get(id) || []), res as PartItem]);
+    }
+    let mergedIssues = issues;
+    if (matByIssue.size || partByIssue.size) {
+      mergedIssues = issues.map((it) => {
+        const m = matByIssue.get(it.id);
+        const p = partByIssue.get(it.id);
+        if (!m && !p) return it;
+        return {
+          ...it,
+          materials: m ? [...it.materials, ...m] : it.materials,
+          parts: p ? [...it.parts, ...p] : it.parts,
+        };
+      });
+      setIssues(mergedIssues);
+    }
+    if (editMats.length) setEditMaterials((prev) => [...prev, ...editMats]);
+    return { mergedIssues, editMats };
+  }
+
   // ── Units affected (create): top-level list + per-unit specs ──
   function makeWuUnit(opts: { isNewProduct: boolean; unitLabel: string }): WuUnit {
     const u = opts.isNewProduct ? null : unitOptions.find((o) => o.label === opts.unitLabel)?.unit || null;
@@ -746,6 +801,16 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const unitValid = (u: WuUnit) => (u.isNewProduct ? u.unitLabel.trim().length > 0 && u.unitType.trim().length > 0 : true);
   const validUnits = wuUnits.filter(unitValid);
   const validIssues = issues.filter((it) => it.label.trim().length > 0);
+  // Manual units the user started — typed a Unit #, or entered a spec change —
+  // but left without a Product type. buildInputs() drops these silently, taking
+  // their spec changes with them, so Submit blocks on them instead.
+  const incompleteManualUnits = wuUnits.filter(
+    (u) =>
+      u.isNewProduct &&
+      !unitValid(u) &&
+      (u.unitLabel.trim().length > 0 ||
+        (u.hasSpecChange && u.specEntries.some((e) => specEntryValue(e).length > 0)))
+  );
 
   const editHasContent =
     editWork.length > 0 ||
@@ -764,7 +829,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
 
   /** Fan out to one row per affected unit, plus a whole-job row that carries
    *  general work, the background/notes, the material list, and the photos. */
-  function buildInputs(): WriteUpEntryInput[] {
+  function buildInputs(issuesSource: WuIssue[] = issues): WriteUpEntryInput[] {
+    const builtIssues = issuesSource.filter((it) => it.label.trim().length > 0);
     interface Agg {
       unitLabel: string | null;
       isNewProduct: boolean;
@@ -802,7 +868,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     // Issues → tasks (+ their own materials/photos) onto their affected units,
     // or the whole-job bucket. Each issue gets a stable 1-based number (seq)
     // shared across every unit it fans out to, so the doc/PDF number it once.
-    validIssues.forEach((it, issueIdx) => {
+    builtIssues.forEach((it, issueIdx) => {
       const noteBits = [
         it.note.trim(),
         it.needsOrdering && it.orderingNotes.trim() ? `NEEDS ORDERED: ${it.orderingNotes.trim()}` : it.needsOrdering ? "NEEDS ORDERED" : "",
@@ -1001,6 +1067,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     if (!editWriteUp || saving) return;
     setSaving(true);
     setError("");
+    // Commit any typed-but-not-added trim so it isn't lost on save.
+    const { editMats } = flushAdders();
+    const materialItems = editMats.length ? [...editMaterials, ...editMats] : editMaterials;
     const label = editWriteUp.newProduct ? editUnitLabel.trim() : editUnitLabel;
     const keepPhotos: WriteUpPhoto[] = editPhotos
       .filter((p) => p.path)
@@ -1011,7 +1080,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       unitLabel: editUnitLabel.trim() || null,
       lineItems: editWork,
       specChanges: specChangesOf(editSpecs, label),
-      materialItems: editMaterials,
+      materialItems,
       newProduct: editWriteUp.newProduct,
       notes: editNote.trim(),
       status,
@@ -1059,6 +1128,10 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       setError("Add at least one work item.");
       return;
     }
+    if (incompleteManualUnits.length > 0) {
+      setError("Finish the manually-added unit(s): each needs a Unit # and a Product type, or remove it — otherwise its spec changes won't save.");
+      return;
+    }
     setSaving(true);
     setError("");
     const ctx = {
@@ -1074,7 +1147,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       updatedByName: user?.email?.split("@")[0] || "",
       status,
     };
-    const res = await saveWriteUpBatchEdit(editBatch, ctx, buildInputs(), (done, total) =>
+    const { mergedIssues } = flushAdders();
+    const res = await saveWriteUpBatchEdit(editBatch, ctx, buildInputs(mergedIssues), (done, total) =>
       setProgress({ done, total })
     );
     setSaving(false);
@@ -1105,6 +1179,10 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       setError("Nothing to save yet — add some detail first.");
       return;
     }
+    if (startStatus !== "draft" && incompleteManualUnits.length > 0) {
+      setError("Finish the manually-added unit(s): each needs a Unit # and a Product type, or remove it — otherwise its spec changes won't save.");
+      return;
+    }
 
     setSubmitting(true);
     setError("");
@@ -1118,7 +1196,10 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       createdByName: user?.email?.split("@")[0] || "",
       status: startStatus,
     };
-    const inputs: WriteUpEntryInput[] = buildInputs();
+    // Commit any typed-but-not-added trim/parts first, then build from the merged
+    // model so nothing half-entered is lost.
+    const { mergedIssues } = flushAdders();
+    const inputs: WriteUpEntryInput[] = buildInputs(mergedIssues);
 
     const { created, error: saveError } = await submitWriteUpBatch(ctx, inputs, (done, total) =>
       setProgress({ done, total })
@@ -1160,7 +1241,10 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     }
 
     onSaved?.();
-    onClose();
+    // Flash a short success confirmation, then close — so the field manager sees
+    // the notification went out (not just that the modal vanished).
+    setSentOk(sendEmail ? "emailed" : "saved");
+    setTimeout(() => onClose(), 1500);
   }
 
   // LINKED FEATURE: this write-up email send is mirrored by the "field notes"
@@ -1307,6 +1391,27 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         </div>
       )}
 
+      {/* Brief success confirmation after Submit */}
+      {sentOk && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 px-6">
+          <div className="bg-background rounded-2xl shadow-xl w-full max-w-xs p-6 text-center">
+            <div className="w-14 h-14 rounded-full bg-green-500/15 flex items-center justify-center mx-auto mb-3">
+              <Check className="w-8 h-8 text-green-600" />
+            </div>
+            <p className="font-semibold">Write-up submitted</p>
+            <p className="text-xs text-muted mt-1 flex items-center justify-center gap-1.5">
+              {sentOk === "emailed" ? (
+                <>
+                  <Send className="w-3.5 h-3.5 text-green-600" /> Notification email sent
+                </>
+              ) : (
+                "Saved for review"
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+
       {showSavePrompt && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-6">
           <div className="bg-background rounded-2xl shadow-xl w-full max-w-xs p-5 text-center">
@@ -1441,6 +1546,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 catalog={catalog}
                 colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
                 speciesOptions={trimOptions?.species || []}
+                vendorOptions={vendorOptions}
+                onRegisterFlush={(fn) => registerFlush("mat:edit", fn)}
               />
               <PhotoSection
                 photos={editPhotos}
@@ -1592,12 +1699,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                       partsCatalog={partsCatalog}
                       colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
                       speciesOptions={trimOptions?.species || []}
+                      vendorOptions={vendorOptions}
                       onUpdate={(patch) => updateIssue(it.id, patch)}
                       onRemove={() => removeIssue(it.id)}
                       onToggleUnit={(unitKey) => toggleIssueUnit(it.id, unitKey)}
                       onOpenCamera={() => openCamera({ kind: "issue", issueId: it.id })}
                       onUpload={(files) => addPhotosTo({ kind: "issue", issueId: it.id }, files)}
                       onRemovePhoto={(pid) => removeIssuePhoto(it.id, pid)}
+                      onRegisterFlush={registerFlush}
                     />
                   ))}
                 </div>
@@ -2003,6 +2112,9 @@ function UnitSpecSection({
       <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
         <Pencil className="w-3.5 h-3.5" /> Spec changes
       </span>
+      <p className="text-[11px] text-muted mt-0.5 leading-snug">
+        Pick the spec to correct (e.g. Exterior Color), then enter the value it should be.
+      </p>
       <div className="mt-2 space-y-2">
         {specEntries.map((entry) => (
           <SpecEntryRow
@@ -2029,12 +2141,17 @@ function MaterialSection({
   catalog,
   colorOptions,
   speciesOptions,
+  vendorOptions,
+  onRegisterFlush,
 }: {
   materials: WriteUpMaterialItem[];
   onChange: (m: WriteUpMaterialItem[]) => void;
   catalog: CatalogPickItem[];
   colorOptions: string[];
   speciesOptions: string[];
+  vendorOptions: string[];
+  /** Registers a flush that commits any typed-but-not-added item on Submit. */
+  onRegisterFlush?: (fn: (() => WriteUpMaterialItem | null) | null) => void;
 }) {
   // Which row (if any) is currently open for inline editing.
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -2053,6 +2170,7 @@ function MaterialSection({
                 initial={m}
                 colorOptions={colorOptions}
                 speciesOptions={speciesOptions}
+                vendorOptions={vendorOptions}
                 onSave={(updated) => {
                   onChange(materials.map((row, j) => (j === i ? updated : row)));
                   setEditingIndex(null);
@@ -2090,7 +2208,14 @@ function MaterialSection({
           )}
         </div>
       )}
-      <MaterialAdder catalog={catalog} colorOptions={colorOptions} speciesOptions={speciesOptions} onAdd={(m) => onChange([...materials, m])} />
+      <MaterialAdder
+        catalog={catalog}
+        colorOptions={colorOptions}
+        speciesOptions={speciesOptions}
+        vendorOptions={vendorOptions}
+        onAdd={(m) => onChange([...materials, m])}
+        onRegisterFlush={onRegisterFlush}
+      />
     </div>
   );
 }
@@ -2100,12 +2225,14 @@ function MaterialRowEditor({
   initial,
   colorOptions,
   speciesOptions,
+  vendorOptions,
   onSave,
   onCancel,
 }: {
   initial: WriteUpMaterialItem;
   colorOptions: string[];
   speciesOptions: string[];
+  vendorOptions: string[];
   onSave: (m: WriteUpMaterialItem) => void;
   onCancel: () => void;
 }) {
@@ -2165,7 +2292,7 @@ function MaterialRowEditor({
       </p>
       <ComboInput label="Color" value={color} onChange={setColor} options={colorOptions} placeholder="Start typing a color or stain…" />
       <ComboInput label="Species" value={species} onChange={setSpecies} options={speciesOptions} placeholder="Start typing a species…" />
-      <StackedInput label="Vendor" value={vendor} onChange={setVendor} />
+      <ComboInput label="Vendor" value={vendor} onChange={setVendor} options={vendorOptions} placeholder="Start typing a vendor…" />
       <div className="flex gap-2">
         <button
           onClick={onCancel}
@@ -2198,12 +2325,14 @@ function IssueCard({
   partsCatalog,
   colorOptions,
   speciesOptions,
+  vendorOptions,
   onUpdate,
   onRemove,
   onToggleUnit,
   onOpenCamera,
   onUpload,
   onRemovePhoto,
+  onRegisterFlush,
 }: {
   issue: WuIssue;
   index: number;
@@ -2215,12 +2344,15 @@ function IssueCard({
   partsCatalog: PartsCatalogItem[];
   colorOptions: string[];
   speciesOptions: string[];
+  vendorOptions: string[];
   onUpdate: (patch: Partial<WuIssue>) => void;
   onRemove: () => void;
   onToggleUnit: (unitKey: string) => void;
   onOpenCamera: () => void;
   onUpload: (files: File[]) => void;
   onRemovePhoto: (id: string) => void;
+  /** Registers per-adder flushes (keyed) so Submit can commit pending entries. */
+  onRegisterFlush?: (key: string, fn: (() => WriteUpMaterialItem | PartItem | null) | null) => void;
 }) {
   return (
     <section className="rounded-2xl border border-border bg-surface/40 p-3 space-y-3">
@@ -2287,6 +2419,8 @@ function IssueCard({
         catalog={catalog}
         colorOptions={colorOptions}
         speciesOptions={speciesOptions}
+        vendorOptions={vendorOptions}
+        onRegisterFlush={(fn) => onRegisterFlush?.(`mat:${issue.id}`, fn)}
       />
 
       {/* Ordering — flag anything that needs ordered (lives with materials) */}
@@ -2312,6 +2446,7 @@ function IssueCard({
               affectedUnits={affectedUnits.filter((u) => issue.unitKeys.length === 0 || issue.unitKeys.includes(u.key))}
               unitTitle={unitTitle}
               onChange={(parts) => onUpdate({ parts })}
+              onRegisterFlush={(fn) => onRegisterFlush?.(`parts:${issue.id}`, fn)}
             />
             <div>
               <span className="text-xs font-bold text-muted uppercase tracking-wide">Ordering notes</span>
@@ -2341,16 +2476,33 @@ function PartsPicker({
   affectedUnits,
   unitTitle,
   onChange,
+  onRegisterFlush,
 }: {
   parts: PartItem[];
   catalog: PartsCatalogItem[];
   affectedUnits: WuUnit[];
   unitTitle: (u: WuUnit) => string;
   onChange: (parts: PartItem[]) => void;
+  /** Registers a flush that commits a typed-but-not-added custom part on Submit. */
+  onRegisterFlush?: (fn: (() => PartItem | null) | null) => void;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const q = query.trim().toLowerCase();
+
+  // Register a flush so a typed-but-not-added custom part is committed on Submit
+  // instead of being dropped. Re-registered every render to close over the latest
+  // query; cleared on unmount.
+  useEffect(() => {
+    onRegisterFlush?.(() => {
+      const name = query.trim();
+      if (!name) return null;
+      setQuery("");
+      setOpen(false);
+      return { key: crypto.randomUUID(), name, productType: undefined, qty: 1, custom: true, unitKeys: [] };
+    });
+    return () => onRegisterFlush?.(null);
+  });
 
   // Product types on the affected units — used to surface the most likely
   // parts first (a double-hung write-up leads with double-hung parts).
@@ -2764,12 +2916,17 @@ function MaterialAdder({
   catalog,
   colorOptions,
   speciesOptions,
+  vendorOptions,
   onAdd,
+  onRegisterFlush,
 }: {
   catalog: CatalogPickItem[];
   colorOptions: string[];
   speciesOptions: string[];
+  vendorOptions: string[];
   onAdd: (m: WriteUpMaterialItem) => void;
+  /** Registers a flush that commits typed-but-not-added content on Submit. */
+  onRegisterFlush?: (fn: (() => WriteUpMaterialItem | null) | null) => void;
 }) {
   const [search, setSearch] = useState("");
   const [picked, setPicked] = useState<CatalogPickItem | null>(null);
@@ -2789,6 +2946,12 @@ function MaterialAdder({
     const head = picked?.species || [];
     return [...new Set([...head, ...speciesOptions])];
   }, [picked, speciesOptions]);
+
+  // The picked profile's own vendors first, then every other catalog vendor.
+  const vendorList = useMemo(
+    () => [...new Set([...(picked?.vendors || []), ...vendorOptions])].filter(Boolean),
+    [picked, vendorOptions]
+  );
 
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -2820,10 +2983,12 @@ function MaterialAdder({
     setLengths("");
     setVendor("");
   }
-  function add() {
+  // Build the item from the current fields, or null if it isn't complete enough
+  // to add (no name, or no count). Shared by the Add button and the flush.
+  function buildItem(): WriteUpMaterialItem | null {
     const itemName = picked ? picked.profile : search.trim();
-    if (!itemName) return;
-    onAdd({
+    if (!itemName || computedQty < 1) return null;
+    return {
       profileId: picked?.id,
       item: itemName,
       color: color.trim(),
@@ -2833,11 +2998,28 @@ function MaterialAdder({
       lengths: lengths.trim(),
       vendor: vendor.trim(),
       custom: custom || !picked,
-    });
+    };
+  }
+  function add() {
+    const m = buildItem();
+    if (!m) return;
+    onAdd(m);
     reset();
   }
 
   const showEntry = picked || custom;
+
+  // Register a flush so Submit commits a typed-but-not-added item (including
+  // custom ones) instead of dropping it. Re-registered every render so the flush
+  // always closes over the current fields; cleared on unmount.
+  useEffect(() => {
+    onRegisterFlush?.(() => {
+      const m = buildItem();
+      if (m) reset();
+      return m;
+    });
+    return () => onRegisterFlush?.(null);
+  });
 
   return (
     <div className="mt-2 rounded-xl border border-dashed border-border p-3">
@@ -2904,21 +3086,15 @@ function MaterialAdder({
           </p>
           <ComboInput label="Color" value={color} onChange={setColor} options={colorOptions} placeholder="Start typing a color or stain…" />
           <ComboInput label="Species" value={species} onChange={setSpecies} options={speciesList} placeholder="Start typing a species…" />
-          {picked && picked.vendors.length > 1 ? (
-            <div>
-              <label className="text-xs text-muted block mb-1">Vendor</label>
-              <select value={vendor} onChange={(e) => setVendor(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base">
-                <option value="">—</option>
-                {picked.vendors.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <StackedInput label="Vendor" value={vendor} onChange={setVendor} />
-          )}
+          {/* This profile's own vendors first, then every vendor in the catalog
+              (shop / warehouse / etc.). Custom typing still allowed. */}
+          <ComboInput
+            label="Vendor"
+            value={vendor}
+            onChange={setVendor}
+            options={vendorList}
+            placeholder="Start typing a vendor…"
+          />
           <button
             onClick={add}
             disabled={computedQty < 1}
