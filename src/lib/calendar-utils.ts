@@ -9,6 +9,7 @@ import {
   format,
   parseISO,
   isWithinInterval,
+  differenceInCalendarDays,
 } from "date-fns";
 
 function orderSpansDay(order: WorkOrder, date: Date): boolean {
@@ -51,6 +52,23 @@ export function getOrdersForWeek(
   }
 
   return byDay;
+}
+
+// For a multi-day order shown on `date`, returns which day of the span this is
+// and the total (e.g. { day: 2, total: 5 } -> "Day 2 of 5"). Returns null for
+// single-day orders or when the date falls outside the span.
+export function multiDayProgress(
+  order: WorkOrder,
+  date: Date
+): { day: number; total: number } | null {
+  if (!order.scheduledStart || !order.scheduledEnd) return null;
+  const start = startOfDay(parseISO(order.scheduledStart));
+  const end = startOfDay(parseISO(order.scheduledEnd));
+  const total = differenceInCalendarDays(end, start) + 1;
+  if (total <= 1) return null;
+  const day = differenceInCalendarDays(startOfDay(date), start) + 1;
+  if (day < 1 || day > total) return null;
+  return { day, total };
 }
 
 export function getHourSlot(order: WorkOrder): number {

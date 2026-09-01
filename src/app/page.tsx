@@ -76,8 +76,23 @@ function CalendarPage() {
       setRefreshing(false);
     }
   };
-  const [view, setView] = useState<ViewMode>("day");
-  const [currentDate, setCurrentDate] = useState(new Date());
+  // View + date persist in sessionStorage so the calendar keeps its place while
+  // the user clicks between tabs (search, write-ups, etc.). sessionStorage is
+  // cleared when the PWA is closed, so restarting the app returns to today/day.
+  const [view, setView] = useState<ViewMode>(() => {
+    if (typeof window === "undefined") return "day";
+    const saved = sessionStorage.getItem("cal:view");
+    return saved === "day" || saved === "week" || saved === "list" ? saved : "day";
+  });
+  const [currentDate, setCurrentDate] = useState<Date>(() => {
+    if (typeof window === "undefined") return new Date();
+    const saved = sessionStorage.getItem("cal:date");
+    if (saved) {
+      const d = parseISO(saved);
+      if (!isNaN(d.getTime())) return d;
+    }
+    return new Date();
+  });
   const [selectedOrder, setSelectedOrder] = useState<WorkOrder | null>(null);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
 
@@ -95,6 +110,16 @@ function CalendarPage() {
   useEffect(() => {
     ensureDateLoaded(currentDate);
   }, [currentDate, ensureDateLoaded]);
+
+  // Remember the current view + date across tab navigation (see state init above).
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("cal:view", view);
+      sessionStorage.setItem("cal:date", currentDate.toISOString());
+    } catch {
+      /* sessionStorage unavailable (private mode / SSR) — ignore */
+    }
+  }, [view, currentDate]);
 
   const filteredOrders = useMemo(() => applyFilters(orders, filters), [orders, filters]);
 

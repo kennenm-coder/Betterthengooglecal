@@ -1,7 +1,7 @@
 "use client";
 
 import { WorkOrder } from "@/lib/types";
-import { getOrdersForDay, getHourSlot, typeColor, typeTileText } from "@/lib/calendar-utils";
+import { getOrdersForDay, getHourSlot, typeColor, typeTileText, multiDayProgress } from "@/lib/calendar-utils";
 import { formatTime } from "@/lib/calendar-utils";
 import { lastFirst, crewName, sortByStartTime, extractCity } from "@/lib/format-utils";
 import { format } from "date-fns";
@@ -64,6 +64,7 @@ export default function DayView({
                 {hourOrders.map((order) => {
                   const crew = crewName(order);
                   const city = extractCity(order.address);
+                  const multiDay = multiDayProgress(order, date);
                   return (
                     <button
                       key={order.id}
@@ -76,6 +77,11 @@ export default function DayView({
                         {lastFirst(order.customerName)} - {order.orderNumber}
                       </div>
                       <div className="text-sm opacity-90 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                        {multiDay && (
+                          <span className="px-1.5 py-0.5 rounded bg-black/25 text-xs font-bold">
+                            Day {multiDay.day} of {multiDay.total}
+                          </span>
+                        )}
                         <span>{formatTime(order.scheduledStart)}</span>
                         {city && <span>&middot; {city}</span>}
                         {crew && <span>&middot; {crew}</span>}
