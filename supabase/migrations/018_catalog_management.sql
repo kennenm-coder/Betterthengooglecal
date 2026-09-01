@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration 014: Editable catalogs (parts + works-to-complete)
+-- Migration 018: Editable catalogs (parts + works-to-complete)
 --
 -- 1. Extends parts_catalog into a durable, editable part definition with
 --    optional color/size options and a per-variant part-number matrix.
