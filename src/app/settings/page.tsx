@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork, canEditLegacyLink } from "@/lib/roles";
 import BottomNav from "@/components/BottomNav";
 import LoadingScheduleModal from "@/components/LoadingScheduleModal";
+import CatalogModal from "@/components/CatalogModal";
 import {
   getStoredColors,
   saveColors,
@@ -26,6 +27,7 @@ import {
   ChevronRight,
   Truck,
   Link2,
+  Package,
 } from "lucide-react";
 
 const COLOR_FIELDS: { key: keyof WorkOrderColors; label: string }[] = [
@@ -43,6 +45,7 @@ export default function SettingsPage() {
   const [deleteError, setDeleteError] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [showLoadingSchedule, setShowLoadingSchedule] = useState(false);
+  const [showCatalogs, setShowCatalogs] = useState(false);
   const { roles } = useAuth();
   const fieldManager = canDoFieldWork(roles);
   const canManageLegacyLinks = canEditLegacyLink(roles);
@@ -185,6 +188,22 @@ export default function SettingsPage() {
           </section>
         )}
 
+        {/* Catalogs — field managers + admins */}
+        {fieldManager && (
+          <section>
+            <button
+              onClick={() => setShowCatalogs(true)}
+              className="w-full flex items-center justify-between px-3 py-3 rounded-lg border border-border bg-surface text-sm font-medium hover:bg-muted/10 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <Package className="w-4 h-4 text-amber-600" />
+                <span>Manage Catalogs (parts &amp; work items)</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-muted" />
+            </button>
+          </section>
+        )}
+
         {/* Dev Page — admin & payroll-admin */}
         {(roles.includes("admin") || roles.includes("payroll-admin")) && (
           <section>
@@ -294,6 +313,8 @@ export default function SettingsPage() {
       {showLoadingSchedule && (
         <LoadingScheduleModal onClose={() => setShowLoadingSchedule(false)} />
       )}
+
+      {showCatalogs && <CatalogModal onClose={() => setShowCatalogs(false)} />}
 
       <BottomNav />
     </div>

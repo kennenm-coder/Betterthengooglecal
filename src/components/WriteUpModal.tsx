@@ -24,6 +24,8 @@ import {
   TrimOptions,
   fetchPartsCatalog,
   PartsCatalogItem,
+  addCustomPart,
+  addCustomWork,
   lengthsToQty,
   SPEC_FIELDS,
   unitLabelOf,
@@ -1157,6 +1159,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       setError(res.error ? `Couldn't save: ${res.error}` : "Couldn't save the changes — try again.");
       return;
     }
+    autoAddToCatalogs();
     onSaved?.();
     onClose();
   }
@@ -1219,6 +1222,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     }
 
     await clearDraft(order.orderNumber);
+    autoAddToCatalogs();
 
     if (sendEmail) {
       const origin = typeof window !== "undefined" ? window.location.origin : "";
@@ -1306,6 +1310,20 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     if (typeof window !== "undefined") window.location.href = mailto;
     setEmailFailed(null);
     onClose();
+  }
+
+  /** Feed custom parts + new work items back into the catalogs (as unverified). */
+  function autoAddToCatalogs() {
+    const presetSet = new Set(presets.map((p) => p.trim().toLowerCase()));
+    for (const it of issues) {
+      const label = it.label.trim();
+      if (label && !presetSet.has(label.toLowerCase())) addCustomWork(label).catch(() => {});
+      if (it.needsOrdering) {
+        for (const p of it.parts) {
+          if (p.custom && p.name.trim()) addCustomPart(p.name.trim(), p.productType).catch(() => {});
+        }
+      }
+    }
   }
 
   const totalUnits = buildInputs().length;

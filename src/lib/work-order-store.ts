@@ -33,6 +33,15 @@ export const DEFAULT_WRITEUP_PRESETS = [
 export async function getWriteUpPresets(): Promise<string[]> {
   const supabase = getSupabase();
   if (supabase) {
+    // Preferred source: the editable work-to-complete catalog (verified items).
+    const { data: work } = await supabase
+      .from("work_catalog")
+      .select("label")
+      .eq("active", true)
+      .eq("verified", true)
+      .order("label", { ascending: true });
+    if (Array.isArray(work) && work.length) return work.map((r) => String((r as { label: string }).label));
+    // Legacy fallback until migration 014 seeds the work catalog.
     const { data } = await supabase
       .from("action_settings")
       .select("value")
@@ -290,40 +299,267 @@ export async function fetchTrimOptions(): Promise<TrimOptions> {
 
 // ─── Parts catalog (Andersen replacement parts) ─────────────────────────────
 
+/** A color+size combination and its specific part number. */
+export interface PartVariant {
+  color: string;
+  size: string;
+  partNumber: string;
+}
+
 export interface PartsCatalogItem {
   id: string;
   productType: string;
   category: string;
   partName: string;
   position: string | null;
+  colors: string[];
+  sizes: string[];
+  variants: PartVariant[];
+  /** false = auto-added from a write-up, awaiting an admin/field-manager review. */
+  verified: boolean;
 }
 
-let _partsCache: PartsCatalogItem[] | null = null;
+const PART_SELECT = "id, product_type, category, part_name, position, colors, sizes, variants, verified";
 
-export async function fetchPartsCatalog(): Promise<PartsCatalogItem[]> {
-  if (_partsCache) return _partsCache;
-  const supabase = getSupabase();
-  if (!supabase) return [];
-  const { data, error } = await supabase
-    .from("parts_catalog")
-    .select("id, product_type, category, part_name, position")
-    .eq("active", true)
-    .order("product_type", { ascending: true })
-    .order("category", { ascending: true });
-  if (error || !data) return [];
-  const mapped = (data as Record<string, unknown>[]).map((r) => ({
+function rowToPart(r: Record<string, unknown>): PartsCatalogItem {
+  return {
     id: String(r.id),
     productType: String(r.product_type || ""),
     category: String(r.category || ""),
     partName: String(r.part_name || ""),
     position: (r.position as string) || null,
-  }));
-  // Only cache a non-empty result. An empty read (e.g. fetched before the
-  // session/role is ready → RLS returns 0 rows with no error) must NOT be
-  // cached, or the catalog stays blank for the whole page load. Returning it
-  // uncached lets the next open retry once auth is resolved.
+    colors: Array.isArray(r.colors) ? (r.colors as string[]) : [],
+    sizes: Array.isArray(r.sizes) ? (r.sizes as string[]) : [],
+    variants: Array.isArray(r.variants) ? (r.variants as PartVariant[]) : [],
+    verified: r.verified !== false,
+  };
+}
+
+let _partsCache: PartsCatalogItem[] | null = null;
+export function invalidatePartsCache() {
+  _partsCache = null;
+}
+
+/** Verified parts only — feeds the write-up "Parts needed" suggestions. */
+export async function fetchPartsCatalog(): Promise<PartsCatalogItem[]> {
+  if (_partsCache) return _partsCache;
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const rich = await supabase
+    .from("parts_catalog")
+    .select(PART_SELECT)
+    .eq("active", true)
+    .eq("verified", true)
+    .order("product_type", { ascending: true })
+    .order("category", { ascending: true });
+  let rows = rich.data as Record<string, unknown>[] | null;
+  // Fallback for before migration 014 (new columns don't exist yet): the basic
+  // columns still work, so the picker keeps suggesting parts.
+  if (rich.error) {
+    const basic = await supabase
+      .from("parts_catalog")
+      .select("id, product_type, category, part_name, position")
+      .eq("active", true)
+      .order("product_type", { ascending: true })
+      .order("category", { ascending: true });
+    rows = basic.data as Record<string, unknown>[] | null;
+  }
+  if (!rows) return [];
+  const mapped = rows.map(rowToPart);
+  // Don't cache an empty read (RLS may return 0 rows before auth resolves).
   if (mapped.length > 0) _partsCache = mapped;
   return mapped;
+}
+
+/** Every active part (verified + unverified) — for the settings catalog editor. */
+export async function fetchAllParts(): Promise<PartsCatalogItem[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("parts_catalog")
+    .select(PART_SELECT)
+    .eq("active", true)
+    .order("verified", { ascending: true })
+    .order("product_type", { ascending: true })
+    .order("category", { ascending: true });
+  if (error || !data) return [];
+  return (data as Record<string, unknown>[]).map(rowToPart);
+}
+
+export interface PartInput {
+  id?: string;
+  productType: string;
+  category: string;
+  partName: string;
+  position?: string | null;
+  colors: string[];
+  sizes: string[];
+  variants: PartVariant[];
+  verified?: boolean;
+}
+
+export async function upsertPart(input: PartInput): Promise<{ ok: boolean; error: string | null }> {
+  const supabase = getSupabase();
+  if (!supabase) return { ok: false, error: "Not signed in." };
+  const row = {
+    product_type: input.productType.trim(),
+    category: input.category.trim(),
+    part_name: input.partName.trim(),
+    position: input.position?.trim() || null,
+    colors: input.colors,
+    sizes: input.sizes,
+    variants: input.variants,
+    verified: input.verified !== false,
+    active: true,
+  };
+  const q = input.id
+    ? supabase.from("parts_catalog").update(row).eq("id", input.id)
+    : supabase.from("parts_catalog").insert(row);
+  const { error } = await q;
+  if (error) {
+    console.error("upsertPart failed:", error);
+    return { ok: false, error: error.message };
+  }
+  invalidatePartsCache();
+  return { ok: true, error: null };
+}
+
+export async function deletePart(id: string): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase) return false;
+  const { error } = await supabase.from("parts_catalog").delete().eq("id", id);
+  if (!error) invalidatePartsCache();
+  return !error;
+}
+
+/** Auto-add a custom part typed on a write-up, as UNVERIFIED (skips duplicates). */
+export async function addCustomPart(partName: string, productType?: string): Promise<void> {
+  const name = partName.trim();
+  if (!name) return;
+  const supabase = getSupabase();
+  if (!supabase) return;
+  const { data } = await supabase.from("parts_catalog").select("id").ilike("part_name", name).limit(1);
+  if (Array.isArray(data) && data.length) return; // already in the catalog
+  await supabase.from("parts_catalog").insert({
+    product_type: (productType || "").trim() || "Custom",
+    category: "Custom",
+    part_name: name,
+    colors: [],
+    sizes: [],
+    variants: [],
+    verified: false,
+    active: true,
+  });
+  invalidatePartsCache();
+}
+
+// ─── Work-to-complete catalog (feeds "what needs done") ─────────────────────
+
+export interface WorkCatalogItem {
+  id: string;
+  label: string;
+  productType: string | null;
+  /** Minutes to complete per unit (optional, informational for now). */
+  minutesPerUnit: number | null;
+  verified: boolean;
+  active: boolean;
+}
+
+function rowToWork(r: Record<string, unknown>): WorkCatalogItem {
+  return {
+    id: String(r.id),
+    label: String(r.label || ""),
+    productType: (r.product_type as string) || null,
+    minutesPerUnit: r.minutes_per_unit == null ? null : Number(r.minutes_per_unit),
+    verified: r.verified !== false,
+    active: r.active !== false,
+  };
+}
+
+let _workCache: WorkCatalogItem[] | null = null;
+export function invalidateWorkCache() {
+  _workCache = null;
+}
+
+/** Verified work items only — feeds the "what needs done" preset chips. */
+export async function fetchWorkCatalog(): Promise<WorkCatalogItem[]> {
+  if (_workCache) return _workCache;
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("work_catalog")
+    .select("id, label, product_type, minutes_per_unit, verified, active")
+    .eq("active", true)
+    .eq("verified", true)
+    .order("label", { ascending: true });
+  if (error || !data) return [];
+  const mapped = (data as Record<string, unknown>[]).map(rowToWork);
+  if (mapped.length > 0) _workCache = mapped;
+  return mapped;
+}
+
+/** Every active work item (verified + unverified) — for the settings editor. */
+export async function fetchAllWork(): Promise<WorkCatalogItem[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("work_catalog")
+    .select("id, label, product_type, minutes_per_unit, verified, active")
+    .eq("active", true)
+    .order("verified", { ascending: true })
+    .order("label", { ascending: true });
+  if (error || !data) return [];
+  return (data as Record<string, unknown>[]).map(rowToWork);
+}
+
+export interface WorkInput {
+  id?: string;
+  label: string;
+  productType?: string | null;
+  minutesPerUnit?: number | null;
+  verified?: boolean;
+}
+
+export async function upsertWork(input: WorkInput): Promise<{ ok: boolean; error: string | null }> {
+  const supabase = getSupabase();
+  if (!supabase) return { ok: false, error: "Not signed in." };
+  const row = {
+    label: input.label.trim(),
+    product_type: input.productType?.trim() || null,
+    minutes_per_unit: input.minutesPerUnit ?? null,
+    verified: input.verified !== false,
+    active: true,
+  };
+  const q = input.id
+    ? supabase.from("work_catalog").update(row).eq("id", input.id)
+    : supabase.from("work_catalog").insert(row);
+  const { error } = await q;
+  if (error) {
+    console.error("upsertWork failed:", error);
+    return { ok: false, error: error.message };
+  }
+  invalidateWorkCache();
+  return { ok: true, error: null };
+}
+
+export async function deleteWork(id: string): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase) return false;
+  const { error } = await supabase.from("work_catalog").delete().eq("id", id);
+  if (!error) invalidateWorkCache();
+  return !error;
+}
+
+/** Auto-add a custom work item typed on a write-up, as UNVERIFIED (skips dupes). */
+export async function addCustomWork(label: string): Promise<void> {
+  const clean = label.trim();
+  if (!clean) return;
+  const supabase = getSupabase();
+  if (!supabase) return;
+  const { data } = await supabase.from("work_catalog").select("id").ilike("label", clean).limit(1);
+  if (Array.isArray(data) && data.length) return; // already catalogued
+  await supabase.from("work_catalog").insert({ label: clean, verified: false, active: true });
+  invalidateWorkCache();
 }
 
 /**

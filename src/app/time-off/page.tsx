@@ -110,21 +110,39 @@ function TimeOffContent() {
 
   const hasActiveFilter = filterStart || filterEnd;
 
+  // When the typed name doesn't exactly match an existing employee, offer to add them.
+  const trimmedName = draft?.employee_name.trim() ?? "";
+  const hasExactMatch = employees.some(
+    (e) => `${e.firstName} ${e.lastName}`.toLowerCase() === trimmedName.toLowerCase()
+  );
+  const showAddNewOption = trimmedName.length >= 1 && !hasExactMatch;
+
   function handleNameChange(value: string) {
     setDraft((d) => d && { ...d, employee_name: value, department: "" });
     setHighlightIdx(-1);
-    if (value.length >= 1) {
-      const lower = value.toLowerCase();
+    const trimmed = value.trim();
+    if (trimmed.length >= 1) {
+      const lower = trimmed.toLowerCase();
       const matches = employees.filter((e) => {
         const full = `${e.firstName} ${e.lastName}`.toLowerCase();
         return full.includes(lower);
       });
       setSuggestions(matches.slice(0, 8));
-      setShowSuggestions(matches.length > 0);
+      // Keep the panel open even with no matches so the "add new" option can show.
+      setShowSuggestions(true);
     } else {
       setSuggestions([]);
       setShowSuggestions(false);
     }
+  }
+
+  function startAddEmployeeFromName(name: string) {
+    const parts = name.trim().split(/\s+/);
+    const firstName = parts[0] || "";
+    const lastName = parts.slice(1).join(" ");
+    setNewEmp({ firstName, lastName, department: "" });
+    setShowAddEmployee(true);
+    setShowSuggestions(false);
   }
 
   function selectEmployee(emp: Employee) {
@@ -188,6 +206,8 @@ function TimeOffContent() {
       );
       setNewEmp({ ...emptyEmployee });
       setShowAddEmployee(false);
+      // If a time-off draft is open, drop the freshly added employee straight into it.
+      if (draft) selectEmployee(result);
     }
     setSavingEmp(false);
   }
@@ -270,13 +290,6 @@ function TimeOffContent() {
         <h1 className="text-lg font-semibold flex-1">Time Off Requests</h1>
         {!loading && (
           <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setShowAddEmployee(true)}
-              className="p-1.5 rounded-full hover:bg-surface text-muted"
-              title="Add Employee"
-            >
-              <UserPlus className="w-4.5 h-4.5" />
-            </button>
             {filteredRequests.length > 0 && (
               <button
                 onClick={exportCsv}
@@ -286,6 +299,13 @@ function TimeOffContent() {
                 <Download className="w-4.5 h-4.5" />
               </button>
             )}
+            <button
+              onClick={() => setShowAddEmployee(true)}
+              className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-rba-green text-white font-medium active:scale-[0.97] transition-all"
+            >
+              <UserPlus className="w-4 h-4" />
+              Employee
+            </button>
             {!draft && (
               <button
                 onClick={() => setDraft({ ...emptyDraft })}
@@ -439,7 +459,7 @@ function TimeOffContent() {
                       autoFocus
                       className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-rba-green"
                     />
-                    {showSuggestions && suggestions.length > 0 && (
+                    {showSuggestions && (suggestions.length > 0 || showAddNewOption) && (
                       <div className="absolute top-full left-0 right-0 mt-1 bg-background border border-border rounded-lg shadow-lg z-30 max-h-48 overflow-y-auto">
                         {suggestions.map((emp, idx) => (
                           <button
@@ -460,6 +480,20 @@ function TimeOffContent() {
                             </span>
                           </button>
                         ))}
+                        {showAddNewOption && (
+                          <button
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              startAddEmployeeFromName(trimmedName);
+                            }}
+                            className={`w-full text-left px-3 py-2.5 text-sm hover:bg-surface flex items-center gap-2 text-rba-green font-medium ${
+                              suggestions.length > 0 ? "border-t border-border" : ""
+                            }`}
+                          >
+                            <UserPlus className="w-4 h-4 shrink-0" />
+                            <span>Add &ldquo;{trimmedName}&rdquo; as new employee</span>
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

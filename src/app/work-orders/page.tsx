@@ -581,6 +581,8 @@ function ReviewSection({
 }) {
   const allWork = [...section.outstanding, ...section.completed].sort((a, b) => a.seq - b.seq);
   const allReviewed = allWork.length > 0 && allWork.every((i) => i.reviewed);
+  // The job can only be closed once every work item is checked off installed.
+  const allCompleted = allWork.length > 0 && allWork.every((i) => i.completed);
   const [confirmPhotos, setConfirmPhotos] = useState(false);
   const [deletingPhotos, setDeletingPhotos] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
@@ -841,10 +843,12 @@ function ReviewSection({
             Mark all reviewed
           </button>
         )}
-        {section.status === "open" && canReview && (
+        {section.status === "open" && canComplete && (
           <button
             onClick={() => onStatus("closed")}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-green-600/10 text-green-700 border border-green-600/30"
+            disabled={!allCompleted}
+            title={allCompleted ? "Close this job" : "Check off every work item first"}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-green-600/10 text-green-700 border border-green-600/30 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Check className="w-3.5 h-3.5" />
             Mark closed
