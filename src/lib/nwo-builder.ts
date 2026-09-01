@@ -1169,7 +1169,10 @@ export function buildNwoRows(job: any, units: any[], materialCatalog: MaterialCa
     if (!row.vendor) row.vendor = "—";
   }
 
-  return merged;
+  // 7. Drop rows a Section 4 ± adjustment zeroed out — the install list has no use
+  // for a 0-quantity line item. The material stays visible (as a 0 row) in the
+  // material-list app's Section 4 Material Summary; it just doesn't print here.
+  return merged.filter((r) => (Number(r.qty) || 0) > 0);
 }
 
 // ─── Board Summary by Unit (owner-based assignment) ────────────────────────
