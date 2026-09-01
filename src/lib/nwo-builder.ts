@@ -479,6 +479,28 @@ function computeMullLatticeCuts(layout: any[], unitsByLabel: Record<string, { W:
   return cuts.length ? cuts : null;
 }
 
+// A detected mull group (2+ letter-siblings sharing a number, exclude honored)
+// is "reviewed" once a saved layout covers all its members. Until then it is
+// HELD — its trim math is not computed, because casing each unit separately (the
+// fallback) produces wrong lengths for a real mull. Mirrors getUnreviewedMull*
+// in the main app's materials.js. Returns the set of held unit labels.
+function getUnreviewedMullLabels(units: any[], mullLayouts: any): Set<string> {
+  const groups: Record<string, string[]> = {};
+  (units || []).forEach((u: any) => {
+    if (u.excludeFromMull) return;
+    const m = String(u.label || "").trim().match(/^(\d+)\s*([a-zA-Z]+)$/);
+    if (m) { if (!groups[m[1]]) groups[m[1]] = []; groups[m[1]].push(String(u.label || "")); }
+  });
+  const held = new Set<string>();
+  Object.entries(groups).forEach(([gk, members]) => {
+    if (members.length < 2) return;
+    const layout = (mullLayouts || {})[gk];
+    const reviewed = !!layout && layout.length === members.length;
+    if (!reviewed) members.forEach(l => held.add(l));
+  });
+  return held;
+}
+
 // ─── BOARD PACKING (buildGlobalMaterialBoards) ──────────────────────────────
 
 function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materialCatalog: MaterialCatalog | null, boardWaste: number, mullLayouts: any, options?: { doors3pc?: boolean; summaryOverrides?: any }) {
@@ -505,6 +527,8 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
   (units || []).forEach((u: any) => {
     if (u.excludeFromMull) excludedMullLabels.add(String(u.label || u.id));
   });
+  // Units in a detected-but-unreviewed mull group are HELD (see helper above).
+  const heldMullLabels = getUnreviewedMullLabels(units, mullLayouts);
   const _mullCount: Record<string, number> = {};
   (units || []).forEach((u: any) => {
     if (u.excludeFromMull) return;
@@ -623,6 +647,7 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       const W = (u.widthWhole || 0) + (u.widthFrac || 0);
       if (!H || !W) continue;
       const unitLabel = String(u.label || u.id);
+      if (heldMullLabels.has(unitLabel)) continue; // held: mull map not reviewed
       const excl = mat.excludeUnits || [];
       const incl = mat.includeUnits || [];
       if (excl.length && excl.includes(unitLabel)) continue;
@@ -885,6 +910,9 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
 function buildNWOMaterialList(globalMaterials: any[], units: any[], materialCatalog: MaterialCatalog | null, boardWaste: number, mullLayouts: any, options?: { doors3pc?: boolean; summaryOverrides?: any }) {
   if (!globalMaterials || !globalMaterials.length) return [];
   const { boards } = buildGlobalMaterialBoards(globalMaterials, units, materialCatalog, boardWaste, mullLayouts, options);
+  // Held (unreviewed) mull units are skipped in the exact-length loops below,
+  // matching the board hold inside buildGlobalMaterialBoards.
+  const heldMullLabels = getUnreviewedMullLabels(units, mullLayouts);
 
   const byMat = new Map<string, any>();
   for (const b of boards) {
@@ -905,6 +933,7 @@ function buildNWOMaterialList(globalMaterials: any[], units: any[], materialCata
       for (const u of units) {
         if (u.isMisc) continue;
         const lbl = String(u.label || u.id);
+        if (heldMullLabels.has(lbl)) continue; // held: mull map not reviewed
         const excl = mat.excludeUnits || [];
         const incl = mat.includeUnits || [];
         if (excl.length && excl.includes(lbl)) continue;
@@ -926,6 +955,7 @@ function buildNWOMaterialList(globalMaterials: any[], units: any[], materialCata
       for (const u of units) {
         if (u.isMisc) continue;
         const lbl = String(u.label || u.id);
+        if (heldMullLabels.has(lbl)) continue; // held: mull map not reviewed
         const excl = mat.excludeUnits || [];
         const incl = mat.includeUnits || [];
         if (excl.length && excl.includes(lbl)) continue;
@@ -943,6 +973,7 @@ function buildNWOMaterialList(globalMaterials: any[], units: any[], materialCata
       for (const u of units) {
         if (u.isMisc) continue;
         const lbl = String(u.label || u.id);
+        if (heldMullLabels.has(lbl)) continue; // held: mull map not reviewed
         const excl = mat.excludeUnits || [];
         const incl = mat.includeUnits || [];
         if (excl.length && excl.includes(lbl)) continue;
