@@ -1,7 +1,7 @@
 "use client";
 
 import { WorkOrder, TimeOffRequest } from "@/lib/types";
-import { getOrdersForWeek, typeColor, typeTileText, formatTime } from "@/lib/calendar-utils";
+import { getOrdersForWeek, typeColor, typeTileText, formatTime, multiDayProgress } from "@/lib/calendar-utils";
 import { lastFirst, crewName, sortByStartTime, extractCity } from "@/lib/format-utils";
 import { format, startOfWeek, addDays, isToday } from "date-fns";
 import { useMemo } from "react";
@@ -98,6 +98,7 @@ export default function WeekView({
                 {dayOrders.map((order) => {
                   const crew = crewName(order);
                   const city = extractCity(order.address);
+                  const multiDay = multiDayProgress(order, day);
                   return (
                     <button
                       key={order.id}
@@ -110,6 +111,11 @@ export default function WeekView({
                         {lastFirst(order.customerName)} - {order.orderNumber}
                       </div>
                       <div className="text-xs opacity-90 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                        {multiDay && (
+                          <span className="px-1.5 py-0.5 rounded bg-black/25 text-[10px] font-bold">
+                            Day {multiDay.day} of {multiDay.total}
+                          </span>
+                        )}
                         <span>{formatTime(order.scheduledStart)}</span>
                         {city && <span>&middot; {city}</span>}
                         {crew && <span>&middot; {crew}</span>}
