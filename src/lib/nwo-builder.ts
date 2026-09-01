@@ -279,23 +279,33 @@ function detectTrimCaulkColors(globalMaterials: any[], materialCatalog: Material
     || CAULK_CUE_CATEGORIES.has(catItem.category)
     || CAULK_CUE_EXTRA_IDS.has(catItem.id);
 
-  const classify = (rawColor: string) => {
+  // A custom/unrecognized color is a paint only when the trim is Poplar (painted
+  // trim is always Poplar in this system; stained trim keeps its wood species).
+  // Custom paints take color-matched "Custom" caulk; custom stains take "Clear".
+  const isPaintSpecies = (species?: string) => /poplar/i.test(species || "");
+
+  const classify = (rawColor: string, species?: string) => {
     const nc = normColor(rawColor);
     if (!nc) return;
-    if (nc === "Custom") { hasCustom = true; return; }
+    if (nc === "Custom") {
+      if (isPaintSpecies(species)) hasCustom = true; else hasStain = true;
+      return;
+    }
     if (stainSet.has(nc) || nc === "RAW") { hasStain = true; return; }
     if (paintSet.has(nc)) { paintColors.add(nc); return; }
-    hasCustom = true; // typed color that's on neither the paint nor stain list
+    // Typed color on neither list (an approved custom color): paint → Custom
+    // caulk, stain → Clear caulk, decided by the trim species.
+    if (isPaintSpecies(species)) hasCustom = true; else hasStain = true;
   };
 
   for (const m of (globalMaterials || []).filter(m => !m.autoFormula && m.color)) {
     if (!cuesCaulk(catById.get(m.profileId))) continue;
-    classify(m.color);
+    classify(m.color, m.species);
   }
   for (const m of (additionalMaterials || [])) {
     if (!m.color) continue;
     if (!cuesCaulk(catByProfile.get(m.profile))) continue;
-    classify(m.color);
+    classify(m.color, m.species);
   }
   for (const u of (units || [])) {
     if (u.isMisc) continue;
@@ -488,13 +498,22 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
   const SL_INCH_TO_LABEL: Record<number, string> = { 96: "8'", 120: "10'", 144: "12'", 168: "14'", 192: "16'", 216: "18'", 240: "20'" };
   const SL_LABEL_TO_INCH: Record<string, number> = Object.fromEntries(Object.entries(SL_INCH_TO_LABEL).map(([i, l]) => [l, Number(i)]));
   const inchToLabel = (inch: number) => SL_INCH_TO_LABEL[inch] || (Math.round(Number(inch) / 12) + "'");
+  // Units flagged `excludeFromMull` are calculated as standalone units even
+  // though their label carries a letter suffix. Track their labels so they are
+  // dropped from mull override-key mapping AND from the effective mull layouts.
+  const excludedMullLabels = new Set<string>();
+  (units || []).forEach((u: any) => {
+    if (u.excludeFromMull) excludedMullLabels.add(String(u.label || u.id));
+  });
   const _mullCount: Record<string, number> = {};
   (units || []).forEach((u: any) => {
+    if (u.excludeFromMull) return;
     const mm = String(u.label || "").trim().match(/^(\d+)\s*([a-zA-Z]+)$/);
     if (mm) _mullCount[mm[1]] = (_mullCount[mm[1]] || 0) + 1;
   });
   const labelToMullBase: Record<string, string> = {};
   (units || []).forEach((u: any) => {
+    if (u.excludeFromMull) return;
     const raw = String(u.label || "").trim();
     const mm = raw.match(/^(\d+)\s*([a-zA-Z]+)$/);
     if (mm && _mullCount[mm[1]] >= 2) labelToMullBase[raw] = mm[1];
@@ -579,14 +598,23 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
     const STOCK = getStock(catItem.calcMethod);
 
     const cuts: any[] = [];
-    const mullHandled = new Set<string>();
-    const mullGroupsByLabel: Record<string, string> = {};
+    // `excludeFromMull` units are pruned from each layout; if fewer than 2
+    // members remain, the group is dissolved and its units fall through to the
+    // normal (standalone) path below — keeping their own materials, calculated
+    // separately.
+    const effectiveMullLayouts: Record<string, any[]> = {};
     if (mullLayouts) {
       Object.entries(mullLayouts).forEach(([gk, layout]: [string, any]) => {
         if (!layout || !layout.length) return;
-        layout.forEach((t: any) => { mullGroupsByLabel[t.label] = gk; mullHandled.add(t.label); });
+        const eff = layout.filter((t: any) => !excludedMullLabels.has(String(t.label)));
+        if (eff.length >= 2) effectiveMullLayouts[gk] = eff;
       });
     }
+    const mullHandled = new Set<string>();
+    const mullGroupsByLabel: Record<string, string> = {};
+    Object.entries(effectiveMullLayouts).forEach(([gk, layout]) => {
+      layout.forEach((t: any) => { mullGroupsByLabel[t.label] = gk; mullHandled.add(t.label); });
+    });
     const mullGroupsProcessed = new Set<string>();
 
     for (const u of units) {
@@ -610,7 +638,7 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       if (mullGk && (isCasing || isEJ || isLattice)) {
         if (mullGroupsProcessed.has(mullGk)) continue;
         mullGroupsProcessed.add(mullGk);
-        const layout = mullLayouts[mullGk];
+        const layout = effectiveMullLayouts[mullGk];
         const unitsByLabel: Record<string, { W: number; H: number }> = {};
         // If any unit in the group is a door, skip bottom cut for the whole group
         let groupHasDoor = false;
