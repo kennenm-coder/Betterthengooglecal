@@ -89,6 +89,9 @@ export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: "scheduling", label: "Scheduling" },
   { value: "scheduling_manager", label: "Scheduling Manager" },
   { value: "admin", label: "Admin" },
+  // Change-order-app role (no calendar capabilities on its own; calendar access
+  // is plain member-level).
+  { value: "sales", label: "Sales (Change Orders)" },
   // Cut-list-app roles (no calendar capabilities on their own).
   { value: "configuring", label: "Configuring (Cut List)" },
   { value: "configuring-editing", label: "Configuring + Editing (Cut List)" },
@@ -105,6 +108,7 @@ export const ROLE_STYLES: Record<string, string> = {
   scheduling: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
   scheduling_manager: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
   member: "bg-surface border border-border text-muted",
+  sales: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
   configuring: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
   "configuring-editing": "bg-purple-500/15 text-purple-600 dark:text-purple-400",
 };
