@@ -392,7 +392,7 @@ function computeMullCuts(layout: any[], unitsByLabel: Record<string, { W: number
     cuts.push({ length: totalH + buf, rawLength: totalH, source: groupLabel, cutName: `Right side (${sorted.map((u: any) => u.label).join("+")})` });
   } else {
     // COMPLEX SHAPE (L, T, etc.) — find exposed edges, then merge collinear adjacent ones
-    const near = (a: number, b: number) => Math.abs(a - b) < 1;
+    const near = (a: number, b: number) => Math.abs(a - b) < 2; // modal snaps on rounded dims, edges can be ~1" off
     const leftEdges: any[] = [], rightEdges: any[] = [], topEdges: any[] = [], bottomEdges: any[] = [];
     positioned.forEach((p: any) => {
       const hasLeft = positioned.some((q: any) => q.label !== p.label &&
@@ -456,22 +456,37 @@ function computeMullLatticeCuts(layout: any[], unitsByLabel: Record<string, { W:
     return { ...t, W: u.W, H: u.H };
   }).filter(Boolean) as any[];
   if (positioned.length < 2) return null;
-  const near = (a: number, b: number) => Math.abs(a - b) < 1;
+  // Grid positions come from the layout modal, which snaps units using ROUNDED
+  // widths/heights, and units can be re-measured after a layout is saved. So a
+  // neighbor's edge can sit 1"+ from where the raw dims say it should. Simple
+  // rows/stacks are therefore joined by ORDER (every consecutive unit shares a
+  // mull), matching computeMullCuts; only complex shapes fall back to an edge
+  // test, with a 2" tolerance instead of 1".
+  const near = (a: number, b: number) => Math.abs(a - b) < 2;
   const groupLabel = layout.map((t: any) => t.label).sort().join("+");
   const cuts: any[] = [];
-  for (let i = 0; i < positioned.length; i++) {
-    for (let j = i + 1; j < positioned.length; j++) {
-      const a = positioned[i], b = positioned[j];
-      if (near(a.gridX + a.W, b.gridX) || near(b.gridX + b.W, a.gridX)) {
-        const overlapV = Math.min(a.gridY + a.H, b.gridY + b.H) - Math.max(a.gridY, b.gridY);
-        if (overlapV > 0) {
-          cuts.push({ length: overlapV + buf, rawLength: overlapV, source: groupLabel, cutName: `Mull lattice (${a.label}|${b.label})` });
+  const pushJoint = (a: any, b: any, len: number) => {
+    if (len > 0) cuts.push({ length: len + buf, rawLength: len, source: groupLabel, cutName: `Mull lattice (${a.label}|${b.label})` });
+  };
+  const uniqueY = [...new Set(positioned.map((p: any) => p.gridY))];
+  const uniqueX = [...new Set(positioned.map((p: any) => p.gridX))];
+  if (uniqueY.length === 1) {
+    // HORIZONTAL ROW — one vertical lattice per joint, as tall as the shorter neighbor
+    const sorted = [...positioned].sort((a: any, b: any) => a.gridX - b.gridX);
+    for (let i = 0; i < sorted.length - 1; i++) pushJoint(sorted[i], sorted[i + 1], Math.min(sorted[i].H, sorted[i + 1].H));
+  } else if (uniqueX.length === 1) {
+    // VERTICAL STACK — one horizontal lattice per joint, as wide as the narrower neighbor
+    const sorted = [...positioned].sort((a: any, b: any) => a.gridY - b.gridY);
+    for (let i = 0; i < sorted.length - 1; i++) pushJoint(sorted[i], sorted[i + 1], Math.min(sorted[i].W, sorted[i + 1].W));
+  } else {
+    for (let i = 0; i < positioned.length; i++) {
+      for (let j = i + 1; j < positioned.length; j++) {
+        const a = positioned[i], b = positioned[j];
+        if (near(a.gridX + a.W, b.gridX) || near(b.gridX + b.W, a.gridX)) {
+          pushJoint(a, b, Math.min(a.gridY + a.H, b.gridY + b.H) - Math.max(a.gridY, b.gridY));
         }
-      }
-      if (near(a.gridY + a.H, b.gridY) || near(b.gridY + b.H, a.gridY)) {
-        const overlapH = Math.min(a.gridX + a.W, b.gridX + b.W) - Math.max(a.gridX, b.gridX);
-        if (overlapH > 0) {
-          cuts.push({ length: overlapH + buf, rawLength: overlapH, source: groupLabel, cutName: `Mull lattice (${a.label}|${b.label})` });
+        if (near(a.gridY + a.H, b.gridY) || near(b.gridY + b.H, a.gridY)) {
+          pushJoint(a, b, Math.min(a.gridX + a.W, b.gridX + b.W) - Math.max(a.gridX, b.gridX));
         }
       }
     }
