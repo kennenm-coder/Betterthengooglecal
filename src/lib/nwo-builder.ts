@@ -141,6 +141,23 @@ function isUnitComplete(u: any): boolean {
   return !!(u.heightWhole && u.widthWhole);
 }
 
+// Format a possibly-fractional per-unit quantity for display, using unicode
+// fraction glyphs for the common splits (0.5 → "½", 1.5 → "1½", 0.333 → "⅓").
+// Mirrors fmtQty in the material-list-maker app so a board shared across a mull
+// group reads the same in both apps' install instructions.
+function fmtQty(n: any): string {
+  const num = Number(n);
+  if (!isFinite(num)) return "";
+  const whole = Math.floor(num + 1e-6);
+  const frac = num - whole;
+  if (frac < 0.02) return String(whole);
+  const glyphs: [number, string][] = [[1/2,"½"],[1/3,"⅓"],[2/3,"⅔"],[1/4,"¼"],[3/4,"¾"]];
+  for (const [v, g] of glyphs) {
+    if (Math.abs(frac - v) < 0.02) return (whole > 0 ? whole : "") + g;
+  }
+  return String(Math.round(num * 100) / 100);
+}
+
 function buildAutoSummaryFromUnits(units: any[]) {
   const grouped = new Map<string, any>();
   for (const u of units) {
@@ -1284,7 +1301,7 @@ export function buildBoardSummaryByUnit(
     for (const lbl of (m.includeUnits || [])) {
       const raw = qtys[lbl];
       const hasQ = raw !== undefined && raw !== null && String(raw).trim() !== "" && !isNaN(Number(raw));
-      pushExtra(String(lbl), hasQ ? `${Number(raw)} ${canon}` : canon);
+      pushExtra(String(lbl), hasQ ? `${fmtQty(raw)} ${canon}` : canon);
     }
   }
   for (const u of (units || [])) {
