@@ -687,12 +687,17 @@ function buildGlobalMaterialBoards(globalMaterials: any[], units: any[], materia
       const isEJ = catItem.category === "EJ";
       const isCasing = catItem.category === "Casing";
       const isLattice = catItem.profile === '1/4x1-3/4 Lattice';
+      // Parting stop runs the outside perimeter of a mull assembly, same as
+      // casing — techs treat A+B as one installed opening and trim only the
+      // exterior box (shared interior mull edges are skipped). Route it through
+      // computeMullCuts instead of casing each component's full perimeter.
+      const isPartingStop = /parting\s*stop/i.test(catItem.profile || "");
       const deepEJ = (u.materialOverrides?.[mat.id]?.deepEJ) ?? mat.deepEJ;
       const topBottomOnly = (u.materialOverrides?.[mat.id]?.topBottomOnly) ?? mat.topBottomOnly;
       const isDoor = isUnitDoor(u);
 
       const mullGk = mullGroupsByLabel[unitLabel];
-      if (mullGk && (isCasing || isEJ || isLattice)) {
+      if (mullGk && (isCasing || isEJ || isLattice || isPartingStop)) {
         if (mullGroupsProcessed.has(mullGk)) continue;
         mullGroupsProcessed.add(mullGk);
         const layout = effectiveMullLayouts[mullGk];

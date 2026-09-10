@@ -55,12 +55,13 @@ export function canReviewWriteUps(roles: RoleInput): boolean {
 }
 
 /**
- * Who can even SEE the Write-Ups tab. Limited to admin + field-manager for now
- * so the feature stays out of regular members' way during a soft rollout.
- * (Widen this later — e.g. add "payroll-admin" — to open it up.)
+ * Who can even SEE the Write-Ups tab. Admin + field-manager get full access;
+ * scheduling + scheduling-manager get VIEW-ONLY (read, copy, download/print) —
+ * they can't create, edit, review, delete, or toggle completion (gated by
+ * canDoFieldWork / canReviewWriteUps, which exclude them).
  */
 export function canSeeWriteUps(roles: RoleInput): boolean {
-  return hasAny(roles, ["admin", "field-manager"]);
+  return hasAny(roles, ["admin", "field-manager", "scheduling", "scheduling_manager"]);
 }
 
 /** Who can open/manage the Time Off screen. */
