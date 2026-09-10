@@ -661,6 +661,8 @@ interface FieldWorkOrderRow {
   photos: WriteUpPhoto[] | null;
   new_product: WriteUpNewProduct | null;
   notes: string | null;
+  responsibility: string | null;
+  defect_code: string | null;
   status: string;
   photo_count: number | null;
   photos_uploaded: boolean | null;
@@ -688,6 +690,8 @@ function rowToWriteUp(row: FieldWorkOrderRow): FieldWorkOrder {
     photos: Array.isArray(row.photos) ? row.photos : [],
     newProduct: row.new_product || null,
     notes: row.notes || "",
+    responsibility: row.responsibility || "",
+    defectCode: row.defect_code || "",
     status: (row.status as WriteUpStatus) || "open",
     photoCount: row.photo_count || 0,
     photosUploaded: !!row.photos_uploaded,
@@ -715,6 +719,8 @@ export interface NewWriteUp {
   photos: WriteUpPhoto[];
   newProduct?: WriteUpNewProduct | null;
   notes: string;
+  responsibility?: string;
+  defectCode?: string;
   createdBy?: string;
   createdByName?: string;
   /** Shared id tying this row to the other units in the same submission. */
@@ -751,6 +757,8 @@ export async function createWriteUp(input: NewWriteUp): Promise<CreateWriteUpRes
       photo_count: input.photos.length,
       new_product: input.newProduct || null,
       notes: input.notes || "",
+      responsibility: input.responsibility || null,
+      defect_code: input.defectCode || null,
       status: input.status || "in_review",
       created_by: input.createdBy || null,
       created_by_name: input.createdByName || null,
@@ -786,6 +794,9 @@ export interface WriteUpEntryInput {
   materialItems: WriteUpMaterialItem[];
   newProduct?: WriteUpNewProduct | null;
   notes: string;
+  /** Responsibility + defect code (whole-job row only; blank on unit rows). */
+  responsibility?: string;
+  defectCode?: string;
   /** Photos on this unit — new blobs (uploaded on save) and kept existing ones. */
   photos: EntryPhoto[];
 }
@@ -875,6 +886,8 @@ export async function submitWriteUpBatch(
       photos,
       newProduct: e.newProduct || null,
       notes: e.notes,
+      responsibility: e.responsibility,
+      defectCode: e.defectCode,
       createdBy: ctx.createdBy,
       createdByName: ctx.createdByName,
       status: ctx.status || "in_review",
@@ -936,6 +949,8 @@ export async function saveWriteUpBatchEdit(
       photo_count: photos.length,
       new_product: e.newProduct || null,
       notes: e.notes || "",
+      responsibility: e.responsibility || null,
+      defect_code: e.defectCode || null,
       status,
       updated_by: ctx.updatedBy || null,
       updated_by_name: ctx.updatedByName || null,

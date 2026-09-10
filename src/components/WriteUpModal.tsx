@@ -47,6 +47,11 @@ import {
   getDraftPhoto,
   deleteDraftPhoto,
 } from "@/lib/writeup-draft";
+import {
+  RESPONSIBILITY_OPTIONS,
+  DEFECT_CODES,
+  type WriteUpResponsibility,
+} from "@/lib/writeup-responsibility";
 import { getWriteUpEmails } from "@/lib/action-settings";
 import { dedupeRecipients } from "@/lib/email-recipients";
 import {
@@ -303,6 +308,10 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const [background, setBackground] = useState("");
   const [financingNotes, setFinancingNotes] = useState("");
   const [paintStainNotes, setPaintStainNotes] = useState("");
+  // Responsibility matrix: who the issue is on, + the defect-code source when
+  // it's on retail. Whole-job level; shown on the Write-Ups tile, not the PDF.
+  const [responsibility, setResponsibility] = useState<WriteUpResponsibility>("");
+  const [defectCode, setDefectCode] = useState("");
   const [wuUnits, setWuUnits] = useState<WuUnit[]>([]);
   const [issues, setIssues] = useState<WuIssue[]>([]);
   const [showSummary, setShowSummary] = useState(false);
@@ -456,6 +465,10 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     setBackground(bg);
     setFinancingNotes(fin);
     setPaintStainNotes(paint);
+    // Responsibility + defect code live on the whole-job row.
+    const respRow = editBatch.find((r) => r.responsibility);
+    setResponsibility((respRow?.responsibility as WriteUpResponsibility) || "");
+    setDefectCode(respRow?.defectCode || "");
 
     // Units = rows with a unit label (the whole-job row, null, isn't a unit).
     const unitRows = editBatch.filter((r) => r.unitLabel);
@@ -826,7 +839,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     issues.some((it) => it.materials.length > 0 || it.photos.length > 0) ||
     background.trim().length > 0 ||
     financingNotes.trim().length > 0 ||
-    paintStainNotes.trim().length > 0;
+    paintStainNotes.trim().length > 0 ||
+    responsibility.length > 0;
   const editorHasContent = isEditing ? editHasContent : createHasContent;
 
   /** Fan out to one row per affected unit, plus a whole-job row that carries
@@ -842,13 +856,15 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       materials: WriteUpMaterialItem[];
       photos: LocalPhoto[];
       notes: string;
+      responsibility: string;
+      defectCode: string;
     }
     const byKey = new Map<string, Agg>();
     const WHOLE = "__whole__";
     const whole = (): Agg => {
       let a = byKey.get(WHOLE);
       if (!a) {
-        a = { unitLabel: null, isNewProduct: false, unitType: "", tasks: [], specs: [], materials: [], photos: [], notes: "" };
+        a = { unitLabel: null, isNewProduct: false, unitType: "", tasks: [], specs: [], materials: [], photos: [], notes: "", responsibility: "", defectCode: "" };
         byKey.set(WHOLE, a);
       }
       return a;
@@ -865,6 +881,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         materials: [],
         photos: [],
         notes: "",
+        responsibility: "",
+        defectCode: "",
       });
     }
     // Issues → tasks (+ their own materials/photos) onto their affected units,
@@ -914,8 +932,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       paintStainNotes.trim() ? `Paint & stain notes: ${paintStainNotes.trim()}` : "",
     ].filter(Boolean);
     if (noteParts.length) whole().notes = noteParts.join("\n\n");
+    // Responsibility + defect code ride on the whole-job row. Defect code is
+    // only meaningful for retail; drop it otherwise.
+    if (responsibility) {
+      whole().responsibility = responsibility;
+      whole().defectCode = responsibility === "retail" ? defectCode : "";
+    }
     return [...byKey.values()]
-      .filter((a) => a.tasks.length || a.specs.length || a.materials.length || a.photos.length || a.notes.trim())
+      .filter((a) => a.tasks.length || a.specs.length || a.materials.length || a.photos.length || a.notes.trim() || a.responsibility)
       .map((a) => ({
         unitLabel: a.unitLabel,
         lineItems: a.tasks,
@@ -923,6 +947,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         materialItems: a.materials,
         newProduct: a.isNewProduct ? { ...emptyProduct, type: a.unitType } : null,
         notes: a.notes,
+        responsibility: a.responsibility,
+        defectCode: a.defectCode,
         photos: a.photos.map((p) => ({ blob: p.path ? undefined : p.blob, path: p.path, name: p.name })),
       }));
   }
@@ -941,6 +967,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     setBackground(pendingDraft.background || "");
     setFinancingNotes(pendingDraft.financingNotes || "");
     setPaintStainNotes(pendingDraft.paintStainNotes || "");
+    setResponsibility((pendingDraft.responsibility as WriteUpResponsibility) || "");
+    setDefectCode(pendingDraft.defectCode || "");
     setWuUnits(
       (pendingDraft.units || []).map((u) => ({
         key: u.key,
@@ -975,6 +1003,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     setBackground("");
     setFinancingNotes("");
     setPaintStainNotes("");
+    setResponsibility("");
+    setDefectCode("");
     setWuUnits([]);
     setIssues([makeIssue()]);
     setDraftReady(true);
@@ -987,6 +1017,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       background,
       financingNotes,
       paintStainNotes,
+      responsibility,
+      defectCode,
       units: wuUnits.map((u) => ({
         key: u.key,
         isNewProduct: u.isNewProduct,
@@ -1052,7 +1084,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftReady, issues, wuUnits, background, financingNotes, paintStainNotes]);
+  }, [draftReady, issues, wuUnits, background, financingNotes, paintStainNotes, responsibility, defectCode]);
 
   // ── Close guard ──
   const dirty = editorHasContent;
@@ -1591,6 +1623,46 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             <>
               {/* 1. What's wrong + notes */}
               <section className="space-y-3">
+                <div>
+                  <label className="text-xs text-muted block mb-1">Responsibility</label>
+                  <div className="flex flex-wrap gap-2">
+                    {RESPONSIBILITY_OPTIONS.map((o) => (
+                      <button
+                        type="button"
+                        key={o.value}
+                        onClick={() => {
+                          const next = responsibility === o.value ? "" : o.value;
+                          setResponsibility(next);
+                          if (next !== "retail") setDefectCode("");
+                        }}
+                        className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
+                          responsibility === o.value
+                            ? "bg-amber-500 text-white border-amber-500"
+                            : "border-border text-muted hover:border-amber-400/60"
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {responsibility === "retail" && (
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Defect code (source)</label>
+                    <select
+                      value={defectCode}
+                      onChange={(e) => setDefectCode(e.target.value)}
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                    >
+                      <option value="">Select a source…</option>
+                      {DEFECT_CODES.map((d) => (
+                        <option key={d.code} value={d.code}>
+                          {d.code} — {d.source}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <SectionLabel step={1}>What&apos;s wrong?</SectionLabel>
                   <textarea

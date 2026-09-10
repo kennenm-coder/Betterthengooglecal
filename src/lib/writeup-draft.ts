@@ -62,6 +62,8 @@ export interface WriteUpDraft {
   background: string;
   financingNotes: string;
   paintStainNotes: string;
+  responsibility?: string;
+  defectCode?: string;
   units: DraftUnit[];
   issues: DraftIssue[];
 }

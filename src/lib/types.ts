@@ -229,6 +229,11 @@ export interface FieldWorkOrder {
   /** Present when the field added a product that wasn't in the material job. */
   newProduct: WriteUpNewProduct | null;
   notes: string;
+  /** Responsibility matrix (Write-Ups tile only, not the PDF). Lowercase:
+   *  "customer" | "manufacturing" | "retail" — or "" when unset. */
+  responsibility: string;
+  /** Defect-code source (e.g. "A9"), set only when responsibility is retail. */
+  defectCode: string;
   status: WriteUpStatus;
   /** Phase 2 — photo support. */
   photoCount: number;

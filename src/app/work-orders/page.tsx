@@ -22,6 +22,7 @@ import {
 import { getWriteUpEmails } from "@/lib/action-settings";
 import { dedupeRecipients } from "@/lib/email-recipients";
 import { groupWriteUpSections, padSeq, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
+import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibility";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
 import {
@@ -63,7 +64,8 @@ export default function WorkOrdersPage() {
   const [filter, setFilter] = useState<Filter>("in_review");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // Soft rollout: only admin + field-manager can see write-ups for now.
+  // View: admin + field-manager (full) and scheduling + scheduling-manager
+  // (view-only). Edit/create/review capabilities below stay field-work-gated.
   const canView = canSeeWriteUps(roles);
   const canReview = canReviewWriteUps(roles);
   const canCreate = canDoFieldWork(roles);
@@ -462,7 +464,7 @@ export default function WorkOrdersPage() {
                           section={sec}
                           total={sections.length}
                           canReview={canReview}
-                          canComplete={canView}
+                          canComplete={canEdit}
                           canEdit={canEdit}
                           onEdit={() => setEditing(sec.rows)}
                           onReviewItems={(itemsToReview, reviewed) => setItemsReviewed(sec, itemsToReview, reviewed)}
@@ -605,6 +607,10 @@ function ReviewSection({
     const bg = rest.join("\n\n").trim();
     if (bg) background = background ? `${background}\n\n${bg}` : bg;
   }
+  // Responsibility matrix (whole-job row) — Write-Ups tile only, not the PDF.
+  const respRow = section.rows.find((r) => r.responsibility);
+  const responsibility = respRow?.responsibility || "";
+  const defectCode = responsibility === "retail" ? respRow?.defectCode || "" : "";
   const unitRows = section.rows.filter((r) => r.unitLabel);
   const canDeletePhotos =
     canEdit && (section.status === "closed" || section.status === "archived") && section.photos.length > 0;
@@ -636,6 +642,21 @@ function ReviewSection({
           )}
         </div>
       </div>
+
+      {/* Responsibility matrix */}
+      {responsibility && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-muted">Responsibility</span>
+          <span className="inline-flex items-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 px-2.5 py-0.5 text-xs font-semibold">
+            {responsibilityLabel(responsibility)}
+          </span>
+          {defectCode && (
+            <span className="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-xs font-medium text-muted">
+              {defectCodeLabel(defectCode)}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* 1. What's wrong + financing/paint + any unit notes */}
       {(background || financing || paint || unitNotes.length > 0) && (
