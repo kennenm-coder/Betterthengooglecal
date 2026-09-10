@@ -10,6 +10,7 @@ import { upsertLegacyLink } from "@/lib/store";
 import { WorkOrder } from "@/lib/types";
 import BottomNav from "@/components/BottomNav";
 import { typeColor, typeColorText, openSalesforce } from "@/lib/calendar-utils";
+import { crewName } from "@/lib/format-utils";
 import { subDays, parseISO, format } from "date-fns";
 import { ChevronLeft, Link2, Check, Loader2, CalendarClock, ExternalLink } from "lucide-react";
 
@@ -32,6 +33,8 @@ export default function LegacyLinksPage() {
   const allowed = canEditLegacyLink(roles);
 
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("All");
+  // Crew (assigned to) filter — "" means everyone.
+  const [crewFilter, setCrewFilter] = useState<string>("");
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
   const [errorId, setErrorId] = useState<string | null>(null);
@@ -63,25 +66,51 @@ export default function LegacyLinksPage() {
     );
   }, [orders]);
 
-  // Per-type totals for the filter chips.
+  // Crews present in the list (alphabetical) with per-crew totals, so the
+  // schedulers can each work one crew at a time without overlapping.
+  const crews = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const o of baseNeeds) {
+      const name = crewName(o) || "Unassigned";
+      m.set(name, (m.get(name) || 0) + 1);
+    }
+    return Array.from(m.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, count]) => ({ name, count }));
+  }, [baseNeeds]);
+
+  // If the selected crew empties out (all its links saved), fall back to everyone.
+  useEffect(() => {
+    if (crewFilter && !crews.some((c) => c.name === crewFilter)) setCrewFilter("");
+  }, [crews, crewFilter]);
+
+  const crewNeeds = useMemo(
+    () =>
+      crewFilter
+        ? baseNeeds.filter((o) => (crewName(o) || "Unassigned") === crewFilter)
+        : baseNeeds,
+    [baseNeeds, crewFilter]
+  );
+
+  // Per-type totals for the filter chips (within the selected crew).
   const counts = useMemo(() => {
     const c: Record<TypeFilter, number> = {
-      All: baseNeeds.length,
+      All: crewNeeds.length,
       Install: 0,
       Service: 0,
       "Job Site Visit": 0,
     };
-    for (const o of baseNeeds) {
+    for (const o of crewNeeds) {
       if (o.workOrderType === "Install") c.Install += 1;
       else if (o.workOrderType === "Service") c.Service += 1;
       else if (o.workOrderType === "Job Site Visit") c["Job Site Visit"] += 1;
     }
     return c;
-  }, [baseNeeds]);
+  }, [crewNeeds]);
 
   const needsLink = useMemo(
-    () => (typeFilter === "All" ? baseNeeds : baseNeeds.filter((o) => o.workOrderType === typeFilter)),
-    [baseNeeds, typeFilter]
+    () => (typeFilter === "All" ? crewNeeds : crewNeeds.filter((o) => o.workOrderType === typeFilter)),
+    [crewNeeds, typeFilter]
   );
 
   async function save(order: WorkOrder) {
@@ -138,6 +167,23 @@ export default function LegacyLinksPage() {
           {needsLink.length > 0 ? ` · ${needsLink.length} remaining` : ""}
         </p>
       </header>
+
+      {/* Assigned-to filter — work one crew at a time */}
+      <div className="px-4 py-2 border-b border-border">
+        <select
+          value={crewFilter}
+          onChange={(e) => setCrewFilter(e.target.value)}
+          className="w-full px-2.5 py-2 rounded-lg border border-border bg-background text-sm"
+          aria-label="Filter by assigned crew"
+        >
+          <option value="">All crews · {baseNeeds.length}</option>
+          {crews.map((c) => (
+            <option key={c.name} value={c.name}>
+              {c.name} · {c.count}
+            </option>
+          ))}
+        </select>
+      </div>
 
       {/* Work order type filter */}
       <div className="px-4 py-2 border-b border-border flex flex-wrap gap-2">
@@ -201,6 +247,9 @@ export default function LegacyLinksPage() {
                   {order.workOrderType}
                 </span>
                 <span className="text-xs text-muted">#{order.orderNumber}</span>
+                {crewName(order) && (
+                  <span className="text-xs text-muted truncate">· {crewName(order)}</span>
+                )}
               </div>
               <div className="flex gap-2">
                 <input
