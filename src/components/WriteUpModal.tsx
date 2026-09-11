@@ -95,7 +95,8 @@ interface Props {
 interface LocalPhoto {
   id: string;
   name: string;
-  blob: Blob;
+  /** Missing only while an already-uploaded photo's preview is still downloading. */
+  blob?: Blob;
   /** Set for photos already uploaded (editing an existing write-up). */
   path?: string;
 }
@@ -513,7 +514,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
 
     // Best guess: attach each row's materials + photos to an issue that affects
     // that unit (materials/photos are stored per-unit, not per-issue). Photos
-    // are held by path here; their blobs download in phase 2.
+    // attach NOW as path-only placeholders so a save before phase 2 finishes
+    // keeps them (previously they were dropped and the row lost its photos);
+    // their preview blobs download in phase 2.
     const matByIssue = new Map<string, WriteUpMaterialItem[]>();
     const photoPathsByIssue = new Map<string, WriteUpPhoto[]>();
     const targetFor = (unitKey: string | null): IAgg | undefined => {
@@ -540,36 +543,34 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       orderingNotes: g.orderingNotes,
       unitKeys: [...g.unitKeys],
       materials: matByIssue.get(g.key) || [],
-      photos: [],
+      photos: (photoPathsByIssue.get(g.key) || []).map((p) => ({ id: crypto.randomUUID(), name: p.name, path: p.path })),
     }));
     setIssues(hydIssues.length ? hydIssues : [makeIssue()]);
     setStatus(editBatch[0].status);
     setDraftReady(true);
 
-    // ── Phase 2 (background): download photo blobs, then attach them ──
+    // ── Phase 2 (background): download preview blobs into the placeholders ──
     (async () => {
-      const photoByPath = new Map<string, LocalPhoto>();
+      const blobByPath = new Map<string, Blob>();
       for (const r of editBatch) {
         for (const p of r.photos) {
-          if (photoByPath.has(p.path)) continue;
+          if (blobByPath.has(p.path)) continue;
           const url = await getSignedPhotoUrl(p.path);
           if (!url) continue;
           try {
             const res = await fetch(url);
-            if (res.ok) photoByPath.set(p.path, { id: crypto.randomUUID(), name: p.name, blob: await res.blob(), path: p.path });
+            if (res.ok) blobByPath.set(p.path, await res.blob());
           } catch {
-            /* skip a photo that won't load */
+            /* skip a photo that won't load — it stays as a placeholder and is still kept on save */
           }
         }
       }
-      if (cancelled || photoByPath.size === 0) return;
+      if (cancelled || blobByPath.size === 0) return;
       setIssues((prev) =>
-        prev.map((i) => {
-          const paths = photoPathsByIssue.get(i.id);
-          if (!paths || paths.length === 0) return i;
-          const photos = paths.map((pp) => photoByPath.get(pp.path)).filter((x): x is LocalPhoto => !!x);
-          return photos.length ? { ...i, photos } : i;
-        })
+        prev.map((i) => ({
+          ...i,
+          photos: i.photos.map((p) => (p.path && !p.blob && blobByPath.has(p.path) ? { ...p, blob: blobByPath.get(p.path) } : p)),
+        }))
       );
     })();
 
@@ -745,7 +746,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   async function addPhotosTo(target: PhotoTarget, files: File[], fromCamera = false) {
     if (!target) return;
     const added: LocalPhoto[] = files.map((f) => ({ id: crypto.randomUUID(), name: f.name || "photo", blob: f }));
-    for (const a of added) putDraftPhoto(a.id, a.blob);
+    for (const a of added) if (a.blob) putDraftPhoto(a.id, a.blob);
     if (target.kind === "edit") {
       setEditPhotos((prev) => [...prev, ...added]);
     } else {
@@ -771,13 +772,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const allPhotos = isEditing ? editPhotos : issues.flatMap((it) => it.photos);
   const unsavedCameraPhotos = allPhotos.filter((p) => cameraPhotoIds.has(p.id));
 
-  function photoToFile(p: LocalPhoto): File {
+  function photoToFile(p: LocalPhoto): File | null {
+    if (!p.blob) return null;
     return p.blob instanceof File
       ? p.blob
       : new File([p.blob], p.name || "photo.jpg", { type: p.blob.type || "image/jpeg" });
   }
   async function saveAllToDevice() {
-    const files = unsavedCameraPhotos.map(photoToFile);
+    const files = unsavedCameraPhotos.map(photoToFile).filter((f): f is File => !!f);
     if (files.length === 0) return;
     const nav = navigator as Navigator & {
       canShare?: (data?: unknown) => boolean;
@@ -1108,7 +1110,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     const keepPhotos: WriteUpPhoto[] = editPhotos
       .filter((p) => p.path)
       .map((p) => ({ path: p.path!, name: p.name }));
-    const newPhotoFiles = editPhotos.filter((p) => !p.path).map((p) => p.blob);
+    const newPhotoFiles = editPhotos.filter((p) => !p.path && p.blob).map((p) => p.blob!);
     const res = await updateWriteUp(editWriteUp.id, {
       orderNumber: order.orderNumber || editWriteUp.orderNumber,
       unitLabel: editUnitLabel.trim() || null,
@@ -2834,16 +2836,24 @@ function SectionLabel({ children, step }: { children: React.ReactNode; step?: nu
   );
 }
 
-function PhotoThumb({ blob, onRemove }: { blob: Blob; onRemove: () => void }) {
+function PhotoThumb({ blob, onRemove }: { blob?: Blob; onRemove: () => void }) {
   const [url, setUrl] = useState("");
   useEffect(() => {
+    if (!blob) {
+      setUrl("");
+      return;
+    }
     const u = URL.createObjectURL(blob);
     setUrl(u);
     return () => URL.revokeObjectURL(u);
   }, [blob]);
   return (
     <div className="relative aspect-square rounded-xl overflow-hidden border border-border bg-surface">
-      {url && <img src={url} alt="" className="w-full h-full object-cover" />}
+      {url ? (
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-[10px] text-muted animate-pulse">Loading…</div>
+      )}
       <button onClick={onRemove} className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-white">
         <X className="w-4 h-4" />
       </button>
