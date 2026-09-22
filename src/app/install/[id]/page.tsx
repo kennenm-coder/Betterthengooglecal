@@ -290,6 +290,9 @@ export default function InstallInstructionsPage() {
               {job.job.submittedBy && (
                 <div className="text-xs text-muted">Configured by: {job.job.submittedBy}</div>
               )}
+              {job.job.modifiedBy && (
+                <div className="text-xs text-muted">Last modified by: {job.job.modifiedBy}</div>
+              )}
               {job.job.trimOrderedBy && (
                 <div className="text-xs text-muted">Trim ordered by: {job.job.trimOrderedBy}</div>
               )}

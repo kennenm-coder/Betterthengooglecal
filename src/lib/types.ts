@@ -50,7 +50,8 @@ export interface MaterialJobData {
     poNumber: string;
     techMeasurer: string;
     date: string;
-    submittedBy?: string;    // who configured the deal (clicked Submit)
+    submittedBy?: string;    // who configured the deal (first Submit, locked in)
+    modifiedBy?: string;     // last person to re-open/edit after it was configured
     trimOrderedBy?: string;  // who submitted the trim order
     installNotes: string;
     leadPaint?: boolean;
