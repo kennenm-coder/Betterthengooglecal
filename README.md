@@ -129,10 +129,11 @@ The install page (`src/app/install/[id]/page.tsx`) renders the document the **ma
 writes to the shared `install_docs` table (`supabase/migrations/023_install_docs.sql`) on every
 save of a submitted job. It is read through `src/lib/install-doc.ts` (`fetchInstallDoc`). This app
 does not compute install instructions; `src/lib/nwo-builder.ts` is kept only as a fallback for jobs
-with no document yet and must not be extended or kept in sync with the material-list app. Need
-something new on the install page? Add it to the document in `nwo-material-list-maker`
-(`cut-list-pro/lib/installDoc.js`, bump `INSTALL_DOC_VERSION`, press **Rebuild Install Docs**
-there) and to the types in `install-doc.ts` here. `/dev-installdoc-check` (local dev only)
+with no document yet and must not be extended or kept in sync with the material-list app. A
+document changes only when its own job is saved there — it is the locked record of what was
+configured, and there is deliberately no mass rebuild. Need something new on the install page?
+Add it to the document in `nwo-material-list-maker` (`cut-list-pro/lib/installDoc.js`, bump
+`INSTALL_DOC_VERSION`) and to the types in `install-doc.ts` here; older jobs keep the old shape. `/dev-installdoc-check` (local dev only)
 diffs the fallback builder against the stored documents.
 
 Material jobs are read through `calendar_jobs()` (migration 022), which strips the multi-MB
