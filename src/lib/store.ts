@@ -755,11 +755,68 @@ function toMaterialJob(row: { id: string; data: any }): any | null {
   }
 }
 
+// Rows per request when pulling jobs. Measured on the live DB: the full jobs
+// feed is ~6 MB serialized once originalImport is stripped (see migration 022),
+// ~20 KB per row. 100-row pages keep each request far under the authenticated
+// role's 8 s statement_timeout, which the old single 45 MB select blew through.
+const JOBS_PAGE_SIZE = 100;
+// Fallback page size for the raw table (originalImport included, ~150 KB/row).
+const JOBS_RAW_PAGE_SIZE = 25;
+
+type JobRow = { id: string; data: any };
+
+/**
+ * Fetch job rows, optionally only those written since `since`. Prefers the
+ * calendar_jobs() function (migration 022), which drops the 39 MB
+ * originalImport key the calendar never reads; if that function isn't there
+ * yet, pages through the raw table in small chunks instead. Pages are
+ * sequential on purpose — one request at a time is kind to a small instance.
+ * Returns null if any page fails, so callers can fall back.
+ */
+async function fetchJobRows(
+  supabase: SupabaseBrowserClient,
+  since: string | null
+): Promise<JobRow[] | null> {
+  const viaRpc = await pageThrough(
+    (from, to) =>
+      supabase
+        .rpc("calendar_jobs", since ? { since } : {})
+        .select("id, data")
+        .order("id", { ascending: true })
+        .range(from, to),
+    JOBS_PAGE_SIZE
+  );
+  if (viaRpc) return viaRpc;
+
+  // Pre-022 fallback: raw table, small pages.
+  return pageThrough((from, to) => {
+    let q = supabase.from("jobs").select("id, data").order("id", { ascending: true });
+    if (since) q = q.gte("updated_at", since);
+    return q.range(from, to);
+  }, JOBS_RAW_PAGE_SIZE);
+}
+
+async function pageThrough(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>,
+  size: number
+): Promise<JobRow[] | null> {
+  const rows: JobRow[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await page(offset, offset + size - 1);
+    if (error || !Array.isArray(data)) return null;
+    rows.push(...(data as JobRow[]));
+    if (data.length < size) break;
+    offset += size;
+  }
+  return rows;
+}
+
 async function downloadMaterialJobs(supabase: SupabaseBrowserClient): Promise<Map<string, any>> {
   const jobByPO = new Map<string, any>();
-  const { data, error } = await supabase.from("jobs").select("id, data");
-  if (error || !data) return jobByPO;
-  for (const row of data as { id: string; data: any }[]) {
+  const rows = await fetchJobRows(supabase, null);
+  if (!rows) return jobByPO;
+  for (const row of rows) {
     const mj = toMaterialJob(row);
     if (mj) jobByPO.set(mj.job.poNumber, mj);
   }
@@ -779,14 +836,11 @@ async function fetchJobsDelta(
   since: string,
   expectedCount: number
 ): Promise<Map<string, any> | null> {
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("id, data")
-    .gte("updated_at", since);
-  if (error || !data) return null;
+  const data = await fetchJobRows(supabase, since);
+  if (!data) return null;
 
   const jobs = new Map<string, any>(base);
-  for (const row of data as { id: string; data: any }[]) {
+  for (const row of data) {
     // Drop whatever we held for this job id first: its PO may have changed, or
     // it may have been un-submitted (in which case toMaterialJob returns null
     // and it simply stays gone).
