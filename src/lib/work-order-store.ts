@@ -1,5 +1,6 @@
 import { getSupabase } from "./supabase";
 import { fetchCatalogAndOffsets, fetchTrimCatalogOptions } from "./nwo-builder";
+import { fetchMaterialJobs } from "./store";
 import {
   FieldWorkOrder,
   WriteUpLineItem,
@@ -158,11 +159,15 @@ export async function fetchUnitOptions(): Promise<UnitOptions> {
   const details = new Set<string>();
   const frames = new Set<string>();
 
-  const supabase = getSupabase();
-  if (supabase) {
-    const { data } = await supabase.from("jobs").select("data");
-    for (const row of data || []) {
-      const units = (row as any).data?.units;
+  // Derive from the shared material-jobs map (loaded once by the calendar and
+  // cached across boots) instead of a second full pull of every jobs.data blob.
+  // Trade-off: the map holds SUBMITTED jobs only, so a value that exists on an
+  // unsubmitted draft alone won't be suggested — custom text is still allowed
+  // in every one of these fields, so nothing is blocked.
+  try {
+    const jobs = await fetchMaterialJobs();
+    for (const job of jobs.values()) {
+      const units = (job as any)?.units;
       if (!Array.isArray(units)) continue;
       for (const u of units) {
         if (u.isMisc) continue;
@@ -179,6 +184,8 @@ export async function fetchUnitOptions(): Promise<UnitOptions> {
         if (fr) frames.add(String(fr).trim());
       }
     }
+  } catch {
+    // Seeds only — the type-ahead still works with the built-in lists.
   }
 
   const sort = (s: Set<string>) => [...s].filter(Boolean).sort((a, b) => a.localeCompare(b));

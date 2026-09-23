@@ -11,7 +11,7 @@ import {
   loadFutureExtended,
   loadMonth,
   mergeOrders,
-  fetchMaterialJobs,
+  fetchMaterialJobsWithSignature,
   fetchJobsSignature,
   enrichWithMaterials,
   fetchLegacyLinks,
@@ -20,6 +20,7 @@ import {
 } from "@/lib/store";
 import { useAuth } from "@/hooks/useAuth";
 import { canEditLegacyLink } from "@/lib/roles";
+import { getSupabase } from "@/lib/supabase";
 
 const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"]);
 
@@ -99,11 +100,81 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     const stale = () => gen !== genRef.current || ac.signal.aborted;
 
     try {
+      // Settle the auth session ONCE before fanning out. On the first open of
+      // the day the access token is expired; if several requests race the
+      // refresh, one can go out with the stale token and fail. getSession()
+      // performs the refresh under supabase-js's lock and is free when the
+      // token is still valid.
+      try {
+        await getSupabase()?.auth.getSession();
+      } catch {
+        /* proceed — each request will refresh on its own if needed */
+      }
+      if (stale()) return;
+
+      // Kick off the material-jobs and legacy-link pulls immediately so they run
+      // alongside Phase 1 instead of queuing behind it. Neither blocks anything:
+      // each one re-enriches whatever orders are loaded at the moment it lands,
+      // and later phases pick them up from the refs/module cache as they go.
+      // (Jobs is the heaviest query in the app; legacy links is a tiny table
+      // that used to be stuck waiting on it.)
+      // revalidate: even with a warm in-memory map, re-check the tiny signature
+      // so the refresh button picks up jobs changed during the session.
+      const jobsPromise = fetchMaterialJobsWithSignature({ revalidate: true }).catch(() => null);
+      const legacyPromise = fetchLegacyLinks().catch(() => null);
+
+      // Re-apply material jobs + legacy links across every order loaded so far
+      // (whatever is on screen: cache, initial window, unscheduled/future pages).
+      // enrichWithMaterials reads the legacy-link module cache at call time, so
+      // running it after either promise resolves picks up both sources. Attached
+      // BEFORE Phase 1 so enrichment still lands if Phase 1 fails or is empty
+      // and we fall back to the cached window.
+      const applyEnrichment = () => {
+        if (stale()) return;
+        setOrders((prev) => {
+          const enriched = enrichWithMaterials(prev, jobByPORef.current);
+          saveBoundedCache(enriched);
+          return enriched;
+        });
+      };
+      // The Map is also flattened into materialJobs state so Search and
+      // UnscheduledJobs can consume it from context instead of re-fetching.
+      jobsPromise.then((res) => {
+        if (!res || stale()) return;
+        jobByPORef.current = res.jobs;
+        // Baseline fingerprint so we can detect later linked-job changes.
+        jobsSigRef.current = res.sig;
+        setMaterialJobs(Array.from(res.jobs.values()) as MaterialJobData[]);
+        setLinkedJobsStale(false);
+        applyEnrichment();
+      });
+      legacyPromise.then((links) => {
+        if (!links || stale()) return;
+        applyEnrichment();
+      });
+
       // Phase 1: Load ±90-day window
       const initial = await loadInitialWindow(ac.signal);
       if (stale()) return;
 
-      setOrders(initial);
+      // A ±90-day window with ZERO rows is never real for this business. If it
+      // happens (transient auth/RLS blip that didn't surface as an error), keep
+      // whatever is on screen and in the cache rather than blanking the
+      // calendar; the next refresh will fill it in.
+      if (initial.length === 0) {
+        const fallback = loadBoundedCache();
+        if (fallback.length > 0) {
+          setOrders(enrichWithMaterials(fallback, jobByPORef.current));
+          setLastUpdated(getLastUpdated());
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Enrich with whatever is already in hand (both caches are warm on a
+      // manual refresh; on a cold boot the handlers above fill in shortly).
+      const initialEnriched = enrichWithMaterials(initial, jobByPORef.current);
+      setOrders(initialEnriched);
       setLoading(false);
       setLastUpdated(new Date().toISOString());
 
@@ -117,31 +188,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       loadedMonthsRef.current = initialMonths;
 
       // Save bounded cache immediately
-      saveBoundedCache(initial);
-
-      // Fetch material jobs (don't block initial render).
-      // The Map is also flattened into materialJobs state so Search and
-      // UnscheduledJobs can consume it from context instead of re-fetching.
-      try {
-        // Fetch material jobs + legacy install links together. fetchLegacyLinks
-        // populates the module cache that enrichWithMaterials reads by default.
-        const [jobByPO] = await Promise.all([fetchMaterialJobs(), fetchLegacyLinks()]);
-        if (stale()) return;
-        jobByPORef.current = jobByPO;
-        setMaterialJobs(Array.from(jobByPO.values()) as MaterialJobData[]);
-        const enriched = enrichWithMaterials(initial, jobByPO);
-        setOrders(enriched);
-        saveBoundedCache(enriched);
-        // Baseline fingerprint so we can detect later linked-job changes.
-        setLinkedJobsStale(false);
-        fetchJobsSignature()
-          .then((sig) => {
-            jobsSigRef.current = sig;
-          })
-          .catch(() => {});
-      } catch {
-        // Material enrichment failed — calendar still works without it
-      }
+      saveBoundedCache(initialEnriched);
 
       // Background phases
       setLoadingBackground(true);
@@ -240,15 +287,17 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resyncLinkedJobs = useCallback(async () => {
-    const jobByPO = await fetchMaterialJobs();
-    jobByPORef.current = jobByPO;
-    setMaterialJobs(Array.from(jobByPO.values()) as MaterialJobData[]);
+    // force: bypass the in-memory + persisted caches — the whole point of this
+    // action is that we know the jobs changed.
+    const { jobs, sig } = await fetchMaterialJobsWithSignature({ force: true });
+    jobByPORef.current = jobs;
+    jobsSigRef.current = sig;
+    setMaterialJobs(Array.from(jobs.values()) as MaterialJobData[]);
     setOrders((prev) => {
-      const enriched = enrichWithMaterials(prev, jobByPO);
+      const enriched = enrichWithMaterials(prev, jobs);
       saveBoundedCache(enriched);
       return enriched;
     });
-    jobsSigRef.current = await fetchJobsSignature();
     setLinkedJobsStale(false);
   }, []);
 

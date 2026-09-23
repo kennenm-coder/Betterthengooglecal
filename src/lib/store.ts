@@ -216,7 +216,11 @@ async function paginatedQuery(
   while (true) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     const { data, error } = await baseBuilder().range(offset, offset + PAGE_SIZE - 1);
-    if (error || !data) break;
+    // A failed page (expired token mid-refresh, RLS hiccup, network) must NOT
+    // come back as "no rows" — callers would treat that as an empty calendar
+    // and overwrite the local cache with it. Throw so they fall back instead.
+    if (error) throw new Error(error.message || "work_orders query failed");
+    if (!data) break;
     rows.push(...data);
     if (data.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
@@ -489,56 +493,417 @@ export async function searchWorkOrders(query: string, limit = 25): Promise<WorkO
 
 // --- Material jobs ---
 
-// Session cache for the heavy jobs pull (every job's full data blob). Shared so
-// reopening the write-up picker doesn't re-download it each time.
+// The jobs pull is the heaviest query in the app: every submitted job's full
+// data blob, and it only grows. Three layers keep it off the daily boot path:
+//   1. an in-memory Map for this page load (calendar + write-up picker share it)
+//   2. an IndexedDB copy tagged with the jobs_signature it was downloaded under
+//   3. one in-flight promise, so concurrent callers never double-download
+// On boot we fetch the tiny signature first. If it matches the persisted copy
+// we use that as-is. If it differs we pull only the rows changed since the last
+// sync (server-stamped jobs.updated_at, migration 021) and merge them in; the
+// full download is the fallback when there's no usable persisted copy or the
+// DB still returns the pre-021 signature format. Any add/edit/delete bumps the
+// signature, so a changed job is always picked up on the next load (and by the
+// focus-check in DataProvider).
 let _materialJobsCache: Map<string, any> | null = null;
+let _materialJobsSig = "";
+let _materialJobsInflight: Promise<MaterialJobsResult> | null = null;
+
+export interface MaterialJobsResult {
+  jobs: Map<string, any>;
+  /** jobs_signature the map corresponds to ("" if unavailable). */
+  sig: string;
+}
+
+const KV_DB_NAME = "rba-field-cal";
+const KV_STORE = "kv";
+const JOBS_KV_KEY = "material-jobs-v1";
+
+interface PersistedJobs {
+  sig: string;
+  entries: [string, any][];
+}
+
+// Signature format from migration 021: "v2:<submitted count>:<max updated_at ISO>".
+// Anything else (blank, or the pre-021 "<count>:<savedAt>") is treated as
+// "no incremental sync possible" and forces the full download path.
+const SIG_V2_PREFIX = "v2:";
+
+function parseSignature(sig: string): { count: number; since: string } | null {
+  if (!sig || !sig.startsWith(SIG_V2_PREFIX)) return null;
+  const rest = sig.slice(SIG_V2_PREFIX.length);
+  const i = rest.indexOf(":");
+  if (i < 0) return null;
+  const count = Number(rest.slice(0, i));
+  const since = rest.slice(i + 1);
+  if (!Number.isFinite(count) || !since) return null;
+  return { count, since };
+}
+
+// Minimal IndexedDB key/value helpers. The jobs map can run to megabytes, past
+// what localStorage reliably holds, so it lives here. Every failure path
+// resolves (never rejects) so a broken/blocked IndexedDB just means "no cache".
+function openKvDb(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === "undefined") return resolve(null);
+    try {
+      const req = indexedDB.open(KV_DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(KV_STORE)) {
+          req.result.createObjectStore(KV_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function kvGet<T>(key: string): Promise<T | null> {
+  const db = await openKvDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(KV_STORE, "readonly");
+      const req = tx.objectStore(KV_STORE).get(key);
+      req.onsuccess = () => {
+        db.close();
+        resolve((req.result as T) ?? null);
+      };
+      req.onerror = () => {
+        db.close();
+        resolve(null);
+      };
+    } catch {
+      db.close();
+      resolve(null);
+    }
+  });
+}
+
+async function kvSet(key: string, value: unknown): Promise<void> {
+  const db = await openKvDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(KV_STORE, "readwrite");
+      tx.objectStore(KV_STORE).put(value, key);
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        db.close();
+        resolve();
+      };
+      tx.onabort = () => {
+        db.close();
+        resolve();
+      };
+    } catch {
+      db.close();
+      resolve();
+    }
+  });
+}
+
+async function kvDelete(key: string): Promise<void> {
+  const db = await openKvDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(KV_STORE, "readwrite");
+      tx.objectStore(KV_STORE).delete(key);
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        db.close();
+        resolve();
+      };
+      tx.onabort = () => {
+        db.close();
+        resolve();
+      };
+    } catch {
+      db.close();
+      resolve();
+    }
+  });
+}
 
 export function invalidateMaterialJobsCache() {
   _materialJobsCache = null;
+  _materialJobsSig = "";
+  kvDelete(JOBS_KV_KEY).catch(() => {});
+}
+
+/**
+ * Material jobs keyed by PO number, plus the signature they were loaded under.
+ * Serves the in-memory cache when warm; otherwise checks the persisted copy
+ * against the live signature and downloads only if it changed. `force` skips
+ * both caches (used by the explicit "resync linked jobs" action).
+ */
+export async function fetchMaterialJobsWithSignature(
+  opts?: { force?: boolean; revalidate?: boolean }
+): Promise<MaterialJobsResult> {
+  const force = opts?.force === true;
+  // revalidate: re-check the (tiny) signature even when the in-memory map is
+  // warm, so a manual refresh picks up jobs changed during the session.
+  const revalidate = opts?.revalidate === true;
+  if (!force && !revalidate && _materialJobsCache) {
+    return { jobs: _materialJobsCache, sig: _materialJobsSig };
+  }
+  if (_materialJobsInflight) {
+    if (!force) return _materialJobsInflight;
+    // A forced refetch must not reuse a cached-path fetch already in flight.
+    await _materialJobsInflight.catch(() => {});
+  }
+
+  _materialJobsInflight = (async (): Promise<MaterialJobsResult> => {
+    const supabase = getSupabase();
+    if (!supabase) return { jobs: new Map(), sig: "" };
+
+    // Signature (a few bytes) and the persisted copy load in parallel. The
+    // signature is taken BEFORE the download, so if a job changes mid-flight
+    // the stored tag is older than the data and the next boot re-downloads —
+    // the safe direction.
+    const [sig, persisted] = await Promise.all([
+      fetchJobsSignature().catch(() => ""),
+      force ? Promise.resolve(null) : kvGet<PersistedJobs>(JOBS_KV_KEY).catch(() => null),
+    ]);
+
+    // Warm in-memory map still matches the live signature: nothing changed.
+    if (!force && sig && _materialJobsCache && sig === _materialJobsSig) {
+      return { jobs: _materialJobsCache, sig };
+    }
+
+    const persistedEntries =
+      persisted && Array.isArray(persisted.entries) && persisted.entries.length > 0
+        ? persisted.entries
+        : null;
+
+    if (sig && persistedEntries && persisted?.sig === sig) {
+      const jobs = new Map<string, any>(persistedEntries);
+      _materialJobsCache = jobs;
+      _materialJobsSig = sig;
+      return { jobs, sig };
+    }
+
+    // Changed since last sync: try to pull just the delta. Needs both the live
+    // and the stored signature in v2 form (server-stamped updated_at); if the
+    // delta can't be trusted for any reason, fall through to the full download.
+    const live = parseSignature(sig);
+    const prior = persistedEntries ? parseSignature(persisted?.sig ?? "") : null;
+    if (live && prior && persistedEntries) {
+      const merged = await fetchJobsDelta(
+        supabase,
+        new Map<string, any>(persistedEntries),
+        prior.since,
+        live.count
+      );
+      if (merged && merged.size > 0) {
+        _materialJobsCache = merged;
+        _materialJobsSig = sig;
+        kvSet(JOBS_KV_KEY, { sig, entries: Array.from(merged.entries()) }).catch(() => {});
+        return { jobs: merged, sig };
+      }
+    }
+
+    const jobs = await downloadMaterialJobs(supabase);
+    if (jobs.size > 0) {
+      _materialJobsCache = jobs;
+      _materialJobsSig = sig;
+      // Never persist an empty map or an untagged one — an RLS/transient empty
+      // result must not shadow the real data on the next boot.
+      if (sig) kvSet(JOBS_KV_KEY, { sig, entries: Array.from(jobs.entries()) }).catch(() => {});
+    }
+    return { jobs, sig };
+  })().finally(() => {
+    _materialJobsInflight = null;
+  });
+
+  return _materialJobsInflight;
 }
 
 export async function fetchMaterialJobs(): Promise<Map<string, any>> {
-  if (_materialJobsCache) return _materialJobsCache;
+  return (await fetchMaterialJobsWithSignature()).jobs;
+}
+
+type SupabaseBrowserClient = NonNullable<ReturnType<typeof getSupabase>>;
+
+/** Shape a raw jobs row into the calendar's material-job record, or null if it
+ *  isn't a submitted job with a PO number (drafts, malformed rows). */
+function toMaterialJob(row: { id: string; data: any }): any | null {
+  try {
+    const d = row.data;
+    if (!(d && d.submitted && d.job?.poNumber)) return null;
+    const job = d.job;
+    return {
+      id: row.id,
+      job: {
+        ...job,
+        customerName: job.customerName || "",
+        address: job.address || "",
+        poNumber: job.poNumber || "",
+        techMeasurer: job.techMeasurer || "",
+        installNotes: job.installNotes || "",
+        date: job.date || "",
+        prefinishNotes: job.prefinishNotes || "",
+        extraMaterials: job.extraMaterials || [],
+        additionalMaterials: job.additionalMaterials || [],
+        universalFinish: job.universalFinish || "",
+      },
+      units: d.units || [],
+      globalTrim: d.globalTrim || {},
+      submitted: d.submitted,
+      status: d.status || "awaiting_trim",
+      savedAt: d.savedAt || "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Rows per request when pulling jobs. Measured on the live DB: the full jobs
+// feed is ~6 MB serialized once originalImport is stripped (see migration 022),
+// ~20 KB per row. 100-row pages keep each request far under the authenticated
+// role's 8 s statement_timeout, which the old single 45 MB select blew through.
+const JOBS_PAGE_SIZE = 100;
+// Fallback page size for the raw table (originalImport included, ~150 KB/row).
+const JOBS_RAW_PAGE_SIZE = 25;
+
+type JobRow = { id: string; data: any };
+
+/**
+ * Fetch job rows, optionally only those written since `since`. Prefers the
+ * calendar_jobs() function (migration 022), which drops the 39 MB
+ * originalImport key the calendar never reads; if that function isn't there
+ * yet, pages through the raw table in small chunks instead. Pages are
+ * sequential on purpose — one request at a time is kind to a small instance.
+ * Returns null if any page fails, so callers can fall back.
+ */
+async function fetchJobRows(
+  supabase: SupabaseBrowserClient,
+  since: string | null
+): Promise<JobRow[] | null> {
+  // Keyset pages: each call does exactly one page of work on the DB side
+  // (id > after_id, limit N) rather than re-running the function and
+  // discarding an offset's worth of rows.
+  const viaRpc = await keysetThrough(
+    (afterId) =>
+      supabase
+        .rpc("calendar_jobs", {
+          since: since ?? null,
+          after_id: afterId,
+          page_limit: JOBS_PAGE_SIZE,
+        })
+        .select("id, data"),
+    JOBS_PAGE_SIZE
+  );
+  if (viaRpc) return viaRpc;
+
+  // Pre-022 fallback: raw table, small offset pages.
+  return pageThrough((from, to) => {
+    let q = supabase.from("jobs").select("id, data").order("id", { ascending: true });
+    if (since) q = q.gte("updated_at", since);
+    return q.range(from, to);
+  }, JOBS_RAW_PAGE_SIZE);
+}
+
+async function keysetThrough(
+  page: (afterId: string | null) => PromiseLike<{ data: unknown; error: unknown }>,
+  size: number
+): Promise<JobRow[] | null> {
+  const rows: JobRow[] = [];
+  let afterId: string | null = null;
+  while (true) {
+    const { data, error } = await page(afterId);
+    if (error || !Array.isArray(data)) return null;
+    const batch = data as JobRow[];
+    rows.push(...batch);
+    if (batch.length < size) break;
+    afterId = batch[batch.length - 1].id;
+    if (!afterId) break; // defensive: never loop on a row without an id
+  }
+  return rows;
+}
+
+async function pageThrough(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>,
+  size: number
+): Promise<JobRow[] | null> {
+  const rows: JobRow[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await page(offset, offset + size - 1);
+    if (error || !Array.isArray(data)) return null;
+    rows.push(...(data as JobRow[]));
+    if (data.length < size) break;
+    offset += size;
+  }
+  return rows;
+}
+
+async function downloadMaterialJobs(supabase: SupabaseBrowserClient): Promise<Map<string, any>> {
   const jobByPO = new Map<string, any>();
-  const supabase = getSupabase();
-  if (!supabase) return jobByPO;
+  const rows = await fetchJobRows(supabase, null);
+  if (!rows) return jobByPO;
+  for (const row of rows) {
+    const mj = toMaterialJob(row);
+    if (mj) jobByPO.set(mj.job.poNumber, mj);
+  }
+  return jobByPO;
+}
 
-  const { data, error } = await supabase.from("jobs").select("id, data");
-  if (error || !data) return jobByPO;
+/**
+ * Incremental sync: pull only the jobs written since `since` (server-stamped
+ * updated_at) and merge them onto `base`. Returns null if anything goes wrong
+ * so the caller falls back to a full download. `>=` rather than `>` so a write
+ * landing in the same microsecond as the stored max is never skipped — the
+ * merge is idempotent, so re-applying a row is harmless.
+ */
+async function fetchJobsDelta(
+  supabase: SupabaseBrowserClient,
+  base: Map<string, any>,
+  since: string,
+  expectedCount: number
+): Promise<Map<string, any> | null> {
+  const data = await fetchJobRows(supabase, since);
+  if (!data) return null;
 
+  const jobs = new Map<string, any>(base);
   for (const row of data) {
-    try {
-      const d = row.data;
-      if (d && d.submitted && d.job?.poNumber) {
-        const job = d.job;
-        jobByPO.set(job.poNumber, {
-          id: row.id,
-          job: {
-            ...job,
-            customerName: job.customerName || "",
-            address: job.address || "",
-            poNumber: job.poNumber || "",
-            techMeasurer: job.techMeasurer || "",
-            installNotes: job.installNotes || "",
-            date: job.date || "",
-            prefinishNotes: job.prefinishNotes || "",
-            extraMaterials: job.extraMaterials || [],
-            additionalMaterials: job.additionalMaterials || [],
-            universalFinish: job.universalFinish || "",
-          },
-          units: d.units || [],
-          globalTrim: d.globalTrim || {},
-          submitted: d.submitted,
-          status: d.status || "awaiting_trim",
-          savedAt: d.savedAt || "",
-        });
-      }
-    } catch {
-      // Skip malformed rows
+    // Drop whatever we held for this job id first: its PO may have changed, or
+    // it may have been un-submitted (in which case toMaterialJob returns null
+    // and it simply stays gone).
+    for (const [po, v] of jobs) {
+      if (v?.id === row.id) jobs.delete(po);
+    }
+    const mj = toMaterialJob(row);
+    if (mj) jobs.set(mj.job.poNumber, mj);
+  }
+
+  // Deletions never show up in a "changed since" query. The signature carries
+  // the live submitted count; if we disagree, pull just the ids (a few KB) and
+  // prune anything that no longer exists. Two jobs sharing a PO also trip this
+  // check (the map collapses them) — harmless, it's a tiny query.
+  if (jobs.size !== expectedCount) {
+    const { data: ids, error: idErr } = await supabase
+      .from("jobs")
+      .select("id")
+      .eq("data->>submitted", "true");
+    if (idErr || !ids) return null;
+    const liveIds = new Set((ids as { id: string }[]).map((r) => r.id));
+    for (const [po, v] of jobs) {
+      if (!liveIds.has(v?.id)) jobs.delete(po);
     }
   }
-  if (jobByPO.size > 0) _materialJobsCache = jobByPO;
-  return jobByPO;
+  return jobs;
 }
 
 /**
