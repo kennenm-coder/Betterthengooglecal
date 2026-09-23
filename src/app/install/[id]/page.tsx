@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { MaterialJobData, MaterialUnit, FieldWorkOrder } from "@/lib/types";
 import { getSupabase } from "@/lib/supabase";
 import { buildNwoRows, buildBoardSummaryByUnit, fetchCatalogAndOffsets, fetchPOsForJob, NwoRow, BoardSummaryEntry, PurchaseOrder } from "@/lib/nwo-builder";
+import { fetchInstallDoc, dash } from "@/lib/install-doc";
 import { fetchWriteUpsForOrder, applySpecChangesToUnits } from "@/lib/work-order-store";
 import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork } from "@/lib/roles";
@@ -125,11 +126,14 @@ export default function InstallInstructionsPage() {
   const router = useRouter();
   const [job, setJob] = useState<MaterialJobData | null>(null);
   const [nwoRows, setNwoRows] = useState<NwoRow[]>([]);
-  const [boardSummary, setBoardSummary] = useState<BoardSummaryEntry[]>([]);
+  const [boardSummary, setBoardSummary] = useState<(BoardSummaryEntry & { label?: string })[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
   const [showWriteUp, setShowWriteUp] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Where the rows came from: the material-list app's handoff document
+  // (install_docs), or computed locally because no document exists yet.
+  const [docSource, setDocSource] = useState<{ kind: "handoff"; builtAt: string | null; builtBy: string | null } | { kind: "computed" } | null>(null);
   const { roles } = useAuth();
   const fieldWorker = canDoFieldWork(roles);
 
@@ -142,6 +146,52 @@ export default function InstallInstructionsPage() {
       }
 
       try {
+        // Preferred path: the install-instructions handoff. The material-list
+        // app writes the finished document on every save of a submitted job
+        // (see src/lib/install-doc.ts), so nothing is recomputed here and the
+        // multi-MB raw job row is never downloaded.
+        const docRec = await fetchInstallDoc(String(params.id));
+        if (docRec) {
+          const d = docRec.doc;
+          const header = d.header || {};
+          setJob({
+            id: docRec.jobId,
+            job: {
+              customerName: "",
+              address: "",
+              poNumber: "",
+              techMeasurer: "",
+              date: "",
+              installNotes: "",
+              prefinishNotes: "",
+              extraMaterials: [],
+              additionalMaterials: [],
+              universalFinish: "",
+              ...(header as Partial<MaterialJobData["job"]>),
+            } as MaterialJobData["job"],
+            units: d.units || [],
+            globalTrim: (d.globalTrim || {}) as MaterialJobData["globalTrim"],
+            submitted: true,
+            status: "",
+            savedAt: d.builtAt || "",
+          });
+          setNwoRows(d.nwoRows.map((r) => ({ ...r })));
+          setBoardSummary(d.boardSummary);
+          setDocSource({ kind: "handoff", builtAt: docRec.builtAt, builtBy: docRec.builtBy });
+          const orderNum = (header.poNumber || "").trim();
+          const [pos, wus] = await Promise.all([
+            fetchPOsForJob(docRec.jobId),
+            orderNum ? fetchWriteUpsForOrder(orderNum) : Promise.resolve([] as FieldWorkOrder[]),
+          ]);
+          setPurchaseOrders(pos);
+          setWriteUps(wus);
+          setLoading(false);
+          return;
+        }
+
+        // Fallback (no handoff document yet — job saved before the handoff
+        // existed and not yet backfilled): compute locally from the raw job.
+        setDocSource({ kind: "computed" });
         const [jobRes, catalogData] = await Promise.all([
           supabase.from("jobs").select("id, data").eq("id", params.id).single(),
           fetchCatalogAndOffsets(),
@@ -296,6 +346,11 @@ export default function InstallInstructionsPage() {
               {job.job.trimOrderedBy && (
                 <div className="text-xs text-muted">Trim ordered by: {job.job.trimOrderedBy}</div>
               )}
+              {docSource?.kind === "computed" && (
+                <div className="text-[10px] text-amber-600 mt-0.5 print:hidden">
+                  Computed locally — no handoff document for this job yet
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -448,7 +503,7 @@ export default function InstallInstructionsPage() {
             {boardSummary.map((entry, i) => (
               <span key={i}>
                 {i > 0 && "   "}
-                <strong>{formatUnitLabels(entry.unitLabels)}</strong>
+                <strong>{entry.label || formatUnitLabels(entry.unitLabels)}</strong>
                 {` — ${entry.sig}`}
               </span>
             ))}
@@ -551,11 +606,11 @@ export default function InstallInstructionsPage() {
                   >
                     <td className={`${tdStyle} font-bold`}>{r.qty}</td>
                     <td className={`${tdStyle} text-muted`}>{r.unit}</td>
-                    <td className={`${tdStyle} font-semibold`}>{r.item || "—"}</td>
-                    <td className={`${tdStyle} text-muted`}>{r.color || "—"}</td>
-                    <td className={`${tdStyle} text-muted`}>{r.species || "—"}</td>
-                    <td className={`${tdStyle} text-muted font-mono text-[11px]`}>{r.lengths || "—"}</td>
-                    <td className={`${tdStyle} font-bold text-[#6DB344] text-[11px]`}>{r.vendor || "—"}</td>
+                    <td className={`${tdStyle} font-semibold`}>{dash(r.item)}</td>
+                    <td className={`${tdStyle} text-muted`}>{dash(r.color)}</td>
+                    <td className={`${tdStyle} text-muted`}>{dash(r.species)}</td>
+                    <td className={`${tdStyle} text-muted font-mono text-[11px]`}>{dash(r.lengths)}</td>
+                    <td className={`${tdStyle} font-bold text-[#6DB344] text-[11px]`}>{dash(r.vendor)}</td>
                   </tr>
                 ))}
               </tbody>
