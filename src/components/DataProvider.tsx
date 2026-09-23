@@ -20,6 +20,7 @@ import {
 } from "@/lib/store";
 import { useAuth } from "@/hooks/useAuth";
 import { canEditLegacyLink } from "@/lib/roles";
+import { getSupabase } from "@/lib/supabase";
 
 const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"]);
 
@@ -99,6 +100,18 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     const stale = () => gen !== genRef.current || ac.signal.aborted;
 
     try {
+      // Settle the auth session ONCE before fanning out. On the first open of
+      // the day the access token is expired; if several requests race the
+      // refresh, one can go out with the stale token and fail. getSession()
+      // performs the refresh under supabase-js's lock and is free when the
+      // token is still valid.
+      try {
+        await getSupabase()?.auth.getSession();
+      } catch {
+        /* proceed — each request will refresh on its own if needed */
+      }
+      if (stale()) return;
+
       // Kick off the material-jobs and legacy-link pulls immediately so they run
       // alongside Phase 1 instead of queuing behind it. Neither blocks anything:
       // each one re-enriches whatever orders are loaded at the moment it lands,
@@ -111,6 +124,20 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       // Phase 1: Load ±90-day window
       const initial = await loadInitialWindow(ac.signal);
       if (stale()) return;
+
+      // A ±90-day window with ZERO rows is never real for this business. If it
+      // happens (transient auth/RLS blip that didn't surface as an error), keep
+      // whatever is on screen and in the cache rather than blanking the
+      // calendar; the next refresh will fill it in.
+      if (initial.length === 0) {
+        const fallback = loadBoundedCache();
+        if (fallback.length > 0) {
+          setOrders(enrichWithMaterials(fallback, jobByPORef.current));
+          setLastUpdated(getLastUpdated());
+        }
+        setLoading(false);
+        return;
+      }
 
       // Enrich with whatever is already in hand (both caches are warm on a
       // manual refresh; on a cold boot the handlers below fill in shortly).

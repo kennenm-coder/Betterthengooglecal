@@ -216,7 +216,11 @@ async function paginatedQuery(
   while (true) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     const { data, error } = await baseBuilder().range(offset, offset + PAGE_SIZE - 1);
-    if (error || !data) break;
+    // A failed page (expired token mid-refresh, RLS hiccup, network) must NOT
+    // come back as "no rows" — callers would treat that as an empty calendar
+    // and overwrite the local cache with it. Throw so they fall back instead.
+    if (error) throw new Error(error.message || "work_orders query failed");
+    if (!data) break;
     rows.push(...data);
     if (data.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
