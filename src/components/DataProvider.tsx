@@ -118,50 +118,17 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       // and later phases pick them up from the refs/module cache as they go.
       // (Jobs is the heaviest query in the app; legacy links is a tiny table
       // that used to be stuck waiting on it.)
-      const jobsPromise = fetchMaterialJobsWithSignature().catch(() => null);
+      // revalidate: even with a warm in-memory map, re-check the tiny signature
+      // so the refresh button picks up jobs changed during the session.
+      const jobsPromise = fetchMaterialJobsWithSignature({ revalidate: true }).catch(() => null);
       const legacyPromise = fetchLegacyLinks().catch(() => null);
 
-      // Phase 1: Load ±90-day window
-      const initial = await loadInitialWindow(ac.signal);
-      if (stale()) return;
-
-      // A ±90-day window with ZERO rows is never real for this business. If it
-      // happens (transient auth/RLS blip that didn't surface as an error), keep
-      // whatever is on screen and in the cache rather than blanking the
-      // calendar; the next refresh will fill it in.
-      if (initial.length === 0) {
-        const fallback = loadBoundedCache();
-        if (fallback.length > 0) {
-          setOrders(enrichWithMaterials(fallback, jobByPORef.current));
-          setLastUpdated(getLastUpdated());
-        }
-        setLoading(false);
-        return;
-      }
-
-      // Enrich with whatever is already in hand (both caches are warm on a
-      // manual refresh; on a cold boot the handlers below fill in shortly).
-      const initialEnriched = enrichWithMaterials(initial, jobByPORef.current);
-      setOrders(initialEnriched);
-      setLoading(false);
-      setLastUpdated(new Date().toISOString());
-
-      // Mark initial months as loaded
-      const today = new Date();
-      const start = new Date(today);
-      start.setDate(start.getDate() - 90);
-      const end = new Date(today);
-      end.setDate(end.getDate() + 90);
-      const initialMonths = getMonthsInRange(start.toISOString(), end.toISOString());
-      loadedMonthsRef.current = initialMonths;
-
-      // Save bounded cache immediately
-      saveBoundedCache(initialEnriched);
-
       // Re-apply material jobs + legacy links across every order loaded so far
-      // (initial window plus any unscheduled/future pages merged since).
+      // (whatever is on screen: cache, initial window, unscheduled/future pages).
       // enrichWithMaterials reads the legacy-link module cache at call time, so
-      // running it after either promise resolves picks up both sources.
+      // running it after either promise resolves picks up both sources. Attached
+      // BEFORE Phase 1 so enrichment still lands if Phase 1 fails or is empty
+      // and we fall back to the cached window.
       const applyEnrichment = () => {
         if (stale()) return;
         setOrders((prev) => {
@@ -185,6 +152,43 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         if (!links || stale()) return;
         applyEnrichment();
       });
+
+      // Phase 1: Load ±90-day window
+      const initial = await loadInitialWindow(ac.signal);
+      if (stale()) return;
+
+      // A ±90-day window with ZERO rows is never real for this business. If it
+      // happens (transient auth/RLS blip that didn't surface as an error), keep
+      // whatever is on screen and in the cache rather than blanking the
+      // calendar; the next refresh will fill it in.
+      if (initial.length === 0) {
+        const fallback = loadBoundedCache();
+        if (fallback.length > 0) {
+          setOrders(enrichWithMaterials(fallback, jobByPORef.current));
+          setLastUpdated(getLastUpdated());
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Enrich with whatever is already in hand (both caches are warm on a
+      // manual refresh; on a cold boot the handlers above fill in shortly).
+      const initialEnriched = enrichWithMaterials(initial, jobByPORef.current);
+      setOrders(initialEnriched);
+      setLoading(false);
+      setLastUpdated(new Date().toISOString());
+
+      // Mark initial months as loaded
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(start.getDate() - 90);
+      const end = new Date(today);
+      end.setDate(end.getDate() + 90);
+      const initialMonths = getMonthsInRange(start.toISOString(), end.toISOString());
+      loadedMonthsRef.current = initialMonths;
+
+      // Save bounded cache immediately
+      saveBoundedCache(initialEnriched);
 
       // Background phases
       setLoadingBackground(true);

@@ -649,11 +649,20 @@ export function invalidateMaterialJobsCache() {
  * both caches (used by the explicit "resync linked jobs" action).
  */
 export async function fetchMaterialJobsWithSignature(
-  opts?: { force?: boolean }
+  opts?: { force?: boolean; revalidate?: boolean }
 ): Promise<MaterialJobsResult> {
   const force = opts?.force === true;
-  if (!force && _materialJobsCache) return { jobs: _materialJobsCache, sig: _materialJobsSig };
-  if (_materialJobsInflight) return _materialJobsInflight;
+  // revalidate: re-check the (tiny) signature even when the in-memory map is
+  // warm, so a manual refresh picks up jobs changed during the session.
+  const revalidate = opts?.revalidate === true;
+  if (!force && !revalidate && _materialJobsCache) {
+    return { jobs: _materialJobsCache, sig: _materialJobsSig };
+  }
+  if (_materialJobsInflight) {
+    if (!force) return _materialJobsInflight;
+    // A forced refetch must not reuse a cached-path fetch already in flight.
+    await _materialJobsInflight.catch(() => {});
+  }
 
   _materialJobsInflight = (async (): Promise<MaterialJobsResult> => {
     const supabase = getSupabase();
@@ -667,6 +676,11 @@ export async function fetchMaterialJobsWithSignature(
       fetchJobsSignature().catch(() => ""),
       force ? Promise.resolve(null) : kvGet<PersistedJobs>(JOBS_KV_KEY).catch(() => null),
     ]);
+
+    // Warm in-memory map still matches the live signature: nothing changed.
+    if (!force && sig && _materialJobsCache && sig === _materialJobsSig) {
+      return { jobs: _materialJobsCache, sig };
+    }
 
     const persistedEntries =
       persisted && Array.isArray(persisted.entries) && persisted.entries.length > 0
@@ -777,23 +791,46 @@ async function fetchJobRows(
   supabase: SupabaseBrowserClient,
   since: string | null
 ): Promise<JobRow[] | null> {
-  const viaRpc = await pageThrough(
-    (from, to) =>
+  // Keyset pages: each call does exactly one page of work on the DB side
+  // (id > after_id, limit N) rather than re-running the function and
+  // discarding an offset's worth of rows.
+  const viaRpc = await keysetThrough(
+    (afterId) =>
       supabase
-        .rpc("calendar_jobs", since ? { since } : {})
-        .select("id, data")
-        .order("id", { ascending: true })
-        .range(from, to),
+        .rpc("calendar_jobs", {
+          since: since ?? null,
+          after_id: afterId,
+          page_limit: JOBS_PAGE_SIZE,
+        })
+        .select("id, data"),
     JOBS_PAGE_SIZE
   );
   if (viaRpc) return viaRpc;
 
-  // Pre-022 fallback: raw table, small pages.
+  // Pre-022 fallback: raw table, small offset pages.
   return pageThrough((from, to) => {
     let q = supabase.from("jobs").select("id, data").order("id", { ascending: true });
     if (since) q = q.gte("updated_at", since);
     return q.range(from, to);
   }, JOBS_RAW_PAGE_SIZE);
+}
+
+async function keysetThrough(
+  page: (afterId: string | null) => PromiseLike<{ data: unknown; error: unknown }>,
+  size: number
+): Promise<JobRow[] | null> {
+  const rows: JobRow[] = [];
+  let afterId: string | null = null;
+  while (true) {
+    const { data, error } = await page(afterId);
+    if (error || !Array.isArray(data)) return null;
+    const batch = data as JobRow[];
+    rows.push(...batch);
+    if (batch.length < size) break;
+    afterId = batch[batch.length - 1].id;
+    if (!afterId) break; // defensive: never loop on a row without an id
+  }
+  return rows;
 }
 
 async function pageThrough(
