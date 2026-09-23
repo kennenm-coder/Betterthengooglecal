@@ -489,20 +489,199 @@ export async function searchWorkOrders(query: string, limit = 25): Promise<WorkO
 
 // --- Material jobs ---
 
-// Session cache for the heavy jobs pull (every job's full data blob). Shared so
-// reopening the write-up picker doesn't re-download it each time.
+// The jobs pull is the heaviest query in the app: every submitted job's full
+// data blob, and it only grows. Three layers keep it off the daily boot path:
+//   1. an in-memory Map for this page load (calendar + write-up picker share it)
+//   2. an IndexedDB copy tagged with the jobs_signature it was downloaded under
+//   3. one in-flight promise, so concurrent callers never double-download
+// On boot we fetch the tiny signature first and re-download the blobs only when
+// it differs from the persisted copy — same data on screen, a fraction of the
+// egress. Any add/edit/delete bumps the signature, so a changed job is always
+// picked up on the next load (and by the focus-check in DataProvider).
 let _materialJobsCache: Map<string, any> | null = null;
+let _materialJobsSig = "";
+let _materialJobsInflight: Promise<MaterialJobsResult> | null = null;
+
+export interface MaterialJobsResult {
+  jobs: Map<string, any>;
+  /** jobs_signature the map corresponds to ("" if unavailable). */
+  sig: string;
+}
+
+const KV_DB_NAME = "rba-field-cal";
+const KV_STORE = "kv";
+const JOBS_KV_KEY = "material-jobs-v1";
+
+interface PersistedJobs {
+  sig: string;
+  entries: [string, any][];
+}
+
+// Minimal IndexedDB key/value helpers. The jobs map can run to megabytes, past
+// what localStorage reliably holds, so it lives here. Every failure path
+// resolves (never rejects) so a broken/blocked IndexedDB just means "no cache".
+function openKvDb(): Promise<IDBDatabase | null> {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === "undefined") return resolve(null);
+    try {
+      const req = indexedDB.open(KV_DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(KV_STORE)) {
+          req.result.createObjectStore(KV_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function kvGet<T>(key: string): Promise<T | null> {
+  const db = await openKvDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(KV_STORE, "readonly");
+      const req = tx.objectStore(KV_STORE).get(key);
+      req.onsuccess = () => {
+        db.close();
+        resolve((req.result as T) ?? null);
+      };
+      req.onerror = () => {
+        db.close();
+        resolve(null);
+      };
+    } catch {
+      db.close();
+      resolve(null);
+    }
+  });
+}
+
+async function kvSet(key: string, value: unknown): Promise<void> {
+  const db = await openKvDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(KV_STORE, "readwrite");
+      tx.objectStore(KV_STORE).put(value, key);
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        db.close();
+        resolve();
+      };
+      tx.onabort = () => {
+        db.close();
+        resolve();
+      };
+    } catch {
+      db.close();
+      resolve();
+    }
+  });
+}
+
+async function kvDelete(key: string): Promise<void> {
+  const db = await openKvDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(KV_STORE, "readwrite");
+      tx.objectStore(KV_STORE).delete(key);
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        db.close();
+        resolve();
+      };
+      tx.onabort = () => {
+        db.close();
+        resolve();
+      };
+    } catch {
+      db.close();
+      resolve();
+    }
+  });
+}
 
 export function invalidateMaterialJobsCache() {
   _materialJobsCache = null;
+  _materialJobsSig = "";
+  kvDelete(JOBS_KV_KEY).catch(() => {});
+}
+
+/**
+ * Material jobs keyed by PO number, plus the signature they were loaded under.
+ * Serves the in-memory cache when warm; otherwise checks the persisted copy
+ * against the live signature and downloads only if it changed. `force` skips
+ * both caches (used by the explicit "resync linked jobs" action).
+ */
+export async function fetchMaterialJobsWithSignature(
+  opts?: { force?: boolean }
+): Promise<MaterialJobsResult> {
+  const force = opts?.force === true;
+  if (!force && _materialJobsCache) return { jobs: _materialJobsCache, sig: _materialJobsSig };
+  if (_materialJobsInflight) return _materialJobsInflight;
+
+  _materialJobsInflight = (async (): Promise<MaterialJobsResult> => {
+    const supabase = getSupabase();
+    if (!supabase) return { jobs: new Map(), sig: "" };
+
+    // Signature (a few bytes) and the persisted copy load in parallel. The
+    // signature is taken BEFORE the download, so if a job changes mid-flight
+    // the stored tag is older than the data and the next boot re-downloads —
+    // the safe direction.
+    const [sig, persisted] = await Promise.all([
+      fetchJobsSignature().catch(() => ""),
+      force ? Promise.resolve(null) : kvGet<PersistedJobs>(JOBS_KV_KEY).catch(() => null),
+    ]);
+
+    if (
+      sig &&
+      persisted &&
+      persisted.sig === sig &&
+      Array.isArray(persisted.entries) &&
+      persisted.entries.length > 0
+    ) {
+      const jobs = new Map<string, any>(persisted.entries);
+      _materialJobsCache = jobs;
+      _materialJobsSig = sig;
+      return { jobs, sig };
+    }
+
+    const jobs = await downloadMaterialJobs(supabase);
+    if (jobs.size > 0) {
+      _materialJobsCache = jobs;
+      _materialJobsSig = sig;
+      // Never persist an empty map or an untagged one — an RLS/transient empty
+      // result must not shadow the real data on the next boot.
+      if (sig) kvSet(JOBS_KV_KEY, { sig, entries: Array.from(jobs.entries()) }).catch(() => {});
+    }
+    return { jobs, sig };
+  })().finally(() => {
+    _materialJobsInflight = null;
+  });
+
+  return _materialJobsInflight;
 }
 
 export async function fetchMaterialJobs(): Promise<Map<string, any>> {
-  if (_materialJobsCache) return _materialJobsCache;
-  const jobByPO = new Map<string, any>();
-  const supabase = getSupabase();
-  if (!supabase) return jobByPO;
+  return (await fetchMaterialJobsWithSignature()).jobs;
+}
 
+async function downloadMaterialJobs(
+  supabase: NonNullable<ReturnType<typeof getSupabase>>
+): Promise<Map<string, any>> {
+  const jobByPO = new Map<string, any>();
   const { data, error } = await supabase.from("jobs").select("id, data");
   if (error || !data) return jobByPO;
 
@@ -537,7 +716,6 @@ export async function fetchMaterialJobs(): Promise<Map<string, any>> {
       // Skip malformed rows
     }
   }
-  if (jobByPO.size > 0) _materialJobsCache = jobByPO;
   return jobByPO;
 }
 
