@@ -11,6 +11,9 @@ export type UserRole =
   | "scheduling"
   | "scheduling_manager"
   | "member"
+  // Roles & Responsibilities app (TeamMangerRBANWO.com) editor. No calendar
+  // capabilities; member-level in calendar.
+  | "process-manager"
   // Change-order-app role (no calendar capabilities; member-level in calendar).
   | "sales"
   // Cut-list-app roles (no calendar capabilities on their own). Managed here so
