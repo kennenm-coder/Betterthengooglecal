@@ -43,6 +43,8 @@ import {
   Send,
   Camera,
   Archive,
+  Search,
+  X,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -57,11 +59,37 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
 ];
 
+/** Every bit of a write-up worth typing into the search box: the job it belongs
+ *  to, who wrote it, the unit, and the text of the work itself. */
+function writeUpSearchText(w: FieldWorkOrder): string {
+  return [
+    w.orderNumber,
+    w.workOrderNumber,
+    w.jobId ?? "",
+    w.customerName,
+    w.address,
+    w.unitLabel ?? "",
+    w.createdByName,
+    w.updatedByName,
+    w.notes,
+    w.responsibility,
+    w.defectCode,
+    ...w.lineItems.flatMap((li) => [li.label, li.notes ?? ""]),
+    ...w.specChanges.flatMap((sc) => [sc.field, sc.oldValue, sc.newValue]),
+    ...w.materialItems.flatMap((m) => [m.item, m.color, m.species, m.vendor]),
+    w.newProduct ? [w.newProduct.type, w.newProduct.size, w.newProduct.details].join(" ") : "",
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
 export default function WorkOrdersPage() {
   const { roles, user, autoCc, loading: authLoading } = useAuth();
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("in_review");
+  // Free-text search, applied on top of whichever status tab is active.
+  const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // View: admin + field-manager (full) and scheduling + scheduling-manager
@@ -262,15 +290,22 @@ export default function WorkOrdersPage() {
     return false;
   }
 
-  const visible = useMemo(
-    () =>
-      // "All" shows everything except archived; archived lives behind its own
-      // filter so superseded/test write-ups stay out of the way.
+  const visible = useMemo(() => {
+    // "All" shows everything except archived; archived lives behind its own
+    // filter so superseded/test write-ups stay out of the way.
+    const byStatus =
       filter === "all"
         ? writeUps.filter((w) => w.status !== "archived")
-        : writeUps.filter((w) => w.status === filter),
-    [writeUps, filter]
-  );
+        : writeUps.filter((w) => w.status === filter);
+    // Search runs inside the active tab, so it works on every filter. All terms
+    // must match somewhere in the write-up (order doesn't matter).
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return byStatus;
+    return byStatus.filter((w) => {
+      const hay = writeUpSearchText(w);
+      return terms.every((t) => hay.includes(t));
+    });
+  }, [writeUps, filter, query]);
 
   // Group by order number (one job may have several unit write-ups). Jobs with
   // any draft float to the top so unfinished write-ups are easy to find.
@@ -290,14 +325,23 @@ export default function WorkOrdersPage() {
   }, [visible]);
 
   // Tab counts = number of write-up SUBMISSIONS per status (not per-unit rows),
-  // so the count matches the write-ups actually shown in the list.
+  // so the count matches the write-ups actually shown in the list. While a
+  // search is active the counts narrow to matches, so you can see which tab
+  // holds the job you're looking for without checking each one.
   const statusCounts = useMemo(() => {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const pool = terms.length
+      ? writeUps.filter((w) => {
+          const hay = writeUpSearchText(w);
+          return terms.every((t) => hay.includes(t));
+        })
+      : writeUps;
     const counts: Record<string, number> = {};
-    for (const sec of groupWriteUpSections(writeUps)) {
+    for (const sec of groupWriteUpSections(pool)) {
       counts[sec.status] = (counts[sec.status] || 0) + 1;
     }
     return counts;
-  }, [writeUps]);
+  }, [writeUps, query]);
 
   if (authLoading) {
     return (
@@ -377,6 +421,25 @@ export default function WorkOrdersPage() {
             </button>
           ))}
         </div>
+        <div className="relative mt-2">
+          <Search className="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name, order #, address, unit, work item…"
+            className="w-full rounded-lg border border-border bg-surface pl-9 pr-9 py-2 text-sm outline-none focus:border-primary"
+          />
+          {query && (
+            <button
+              onClick={() => setQuery("")}
+              aria-label="Clear search"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-muted hover:text-foreground"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </header>
 
       <main className="flex-1 overflow-y-auto p-4">
@@ -387,7 +450,10 @@ export default function WorkOrdersPage() {
         ) : groups.length === 0 ? (
           <div className="text-center py-12 text-muted">
             <Wrench className="w-10 h-10 mx-auto mb-2" />
-            <p className="text-sm">No {filter === "all" ? "" : filter.replace("_", " ")} write-ups</p>
+            <p className="text-sm">
+              No {filter === "all" ? "" : filter.replace("_", " ")} write-ups
+              {query.trim() ? ` matching “${query.trim()}”` : ""}
+            </p>
           </div>
         ) : (
           <div className="space-y-4">
