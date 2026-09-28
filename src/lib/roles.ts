@@ -100,6 +100,9 @@ export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   // Cut-list-app roles (no calendar capabilities on their own).
   { value: "configuring", label: "Configuring (Cut List)" },
   { value: "configuring-editing", label: "Configuring + Editing (Cut List)" },
+  // Job-Auditor-app role: audits, site runs, returns and attention items there.
+  // No calendar capabilities on its own; calendar access is plain member-level.
+  { value: "inventory-specialist", label: "Inventory Specialist (Job Auditor)" },
 ];
 
 export const ROLE_LABELS: Record<string, string> = Object.fromEntries(
@@ -117,4 +120,5 @@ export const ROLE_STYLES: Record<string, string> = {
   sales: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
   configuring: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
   "configuring-editing": "bg-purple-500/15 text-purple-600 dark:text-purple-400",
+  "inventory-specialist": "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
 };
