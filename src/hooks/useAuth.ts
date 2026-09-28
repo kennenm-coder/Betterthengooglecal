@@ -19,7 +19,9 @@ export type UserRole =
   // Cut-list-app roles (no calendar capabilities on their own). Managed here so
   // the shared allowed_emails table + Team UI stay the single source of truth.
   | "configuring"
-  | "configuring-editing";
+  | "configuring-editing"
+  // Job-Auditor-app role (no calendar capabilities; member-level in calendar).
+  | "inventory-specialist";
 
 interface AuthState {
   user: User | null;
