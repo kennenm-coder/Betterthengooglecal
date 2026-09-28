@@ -7,6 +7,15 @@ import { WorkOrder } from "@/lib/types";
 import { requireRole } from "@/lib/auth";
 import { writeImportLog, fetchExistingOrders, computeOrderChanges } from "@/lib/import-log";
 
+/**
+ * Power Automate posts the full rForce export here hourly, 8am–5pm. A run reads
+ * every existing row (for the diff) and re-upserts every parsed row, so give it
+ * headroom well past the 15s Node default — a run that gets cut off mid-upsert
+ * looks downstream like a batch of cancelled jobs (see the scheduling app's
+ * docs/phase2-dropped-from-rforce.md).
+ */
+export const maxDuration = 60;
+
 type FileResult = {
   text: string;
   format: "xls" | "csv" | "accounts_csv" | "unknown";
@@ -106,6 +115,16 @@ function detectFormat(text: string): "xls" | "csv" | "accounts_csv" | "unknown" 
   return "unknown";
 }
 
+/**
+ * Upsert EVERY parsed order, bumping `updated_at` even on rows that didn't change.
+ *
+ * This is deliberate, not an oversight. The scheduling app detects rForce
+ * cancellations by absence — an order whose `updated_at` stops advancing is treated
+ * as dropped from rForce, escalating to a 🔴 "likely cancel" review after two days.
+ * Narrowing this to changed rows only (the diff is right there in the caller) would
+ * flag every unchanged-but-live order as cancelled. See the invariant in the
+ * scheduling app's docs/phase2-dropped-from-rforce.md before touching this.
+ */
 async function upsertToSupabase(orders: WorkOrder[]) {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

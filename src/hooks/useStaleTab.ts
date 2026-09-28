@@ -2,39 +2,61 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 
-/** Refresh-block boundaries: 8am, 10am, 12pm, 2pm */
-const BLOCK_HOURS = [8, 10, 12, 14] as const;
+/**
+ * Refresh-block boundaries — the hours the rForce import lands. Power Automate
+ * runs hourly, 8am–5pm. This list is the single source of truth: every boundary
+ * and label below derives from it, so a cadence change is a one-line edit here.
+ */
+const BLOCK_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17] as const;
 
-/** Returns a block index (0–4) for the given date's hour. */
-function getRefreshBlock(date: Date): number {
-  const hour = date.getHours();
-  if (hour < 8) return 0;
-  if (hour < 10) return 1;
-  if (hour < 12) return 2;
-  if (hour < 14) return 3;
-  return 4;
+/**
+ * Minutes past the hour before new data counts as "available". The import needs
+ * a moment to parse and upsert, so flipping the banner exactly on the hour can
+ * send someone to refresh into a half-written import — and at ten imports a day
+ * that's ten chances to catch one mid-flight. Raise it if imports get slower;
+ * set it to 0 to flip exactly on the hour.
+ */
+const BLOCK_LAG_MINUTES = 5;
+
+/** Minutes since midnight. */
+function minutesOfDay(date: Date): number {
+  return date.getHours() * 60 + date.getMinutes();
 }
 
-/** Returns the human-readable boundary the tab crossed, e.g. "12:00 PM". */
-function getBlockLabel(block: number): string {
-  if (block <= 0 || block > BLOCK_HOURS.length) return "";
-  const hour = BLOCK_HOURS[block - 1];
+/** Returns how many refresh boundaries the given time has passed (0–BLOCK_HOURS.length). */
+function getRefreshBlock(date: Date): number {
+  const now = minutesOfDay(date);
+  let block = 0;
+  for (const bh of BLOCK_HOURS) {
+    if (now >= bh * 60 + BLOCK_LAG_MINUTES) block++;
+  }
+  return block;
+}
+
+/** Formats a 24-hour hour for display, e.g. 13 → "1:00 PM". */
+function formatHour(hour: number): string {
   const h = hour > 12 ? hour - 12 : hour;
   const ampm = hour >= 12 ? "PM" : "AM";
   return `${h}:00 ${ampm}`;
 }
 
-/** Returns the label for the next upcoming refresh, e.g. "2:00 PM", or "" if past the last one. */
+/** Returns the human-readable boundary the tab crossed, e.g. "12:00 PM". */
+function getBlockLabel(block: number): string {
+  if (block <= 0 || block > BLOCK_HOURS.length) return "";
+  return formatHour(BLOCK_HOURS[block - 1]);
+}
+
+/**
+ * Returns the label for the next upcoming refresh, e.g. "2:00 PM", or "" once the
+ * day's last import has passed. This advances on the hour rather than at the
+ * lagged boundary, so the chip never reads "Next update 8:00 AM" at 8:02.
+ */
 function getNextUpdateLabel(date: Date): string {
-  const hour = date.getHours();
+  const now = minutesOfDay(date);
   for (const bh of BLOCK_HOURS) {
-    if (hour < bh) {
-      const h = bh > 12 ? bh - 12 : bh;
-      const ampm = bh >= 12 ? "PM" : "AM";
-      return `${h}:00 ${ampm}`;
-    }
+    if (now < bh * 60) return formatHour(bh);
   }
-  return ""; // past 2pm, no more updates today
+  return ""; // past the day's last import
 }
 
 export interface StaleTabState {

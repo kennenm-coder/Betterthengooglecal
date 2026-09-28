@@ -157,6 +157,26 @@ function LogCard({
 }) {
   const isAccounts = entry.format === "accounts_csv";
   const isPowerAutomate = entry.source === "power_automate";
+  const noChanges = entry.added_count === 0 && entry.updated_count === 0;
+
+  // The feed runs hourly, 8am–5pm, and most runs change nothing. Those still get
+  // logged — they're how you tell "the feed is alive" from "the feed stopped" —
+  // but a full card each would bury the runs that actually did something. Render
+  // them as a slim, non-expandable line instead.
+  if (noChanges) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted">
+        {isPowerAutomate ? (
+          <Zap className="w-3 h-3 text-warning/60 shrink-0" />
+        ) : (
+          <Monitor className="w-3 h-3 shrink-0" />
+        )}
+        <span>{format(parseISO(entry.created_at), "h:mm a")}</span>
+        <span>·</span>
+        <span>{isAccounts ? "accounts" : "work orders"} — no changes</span>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg border border-border bg-surface overflow-hidden">

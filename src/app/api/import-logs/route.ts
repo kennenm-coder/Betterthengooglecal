@@ -17,12 +17,15 @@ export async function GET() {
     .delete()
     .lt("created_at", cutoff.toISOString());
 
-  // Fetch remaining entries
+  // Fetch remaining entries. Headroom check: the feed runs hourly 8am–5pm (10
+  // work-order runs/day) plus the accounts flow, so a full 3-day window is ~30–60
+  // rows. The cap is well clear of that — it truncates silently if it isn't, which
+  // would drop the oldest day off /log with no indication, so keep the slack.
   const { data, error } = await supabase
     .from("import_logs")
     .select("*")
     .order("created_at", { ascending: false })
-    .limit(100);
+    .limit(200);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
