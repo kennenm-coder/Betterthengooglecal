@@ -82,7 +82,7 @@ export default function WeekView({
         onSelectDay={onSelectDay}
       />
 
-      <div ref={swipeRef} className="flex-1 overflow-y-auto overscroll-contain">
+      <div ref={swipeRef} className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y">
         <div className="divide-y divide-border">
         {days.map((day) => {
           const dayKey = format(day, "yyyy-MM-dd");
@@ -110,7 +110,7 @@ export default function WeekView({
                       <div className="font-medium truncate">
                         {lastFirst(order.customerName)} - {order.orderNumber}
                       </div>
-                      <div className="text-xs opacity-90 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                      <div className="text-xs opacity-90 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 break-words">
                         {multiDay && (
                           <span className="px-1.5 py-0.5 rounded bg-black/25 text-[10px] font-bold">
                             Day {multiDay.day} of {multiDay.total}

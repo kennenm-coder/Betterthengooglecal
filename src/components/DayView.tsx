@@ -51,7 +51,7 @@ export default function DayView({
         </p>
       </div>
 
-      <div ref={swipeRef} className="flex-1 overflow-y-auto overscroll-contain">
+      <div ref={swipeRef} className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y">
         <div className="relative">
         {HOURS.map((hour) => {
           const hourOrders = ordersByHour.get(hour) || [];
@@ -60,7 +60,7 @@ export default function DayView({
               <div className="w-12 shrink-0 text-[11px] text-muted py-2 text-right pr-2 pt-1">
                 {format(new Date(2000, 0, 1, hour), "ha").toLowerCase()}
               </div>
-              <div className="flex-1 border-l border-border/50 py-1 px-2 space-y-1">
+              <div className="flex-1 min-w-0 border-l border-border/50 py-1 px-2 space-y-1">
                 {hourOrders.map((order) => {
                   const crew = crewName(order);
                   const city = extractCity(order.address);
@@ -76,7 +76,7 @@ export default function DayView({
                       <div className="font-medium truncate">
                         {lastFirst(order.customerName)} - {order.orderNumber}
                       </div>
-                      <div className="text-sm opacity-90 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                      <div className="text-sm opacity-90 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 break-words">
                         {multiDay && (
                           <span className="px-1.5 py-0.5 rounded bg-black/25 text-xs font-bold">
                             Day {multiDay.day} of {multiDay.total}
