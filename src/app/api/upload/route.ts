@@ -295,25 +295,10 @@ export async function POST(request: NextRequest) {
 
       const stats = await upsertAccountsToSupabase(accounts);
 
-      // Log the accounts import
-      const acctSource = isBrowserUpload ? "browser" : "power_automate";
-      try {
-        await writeImportLog({
-          format: "accounts_csv",
-          source: acctSource,
-          total_count: accounts.length,
-          added_count: stats.inserted,
-          updated_count: stats.updated,
-          orders: accounts.slice(0, 50).map((a) => ({
-            workOrderNumber: a.order_number || "",
-            customerName: a.account_name,
-            scheduledStart: null,
-            action: a.order_number ? ("updated" as const) : ("added" as const),
-          })),
-        });
-      } catch (logErr) {
-        console.error("Import log write failed:", logErr);
-      }
+      // Deliberately NOT written to the import log. An accounts upload only
+      // backfills customer names onto jobs that already exist, so it isn't a
+      // change a field manager needs on the Changes tab — and logging every
+      // parsed row was what made that tab unreadable.
 
       return NextResponse.json({
         success: true,
@@ -363,26 +348,25 @@ export async function POST(request: NextRequest) {
     const existingRows = await fetchExistingOrders(orders.map((o) => o.id));
     const addedOrders = orders.filter((o) => !existingRows.has(o.id));
 
-    // Only surface updated orders whose SCHEDULED DATE actually changed. Every
-    // import re-uploads the full dataset, so without this filter every existing
-    // order counts as "updated" — thousands of no-op rows. We keep only the
-    // orders whose Scheduled Start/End moved, and only the date changes on them.
-    const rescheduledOrders = orders
+    // Every import re-uploads the full dataset, so an order existing in the DB
+    // says nothing — only orders with a real tracked-field difference count as
+    // "updated". Schedule moves lead, since that's what the tab is scanned for.
+    const changedOrders = orders
       .filter((o) => existingRows.has(o.id))
-      .map((o) => {
-        const dateChanges = computeOrderChanges(existingRows.get(o.id)!, o).filter(
-          (c) => c.isDate
-        );
-        return {
-          workOrderNumber: o.workOrderNumber,
-          customerName: o.customerName,
-          scheduledStart: o.scheduledStart,
-          action: "updated" as const,
-          changes: dateChanges,
-        };
-      })
+      .map((o) => ({
+        workOrderNumber: o.workOrderNumber,
+        customerName: o.customerName,
+        scheduledStart: o.scheduledStart,
+        action: "updated" as const,
+        changes: computeOrderChanges(existingRows.get(o.id)!, o),
+      }))
       .filter((o) => o.changes.length > 0)
-      .sort((a, b) => b.changes.length - a.changes.length);
+      .sort((a, b) => {
+        const aMoved = a.changes.some((c) => c.kind === "schedule") ? 1 : 0;
+        const bMoved = b.changes.some((c) => c.kind === "schedule") ? 1 : 0;
+        if (aMoved !== bMoved) return bMoved - aMoved;
+        return b.changes.length - a.changes.length;
+      });
 
     const upserted = await upsertToSupabase(orders);
 
@@ -392,9 +376,9 @@ export async function POST(request: NextRequest) {
       await writeImportLog({
         format,
         source,
-        total_count: addedOrders.length + rescheduledOrders.length,
+        total_count: addedOrders.length + changedOrders.length,
         added_count: addedOrders.length,
-        updated_count: rescheduledOrders.length,
+        updated_count: changedOrders.length,
         orders: [
           ...addedOrders.map((o) => ({
             workOrderNumber: o.workOrderNumber,
@@ -402,7 +386,7 @@ export async function POST(request: NextRequest) {
             scheduledStart: o.scheduledStart,
             action: "added" as const,
           })),
-          ...rescheduledOrders,
+          ...changedOrders,
         ],
       });
     } catch (logErr) {

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-
-const TTL_DAYS = 3;
+import { TTL_DAYS } from "@/lib/import-log";
 
 export async function GET() {
   const supabase = createClient(
@@ -9,7 +8,7 @@ export async function GET() {
     process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  // Clean up old entries
+  // Clean up expired entries
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - TTL_DAYS);
   await supabase
@@ -17,15 +16,16 @@ export async function GET() {
     .delete()
     .lt("created_at", cutoff.toISOString());
 
-  // Fetch remaining entries. Headroom check: the feed runs hourly 8am–5pm (10
-  // work-order runs/day) plus the accounts flow, so a full 3-day window is ~30–60
-  // rows. The cap is well clear of that — it truncates silently if it isn't, which
-  // would drop the oldest day off /log with no indication, so keep the slack.
+  // Fetch remaining entries. Account imports and no-change imports are no
+  // longer written, but rows from before that change can still be inside the
+  // retention window — filter them out so the tab stays clean.
   const { data, error } = await supabase
     .from("import_logs")
     .select("*")
+    .neq("format", "accounts_csv")
+    .or("added_count.gt.0,updated_count.gt.0")
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(100);
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
