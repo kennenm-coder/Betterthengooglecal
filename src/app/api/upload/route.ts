@@ -346,13 +346,23 @@ export async function POST(request: NextRequest) {
     // and what the tracked fields changed from — must happen BEFORE the upsert
     // overwrites the old values.
     const existingRows = await fetchExistingOrders(orders.map((o) => o.id));
-    const addedOrders = orders.filter((o) => !existingRows.has(o.id));
+
+    // A job with no date on it — before or after — is not field work anyone is
+    // tracking, so it stays off the Changes tab. The exception is the change
+    // that takes a job OFF the schedule: that one matters, and it survives
+    // because the job still had a date beforehand.
+    const onSchedule = (o: WorkOrder) =>
+      Boolean(o.scheduledStart) || Boolean(existingRows.get(o.id)?.scheduled_start);
+
+    const addedOrders = orders.filter(
+      (o) => !existingRows.has(o.id) && Boolean(o.scheduledStart)
+    );
 
     // Every import re-uploads the full dataset, so an order existing in the DB
     // says nothing — only orders with a real tracked-field difference count as
     // "updated". Schedule moves lead, since that's what the tab is scanned for.
     const changedOrders = orders
-      .filter((o) => existingRows.has(o.id))
+      .filter((o) => existingRows.has(o.id) && onSchedule(o))
       .map((o) => ({
         workOrderNumber: o.workOrderNumber,
         customerName: o.customerName,

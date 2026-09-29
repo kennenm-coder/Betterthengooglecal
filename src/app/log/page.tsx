@@ -241,7 +241,8 @@ export default function LogPage() {
             <p className="font-medium">Nothing has changed</p>
             <p className="text-sm text-center mt-1">
               Jobs show up here when an upload moves them, changes the crew, or brings
-              them in new. Uploads that change nothing are not listed.
+              them in new. Uploads that change nothing are not listed, and neither are
+              jobs that were never on the schedule.
             </p>
           </div>
         ) : view === "jobs" ? (

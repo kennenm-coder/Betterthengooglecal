@@ -53,6 +53,21 @@ export function kindOf(c: ImportLogFieldChange): ChangeKind {
   return c.kind ?? LEGACY_KIND[c.field] ?? (c.isDate ? "schedule" : "status");
 }
 
+/**
+ * True for a job that has no date on it and never did inside this window —
+ * not field work anyone is tracking. A job that WAS scheduled and got taken
+ * off the schedule is the opposite: it has no date now, but the unscheduling
+ * itself is recorded as a Scheduled Start change, which is exactly the thing
+ * a field manager needs to see.
+ *
+ * The upload side already applies this rule, so it only bites on entries
+ * written before the rule existed and still inside the retention window.
+ */
+function isOffSchedule(job: Pick<JobChange, "scheduledStart" | "changes">): boolean {
+  if (job.scheduledStart) return false;
+  return !job.changes.some((c) => c.field === "Scheduled Start");
+}
+
 /** Fold every entry into one row per job, newest-touched first. */
 export function mergeJobChanges(entries: ImportLogEntry[]): JobChange[] {
   // Oldest first, so `from` keeps the earliest value and `lastAt` ends up on
@@ -109,6 +124,7 @@ export function mergeJobChanges(entries: ImportLogEntry[]): JobChange[] {
     // A field that ended where it began is not a change worth reading.
     const changes = Array.from(fields.values()).filter((c) => c.from !== c.to);
     if (job.action !== "added" && changes.length === 0) continue;
+    if (isOffSchedule({ ...job, changes })) continue;
     const kinds = Array.from(new Set(changes.map(kindOf)));
     out.push({ ...job, changes, kinds });
   }
