@@ -82,6 +82,23 @@ export function canEditLegacyLink(roles: RoleInput): boolean {
   return hasAny(roles, LEGACY_LINK_ROLES);
 }
 
+/**
+ * Who can open the Chat tab (GroupMe installer conversations).
+ *
+ * Admin ONLY for now — this is a pilot. Everyone shares ONE connected GroupMe
+ * account ("RBANWO Office"), so nobody needs their own GroupMe and nobody has
+ * to be a member of the installers' groups. That means widening access is just
+ * this list: add 'field-manager' here and in the read policy in migration 025,
+ * and they can use it immediately.
+ *
+ * Keep in sync with the RLS policies in
+ * supabase/migrations/025_installer_chats.sql and the server-side role checks
+ * in the /api/groupme/* routes.
+ */
+export function canUseInstallerChat(roles: RoleInput): boolean {
+  return isAdmin(roles);
+}
+
 /** Assignable roles, in the order shown in the admin Team checkboxes. */
 export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: "member", label: "Member" },
