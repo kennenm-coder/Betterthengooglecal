@@ -20,6 +20,8 @@ export type UserRole =
   // the shared allowed_emails table + Team UI stay the single source of truth.
   | "configuring"
   | "configuring-editing"
+  // Cut-list role for standalone (QO-) trim orders only — no job access there.
+  | "standalone-trim"
   // Job-Auditor-app role (no calendar capabilities; member-level in calendar).
   | "inventory-specialist";
 
