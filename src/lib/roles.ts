@@ -46,6 +46,17 @@ export function canDoFieldWork(roles: RoleInput): boolean {
 }
 
 /**
+ * Who sees the Floaters line — the install leads with no job that day.
+ *
+ * Field managers, who use it to find someone to send; admins, as always. The
+ * DB function sched_free_install_leads() enforces the same list, so hiding the
+ * banner is presentation, not the access control.
+ */
+export function canSeeFloaters(roles: RoleInput): boolean {
+  return isAdmin(roles) || hasAny(roles, ["field-manager"]);
+}
+
+/**
  * Roles that can review/close write-ups and approve photo deletion.
  * Field managers run the full review lifecycle alongside the office
  * (admin + payroll-admin): mark reviewed, close, reopen, archive.

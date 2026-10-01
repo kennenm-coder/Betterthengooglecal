@@ -13,7 +13,8 @@ import TimeOffBanner from "@/components/TimeOffBanner";
 import StaleTabTag from "@/components/StaleTabBanner";
 import { useStaleTab } from "@/hooks/useStaleTab";
 import { useAuth } from "@/hooks/useAuth";
-import { canManageTimeOff as canManageTimeOffRole, isAdmin } from "@/lib/roles";
+import { canManageTimeOff as canManageTimeOffRole, canSeeFloaters, isAdmin } from "@/lib/roles";
+import FloatersBanner from "@/components/FloatersBanner";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO } from "date-fns";
@@ -255,6 +256,12 @@ function CalendarPage() {
       </header>
 
       <TimeOffBanner requests={timeOffRequests} date={currentDate} />
+
+      {/* Who is free today — sits under the PTO line because the two answer the
+          same question from opposite sides. Field managers and admins only. */}
+      {canSeeFloaters(roles) && (
+        <FloatersBanner date={currentDate} timeOffRequests={timeOffRequests} />
+      )}
 
       {linkedJobsStale && (
         <button
