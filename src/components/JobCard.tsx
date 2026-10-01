@@ -3,6 +3,7 @@
 import { WorkOrder, MaterialJobData, MaterialUnit } from "@/lib/types";
 import { formatTime, formatDateShort, typeColor, typeTileText, openSalesforce } from "@/lib/calendar-utils";
 import CopyButton from "./CopyButton";
+import { shortDay } from "@/lib/format-utils";
 import {
   Phone,
   Mail,
@@ -23,8 +24,9 @@ import {
   Ruler,
   BadgeDollarSign,
   Link2,
+  Users,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import ActionModal from "./ActionModal";
 import WriteUpModal from "./WriteUpModal";
@@ -104,6 +106,18 @@ export default function JobCard({
   const typeBg = typeColor(order.workOrderType);
   const typeText = typeTileText(order.workOrderType);
   const multiDay = isMultiDay(order);
+  // Per-day crew breakdown, shown only when the job really has more than one
+  // crew on it — otherwise it just repeats the Primary Resource row above.
+  const crewDays = useMemo(() => {
+    const map = order.dayCrews;
+    if (!map) return [];
+    const entries = Object.entries(map)
+      .filter(([, names]) => names && names.length > 0)
+      .sort(([a], [b]) => a.localeCompare(b));
+    const distinct = new Set(entries.flatMap(([, names]) => names));
+    if (distinct.size < 2) return [];
+    return entries.map(([date, names]) => ({ date, names }));
+  }, [order.dayCrews]);
   const mat = order.materialJob;
   const legacyUrl = order.legacyInstallUrl || null;
 
@@ -305,6 +319,18 @@ export default function JobCard({
             {order.primaryResource && (
               <InfoRow icon={User} label="Primary Resource">
                 <span className="font-medium">{order.primaryResource}</span>
+              </InfoRow>
+            )}
+            {crewDays.length > 0 && (
+              <InfoRow icon={Users} label="Crews">
+                <div className="space-y-0.5">
+                  {crewDays.map(({ date, names }) => (
+                    <div key={date} className="flex gap-1.5">
+                      <span className="text-muted shrink-0">{shortDay(date)}</span>
+                      <span className="font-medium break-words">{names.join(" + ")}</span>
+                    </div>
+                  ))}
+                </div>
               </InfoRow>
             )}
             {order.orderOwner && (

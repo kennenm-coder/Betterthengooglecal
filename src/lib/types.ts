@@ -19,6 +19,16 @@ export interface WorkOrder {
   phones: PhoneEntry[];
   serviceDescription: string;
   primaryResource: string;
+  /**
+   * Every crew working this job, keyed by date (YYYY-MM-DD), published by the
+   * scheduling app. rForce only ever exports one resource, so this is the only
+   * place a job's second or third crew shows up — and it is per-day, because a
+   * helper crew can be on just part of a multi-day install.
+   *
+   * Absent for jobs the scheduling app doesn't know about; fall back to the
+   * single rForce resource then. See crewsForDate() in format-utils.
+   */
+  dayCrews?: Record<string, string[]> | null;
   workOrderType: string;
   description: string;
   combinedRetailTotal: number;

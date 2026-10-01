@@ -10,7 +10,7 @@ import { upsertLegacyLink } from "@/lib/store";
 import { WorkOrder } from "@/lib/types";
 import BottomNav from "@/components/BottomNav";
 import { typeColor, typeColorText, openSalesforce } from "@/lib/calendar-utils";
-import { crewName } from "@/lib/format-utils";
+import { crewsForDate } from "@/lib/format-utils";
 import { subDays, parseISO, format } from "date-fns";
 import { ChevronLeft, Link2, Check, Loader2, CalendarClock, ExternalLink } from "lucide-react";
 
@@ -68,11 +68,16 @@ export default function LegacyLinksPage() {
 
   // Crews present in the list (alphabetical) with per-crew totals, so the
   // schedulers can each work one crew at a time without overlapping.
+  // A job with two crews on it is listed under both, so whichever scheduler
+  // picks up that crew sees it. The per-crew counts therefore sum to more than
+  // the job total — deliberate for a work queue.
   const crews = useMemo(() => {
     const m = new Map<string, number>();
     for (const o of baseNeeds) {
-      const name = crewName(o) || "Unassigned";
-      m.set(name, (m.get(name) || 0) + 1);
+      const names = crewsForDate(o);
+      for (const name of names.length > 0 ? names : ["Unassigned"]) {
+        m.set(name, (m.get(name) || 0) + 1);
+      }
     }
     return Array.from(m.entries())
       .sort(([a], [b]) => a.localeCompare(b))
@@ -87,7 +92,10 @@ export default function LegacyLinksPage() {
   const crewNeeds = useMemo(
     () =>
       crewFilter
-        ? baseNeeds.filter((o) => (crewName(o) || "Unassigned") === crewFilter)
+        ? baseNeeds.filter((o) => {
+            const names = crewsForDate(o);
+            return (names.length > 0 ? names : ["Unassigned"]).includes(crewFilter);
+          })
         : baseNeeds,
     [baseNeeds, crewFilter]
   );
@@ -247,8 +255,10 @@ export default function LegacyLinksPage() {
                   {order.workOrderType}
                 </span>
                 <span className="text-xs text-muted">#{order.orderNumber}</span>
-                {crewName(order) && (
-                  <span className="text-xs text-muted truncate">· {crewName(order)}</span>
+                {crewsForDate(order).length > 0 && (
+                  <span className="text-xs text-muted truncate">
+                    · {crewsForDate(order).join(" + ")}
+                  </span>
                 )}
               </div>
               <div className="flex gap-2">

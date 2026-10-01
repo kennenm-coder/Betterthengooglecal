@@ -5,7 +5,7 @@ import { useData } from "@/components/DataProvider";
 import OrderSheet from "@/components/OrderSheet";
 import BottomNav from "@/components/BottomNav";
 import { searchOrders, searchMaterialJobs } from "@/lib/search";
-import { lastFirst, extractCity, crewName } from "@/lib/format-utils";
+import { lastFirst, extractCity, crewsForDate } from "@/lib/format-utils";
 import { typeColor, formatTime, formatDateShort } from "@/lib/calendar-utils";
 import { MaterialJobData, WorkOrder } from "@/lib/types";
 import { Search, Loader2, X, Database, MapPin, FileText, ClipboardList, Package } from "lucide-react";
@@ -165,7 +165,8 @@ function SearchOrderTile({
 }) {
   const typeBg = typeColor(order.workOrderType);
   const city = extractCity(order.address);
-  const crew = crewName(order);
+  // A search hit is the whole job, not one day of it — list every crew on it.
+  const crew = crewsForDate(order).join(" + ");
   const multiDay =
     order.scheduledStart &&
     order.scheduledEnd &&

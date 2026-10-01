@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { WorkOrder } from "@/lib/types";
 import { Filter, X, ChevronDown } from "lucide-react";
+import { crewsForDate, hasCrew } from "@/lib/format-utils";
 
 export interface Filters {
   installer: string | null;
@@ -13,8 +14,25 @@ export const EMPTY_FILTERS: Filters = { installer: null, serviceTech: null };
 
 export function applyFilters(orders: WorkOrder[], filters: Filters): WorkOrder[] {
   return orders.filter((o) => {
-    if (filters.installer && o.installer !== filters.installer) return false;
-    if (filters.serviceTech && o.serviceRep !== filters.serviceTech) return false;
+    // Match ANY crew on the job, not just the one rForce exports. Filtering on
+    // the single resource field hid multi-crew jobs from their second crew
+    // entirely — they saw no tile at all, not just a tile missing a name.
+    //
+    // The extra crews only count for the field the job actually carries, so an
+    // install crew filter still can't pull in a service job that happens to
+    // share a name — the two dropdowns stay separate, as before.
+    if (filters.installer) {
+      const match =
+        o.installer === filters.installer ||
+        (!!o.installer && hasCrew(o, filters.installer));
+      if (!match) return false;
+    }
+    if (filters.serviceTech) {
+      const match =
+        o.serviceRep === filters.serviceTech ||
+        (!!o.serviceRep && hasCrew(o, filters.serviceTech));
+      if (!match) return false;
+    }
     return true;
   });
 }
@@ -23,11 +41,21 @@ export function hasActiveFilters(filters: Filters): boolean {
   return filters.installer !== null || filters.serviceTech !== null;
 }
 
-function getUniqueValues(orders: WorkOrder[], field: keyof WorkOrder): string[] {
+/**
+ * Crew names for the dropdown: the rForce field plus every crew the scheduling
+ * app added. Without the second half a helper crew never appears in the list,
+ * so there is no way to filter to it.
+ *
+ * Extra crews are only collected from jobs that carry this field, keeping the
+ * install and service dropdowns the separate lists they have always been.
+ */
+function getCrewOptions(orders: WorkOrder[], field: "installer" | "serviceRep"): string[] {
   const set = new Set<string>();
   for (const o of orders) {
     const val = o[field];
-    if (typeof val === "string" && val.trim()) set.add(val);
+    if (!val || !val.trim()) continue;
+    set.add(val);
+    for (const name of crewsForDate(o)) if (name) set.add(name);
   }
   return Array.from(set).sort();
 }
@@ -44,8 +72,8 @@ export default function FilterPanel({
   const [open, setOpen] = useState(false);
   const active = hasActiveFilters(filters);
 
-  const installers = useMemo(() => getUniqueValues(orders, "installer"), [orders]);
-  const serviceTechs = useMemo(() => getUniqueValues(orders, "serviceRep"), [orders]);
+  const installers = useMemo(() => getCrewOptions(orders, "installer"), [orders]);
+  const serviceTechs = useMemo(() => getCrewOptions(orders, "serviceRep"), [orders]);
 
   return (
     <div className="relative">

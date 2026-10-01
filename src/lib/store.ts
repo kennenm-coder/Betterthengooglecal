@@ -63,6 +63,7 @@ interface WorkOrderRow {
   phones: any;
   service_description: string;
   primary_resource: string;
+  day_crews: Record<string, string[]> | null;
   description: string;
   combined_retail_total: number;
   product_count: number;
@@ -106,6 +107,7 @@ function rowToWorkOrder(row: WorkOrderRow): WorkOrder {
     phones: row.phones || [],
     serviceDescription: row.service_description || "",
     primaryResource: row.primary_resource || "",
+    dayCrews: row.day_crews ?? null,
     description: row.description || "",
     combinedRetailTotal: row.combined_retail_total || 0,
     productCount: row.product_count || 0,

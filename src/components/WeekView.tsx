@@ -2,7 +2,7 @@
 
 import { WorkOrder, TimeOffRequest } from "@/lib/types";
 import { getOrdersForWeek, typeColor, typeTileText, formatTime, multiDayProgress } from "@/lib/calendar-utils";
-import { lastFirst, crewName, sortByStartTime, extractCity } from "@/lib/format-utils";
+import { lastFirst, crewsForDate, sortByStartTime, extractCity } from "@/lib/format-utils";
 import { format, startOfWeek, addDays, isToday } from "date-fns";
 import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
@@ -96,7 +96,7 @@ export default function WeekView({
               </h3>
               <div className="space-y-1.5">
                 {dayOrders.map((order) => {
-                  const crew = crewName(order);
+                  const crews = crewsForDate(order, dayKey);
                   const city = extractCity(order.address);
                   const multiDay = multiDayProgress(order, day);
                   return (
@@ -118,7 +118,7 @@ export default function WeekView({
                         )}
                         <span>{formatTime(order.scheduledStart)}</span>
                         {city && <span>&middot; {city}</span>}
-                        {crew && <span>&middot; {crew}</span>}
+                        {crews.length > 0 && <span>&middot; {crews.join(" + ")}</span>}
                         {order.materialJob && (
                           <span className="px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-semibold">
                             Linked

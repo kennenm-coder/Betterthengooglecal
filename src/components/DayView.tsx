@@ -3,7 +3,7 @@
 import { WorkOrder } from "@/lib/types";
 import { getOrdersForDay, getHourSlot, typeColor, typeTileText, multiDayProgress } from "@/lib/calendar-utils";
 import { formatTime } from "@/lib/calendar-utils";
-import { lastFirst, crewName, sortByStartTime, extractCity } from "@/lib/format-utils";
+import { lastFirst, crewsForDate, sortByStartTime, extractCity } from "@/lib/format-utils";
 import { format } from "date-fns";
 import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
@@ -42,6 +42,8 @@ export default function DayView({
     return map;
   }, [dayOrders]);
 
+  const dayKey = format(date, "yyyy-MM-dd");
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="bg-background z-10 px-4 py-2 border-b border-border">
@@ -62,7 +64,9 @@ export default function DayView({
               </div>
               <div className="flex-1 min-w-0 border-l border-border/50 py-1 px-2 space-y-1">
                 {hourOrders.map((order) => {
-                  const crew = crewName(order);
+                  // Every crew on the job THIS day — a helper crew can be on
+                  // only part of a multi-day install.
+                  const crews = crewsForDate(order, dayKey);
                   const city = extractCity(order.address);
                   const multiDay = multiDayProgress(order, date);
                   return (
@@ -84,7 +88,7 @@ export default function DayView({
                         )}
                         <span>{formatTime(order.scheduledStart)}</span>
                         {city && <span>&middot; {city}</span>}
-                        {crew && <span>&middot; {crew}</span>}
+                        {crews.length > 0 && <span>&middot; {crews.join(" + ")}</span>}
                         {order.materialJob && (
                           <span className="px-1.5 py-0.5 rounded bg-white/20 text-xs font-semibold">
                             Linked

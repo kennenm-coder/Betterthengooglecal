@@ -2,7 +2,7 @@
 
 import { WorkOrder, TimeOffRequest } from "@/lib/types";
 import { typeColor, typeTileText } from "@/lib/calendar-utils";
-import { lastFirst, crewName } from "@/lib/format-utils";
+import { lastFirst, crewsForDate } from "@/lib/format-utils";
 import { getTimeOffForDate } from "@/lib/time-off-store";
 import { format } from "date-fns";
 import { useState, useMemo } from "react";
@@ -83,7 +83,7 @@ export default function WeekBarOverview({
               {visible.map((bar) => {
                 if (bar.kind === "order") {
                   const name = lastFirst(bar.order.customerName).split(",")[0];
-                  const crew = crewName(bar.order);
+                  const crew = crewsForDate(bar.order, key).join(" + ");
                   return (
                     <button
                       key={bar.order.id}
