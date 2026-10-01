@@ -12,6 +12,7 @@ import {
   updateWriteUpLineItems,
   writeUpsToPlainText,
   deleteWriteUpPhotos,
+  getSignedPhotoUrl,
   loadCachedWriteUps,
   writeUpsCacheFresh,
   invalidateWriteUpsCache,
@@ -528,6 +529,7 @@ export default function WorkOrdersPage() {
                       <div key={sec.key} className="border-t-2 border-border">
                         <ReviewSection
                           section={sec}
+                          visible={isOpen}
                           total={sections.length}
                           canReview={canReview}
                           canComplete={canEdit}
@@ -626,6 +628,7 @@ function StatusPill({ status }: { status: WriteUpStatus }) {
  */
 function ReviewSection({
   section,
+  visible,
   total,
   canReview,
   canComplete,
@@ -637,6 +640,8 @@ function ReviewSection({
   onDeletePhotos,
 }: {
   section: WriteUpSection;
+  /** The group is expanded — only then are photo URLs worth signing. */
+  visible: boolean;
   total: number;
   canReview: boolean;
   canComplete: boolean;
@@ -653,8 +658,25 @@ function ReviewSection({
   const allCompleted = allWork.length > 0 && allWork.every((i) => i.completed);
   const [confirmPhotos, setConfirmPhotos] = useState(false);
   const [deletingPhotos, setDeletingPhotos] = useState(false);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [archiving, setArchiving] = useState(false);
+
+  const photoPaths = section.photos.map((p) => p.path).join("|");
+  useEffect(() => {
+    if (!visible || !photoPaths) return;
+    let cancelled = false;
+    (async () => {
+      const paths = photoPaths.split("|");
+      const pairs = await Promise.all(
+        paths.map(async (path) => [path, (await getSignedPhotoUrl(path)) || ""] as const)
+      );
+      if (!cancelled) setPhotoUrls(Object.fromEntries(pairs));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, photoPaths]);
 
   // Whole-job note → what's wrong / financing / paint (matches the create screen).
   let background = "", financing = "", paint = "";
@@ -858,11 +880,34 @@ function ReviewSection({
         </div>
       )}
 
-      {/* 5. Photos (count — open the Doc to view) */}
+      {/* 5. Photos — shown here; the thumbnail opens the full shot. */}
       {section.photos.length > 0 && (
-        <div className="text-xs text-muted flex items-center gap-1.5">
-          <Camera className="w-3.5 h-3.5" />
-          {section.photos.length} photo{section.photos.length !== 1 ? "s" : ""} — open the Doc to view
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1 flex items-center gap-1.5">
+            <Camera className="w-3.5 h-3.5" />
+            Photos ({section.photos.length})
+          </div>
+          <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+            {section.photos.map((p) => (
+              <a
+                key={p.path}
+                href={photoUrls[p.path] || undefined}
+                target="_blank"
+                rel="noreferrer"
+                title={p.name}
+                className="block aspect-square rounded-lg overflow-hidden border border-border bg-surface"
+              >
+                {photoUrls[p.path] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={photoUrls[p.path]} alt={p.name} className="w-full h-full object-cover" loading="lazy" />
+                ) : (
+                  <span className="flex items-center justify-center w-full h-full text-muted">
+                    <Camera className="w-4 h-4 opacity-40" />
+                  </span>
+                )}
+              </a>
+            ))}
+          </div>
         </div>
       )}
 

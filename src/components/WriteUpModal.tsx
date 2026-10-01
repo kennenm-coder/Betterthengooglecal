@@ -33,7 +33,6 @@ import {
   saveWriteUpBatchEdit,
   buildWriteUpEmailContent,
   WRITEUP_EMAIL_TO,
-  updateWriteUp,
   deleteWriteUp,
   getSignedPhotoUrl,
   WriteUpEntryInput,
@@ -67,8 +66,6 @@ import {
   ImagePlus,
   Send,
   RotateCcw,
-  MessageSquare,
-  StickyNote,
   AlertTriangle,
   FileText,
 } from "lucide-react";
@@ -84,11 +81,8 @@ interface Props {
   initialUnit?: string | null;
   onClose: () => void;
   onSaved?: () => void;
-  /** When set, the modal edits this existing write-up in place instead of
-   *  creating new ones. */
-  editWriteUp?: FieldWorkOrder;
   /** When set, edit a whole submission (all its unit rows) through the guided
-   *  new-write-up flow, saving each row in place. Takes precedence over editWriteUp. */
+   *  write-up flow, saving each row in place. */
   editBatch?: FieldWorkOrder[];
 }
 
@@ -100,7 +94,6 @@ interface LocalPhoto {
   /** Set for photos already uploaded (editing an existing write-up). */
   path?: string;
 }
-
 
 // ── Issue-first model (create) ──────────────────────────────────────────────
 // Flat model (matches the old spreadsheet):
@@ -150,7 +143,7 @@ interface WuIssue {
 }
 
 /** Where the camera / upload is currently adding photos. */
-type PhotoTarget = { kind: "edit" } | { kind: "issue"; issueId: string } | null;
+type PhotoTarget = { kind: "issue"; issueId: string } | null;
 
 const emptyProduct: WriteUpNewProduct = {
   type: "",
@@ -293,11 +286,9 @@ function specEntriesFromChanges(changes: SpecChange[]): SpecEntry[] {
   });
 }
 
-export default function WriteUpModal({ order, units, onClose, onSaved, editWriteUp, editBatch }: Props) {
+export default function WriteUpModal({ order, units, onClose, onSaved, editBatch }: Props) {
   const { user, autoCc } = useAuth();
   const isBatchEdit = !!editBatch && editBatch.length > 0;
-  // The old single-row flat editor only applies when NOT doing a guided batch edit.
-  const isEditing = !!editWriteUp && !isBatchEdit;
   const [presets, setPresets] = useState<string[]>([]);
   const [catalog, setCatalog] = useState<CatalogPickItem[]>([]);
   const [options, setOptions] = useState<UnitOptions | null>(null);
@@ -316,15 +307,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const [wuUnits, setWuUnits] = useState<WuUnit[]>([]);
   const [issues, setIssues] = useState<WuIssue[]>([]);
   const [showSummary, setShowSummary] = useState(false);
+  // Financing / paint notes stay out of the way until asked for — they're rare
+  // next to "What's wrong?", which every write-up needs.
+  const [showExtraNotes, setShowExtraNotes] = useState(false);
+  // Units a blocked Submit flagged, so the message points at the actual card
+  // instead of describing it from the bottom of a long scroll.
+  const [badUnitKeys, setBadUnitKeys] = useState<string[]>([]);
   const [photoTarget, setPhotoTarget] = useState<PhotoTarget>(null);
   // EDIT: a single existing row loaded as a flat per-unit form.
-  const [editWork, setEditWork] = useState<WriteUpLineItem[]>([]);
-  const [editSpecs, setEditSpecs] = useState<SpecEntry[]>([]);
-  const [editMaterials, setEditMaterials] = useState<WriteUpMaterialItem[]>([]);
-  const [editPhotos, setEditPhotos] = useState<LocalPhoto[]>([]);
-  const [editNote, setEditNote] = useState("");
-  const [editUnitLabel, setEditUnitLabel] = useState("");
-
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState("");
@@ -340,7 +330,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   // Brief success confirmation shown after a submit before the modal closes.
   const [sentOk, setSentOk] = useState<null | "emailed" | "saved">(null);
   // Edit mode: status + saving flag
-  const [status, setStatus] = useState<WriteUpStatus>(editWriteUp?.status || "open");
+  const [status, setStatus] = useState<WriteUpStatus>(editBatch?.[0]?.status || "open");
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deletingWriteUp, setDeletingWriteUp] = useState(false);
@@ -383,7 +373,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   }, [partsCatalog.length]);
 
   useEffect(() => {
-    if (isEditing || isBatchEdit) return; // editing doesn't use the local draft system
+    if (isBatchEdit) return; // editing doesn't use the local draft system
     let cancelled = false;
     loadDraft(order.orderNumber).then((d) => {
       if (cancelled) return;
@@ -405,42 +395,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [order.orderNumber, isEditing]);
-
-  // Edit mode: load the existing write-up (one unit) into the flat form.
-  useEffect(() => {
-    if (!editWriteUp) return;
-    let cancelled = false;
-    (async () => {
-      const loaded: LocalPhoto[] = [];
-      for (const p of editWriteUp.photos) {
-        const url = await getSignedPhotoUrl(p.path);
-        if (!url) continue;
-        try {
-          const res = await fetch(url);
-          if (res.ok) {
-            const blob = await res.blob();
-            loaded.push({ id: crypto.randomUUID(), name: p.name, blob, path: p.path });
-          }
-        } catch {
-          /* skip a photo that won't load */
-        }
-      }
-      if (cancelled) return;
-      setEditWork(editWriteUp.lineItems);
-      setEditSpecs(specEntriesFromChanges(editWriteUp.specChanges));
-      setEditMaterials(editWriteUp.materialItems);
-      setEditNote(editWriteUp.notes);
-      setEditPhotos(loaded);
-      setEditUnitLabel(editWriteUp.unitLabel || "");
-      setStatus(editWriteUp.status);
-      setDraftReady(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editWriteUp]);
+  }, [order.orderNumber, isBatchEdit]);
 
   // Batch edit: load a whole submission into the guided (new-write-up) flow.
   // The text + structure fill in immediately; photos download in the background
@@ -593,6 +548,17 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     return opts;
   }, [units]);
 
+  // Units on the job that aren't on the write-up yet. Offered inside each work
+  // item so a unit can be pulled in there instead of scrolling back up to
+  // "Units affected" and losing your place.
+  const unaddedUnitLabels = useMemo(
+    () =>
+      unitOptions
+        .filter((o) => !wuUnits.some((u) => !u.isNewProduct && u.unitLabel === o.label))
+        .map((o) => o.label),
+    [unitOptions, wuUnits]
+  );
+
   // Every vendor seen anywhere in the material catalog (not just the picked
   // profile's) so the trim adder's vendor list includes shop / warehouse / etc.
   const vendorOptions = useMemo(() => {
@@ -612,20 +578,18 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     },
     []
   );
-  /** Commit every adder's pending entry into the model right before a save.
-   *  Returns the merged issues (create flow) + any flushed edit-mode materials. */
-  function flushAdders(): { mergedIssues: WuIssue[]; editMats: WriteUpMaterialItem[] } {
+  /** Commit every adder's pending entry into the model right before a save, so
+   *  nothing typed-but-not-added is lost. */
+  function flushAdders(): { mergedIssues: WuIssue[] } {
     const matByIssue = new Map<string, WriteUpMaterialItem[]>();
     const partByIssue = new Map<string, PartItem[]>();
-    const editMats: WriteUpMaterialItem[] = [];
     for (const [key, fn] of flushers.current) {
       const res = fn();
       if (!res) continue;
       const sep = key.indexOf(":");
       const kind = key.slice(0, sep);
       const id = key.slice(sep + 1);
-      if (kind === "mat" && id === "edit") editMats.push(res as WriteUpMaterialItem);
-      else if (kind === "mat") matByIssue.set(id, [...(matByIssue.get(id) || []), res as WriteUpMaterialItem]);
+      if (kind === "mat") matByIssue.set(id, [...(matByIssue.get(id) || []), res as WriteUpMaterialItem]);
       else if (kind === "parts") partByIssue.set(id, [...(partByIssue.get(id) || []), res as PartItem]);
     }
     let mergedIssues = issues;
@@ -642,15 +606,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       });
       setIssues(mergedIssues);
     }
-    if (editMats.length) setEditMaterials((prev) => [...prev, ...editMats]);
-    return { mergedIssues, editMats };
+    return { mergedIssues };
   }
 
   // ── Units affected (create): top-level list + per-unit specs ──
-  function makeWuUnit(opts: { isNewProduct: boolean; unitLabel: string }): WuUnit {
+  function makeWuUnit(opts: { isNewProduct: boolean; unitLabel: string; key?: string }): WuUnit {
     const u = opts.isNewProduct ? null : unitOptions.find((o) => o.label === opts.unitLabel)?.unit || null;
     return {
-      key: crypto.randomUUID(),
+      key: opts.key || crypto.randomUUID(),
       isNewProduct: opts.isNewProduct,
       unitLabel: opts.unitLabel,
       unitType: u ? String(u.unitType || u.type || u.summarySubType || "") : "",
@@ -710,31 +673,29 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       })
     );
   }
+  /** Pull a job unit onto the write-up from inside a work item and attach it to
+   *  that item. Same result as tapping it up in "Units affected", without the
+   *  round trip. */
+  function addUnitToIssue(issueId: string, label: string) {
+    const existing = wuUnits.find((u) => !u.isNewProduct && u.unitLabel === label);
+    const key = existing?.key || crypto.randomUUID();
+    if (!existing) setWuUnits((prev) => [...prev, makeWuUnit({ isNewProduct: false, unitLabel: label, key })]);
+    setIssues((prev) =>
+      prev.map((it) =>
+        it.id === issueId && !it.unitKeys.includes(key) ? { ...it, unitKeys: [...it.unitKeys, key] } : it
+      )
+    );
+  }
+  /** Same, for a unit that isn't on the job at all. Its Unit # and Product type
+   *  show inline on the work item until they're filled in, so a half-entered
+   *  unit can't quietly block Submit later. */
+  function addManualUnitToIssue(issueId: string) {
+    const key = crypto.randomUUID();
+    setWuUnits((prev) => [...prev, makeWuUnit({ isNewProduct: true, unitLabel: "", key })]);
+    setIssues((prev) => prev.map((it) => (it.id === issueId ? { ...it, unitKeys: [...it.unitKeys, key] } : it)));
+  }
 
-  // ── Edit-mode work items ──
-  function addWorkItem(label: string, kind: "preset" | "custom") {
-    const v = label.trim();
-    if (!v) return;
-    if (editWork.some((w) => w.label.toLowerCase() === v.toLowerCase())) return;
-    setEditWork((prev) => [...prev, { kind, label: v }]);
-  }
-  function removeWorkItem(i: number) {
-    setEditWork((prev) => prev.filter((_, j) => j !== i));
-  }
-  function setWorkItemNotes(i: number, notes: string | undefined) {
-    setEditWork((prev) => prev.map((w, j) => (j === i ? { ...w, notes } : w)));
-  }
-  function toggleWorkItemComplete(i: number) {
-    setEditWork((prev) => prev.map((w, j) => (j === i ? { ...w, completed: !w.completed } : w)));
-  }
-  function changeStatus(s: WriteUpStatus) {
-    setStatus(s);
-    if (s === "closed") setEditWork((prev) => prev.map((w) => ({ ...w, completed: true })));
-  }
-  const editUnit =
-    unitOptions.find((o) => o.label === editUnitLabel)?.unit || null;
-
-  // ── Photos (edit = the row's photos; create = per work-item) ──
+  // ── Photos (attached per work item) ──
   function untrackCamera(photoId: string) {
     setCameraPhotoIds((prev) => {
       if (!prev.has(photoId)) return prev;
@@ -747,17 +708,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     if (!target) return;
     const added: LocalPhoto[] = files.map((f) => ({ id: crypto.randomUUID(), name: f.name || "photo", blob: f }));
     for (const a of added) if (a.blob) putDraftPhoto(a.id, a.blob);
-    if (target.kind === "edit") {
-      setEditPhotos((prev) => [...prev, ...added]);
-    } else {
-      setIssues((prev) => prev.map((it) => (it.id === target.issueId ? { ...it, photos: [...it.photos, ...added] } : it)));
-    }
+    setIssues((prev) => prev.map((it) => (it.id === target.issueId ? { ...it, photos: [...it.photos, ...added] } : it)));
     if (fromCamera) setCameraPhotoIds((prev) => { const n = new Set(prev); added.forEach((a) => n.add(a.id)); return n; });
-  }
-  function removeEditPhoto(photoId: string) {
-    setEditPhotos((prev) => prev.filter((p) => p.id !== photoId));
-    untrackCamera(photoId);
-    deleteDraftPhoto(photoId);
   }
   function removeIssuePhoto(issueId: string, photoId: string) {
     setIssues((prev) => prev.map((it) => (it.id === issueId ? { ...it, photos: it.photos.filter((p) => p.id !== photoId) } : it)));
@@ -769,7 +721,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     setShowCamera(true);
   }
 
-  const allPhotos = isEditing ? editPhotos : issues.flatMap((it) => it.photos);
+  const allPhotos = issues.flatMap((it) => it.photos);
   const unsavedCameraPhotos = allPhotos.filter((p) => cameraPhotoIds.has(p.id));
 
   function photoToFile(p: LocalPhoto): File | null {
@@ -829,12 +781,6 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         (u.hasSpecChange && u.specEntries.some((e) => specEntryValue(e).length > 0)))
   );
 
-  const editHasContent =
-    editWork.length > 0 ||
-    editSpecs.some((e) => specEntryValue(e).length > 0) ||
-    editMaterials.length > 0 ||
-    editPhotos.length > 0 ||
-    editNote.trim().length > 0;
   const createHasContent =
     validIssues.length > 0 ||
     validUnits.some((u) => u.hasSpecChange && u.specEntries.some((e) => specEntryValue(e).length > 0)) ||
@@ -843,7 +789,26 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     financingNotes.trim().length > 0 ||
     paintStainNotes.trim().length > 0 ||
     responsibility.length > 0;
-  const editorHasContent = isEditing ? editHasContent : createHasContent;
+  const editorHasContent = createHasContent;
+
+  /** Point the field manager at the unit cards that are blocking Submit, rather
+   *  than describing them in a sentence they have to go hunting with. */
+  function flagIncompleteUnits(): void {
+    const keys = incompleteManualUnits.map((u) => u.key);
+    setBadUnitKeys(keys);
+    if (!keys.length || typeof document === "undefined") return;
+    requestAnimationFrame(() =>
+      document.getElementById(`wu-unit-${keys[0]}`)?.scrollIntoView({ behavior: "smooth", block: "center" })
+    );
+  }
+  const incompleteUnitError =
+    incompleteManualUnits.length === 1
+      ? "Finish the highlighted unit — it needs a Unit # and a Product type, or remove it."
+      : "Finish the highlighted units — each needs a Unit # and a Product type, or remove it.";
+  // That warning drops the moment the units are finished, so it can't sit there
+  // contradicting a form that's now fine.
+  const shownError =
+    error.startsWith("Finish the highlighted unit") && incompleteManualUnits.length === 0 ? "" : error;
 
   /** Fan out to one row per affected unit, plus a whole-job row that carries
    *  general work, the background/notes, the material list, and the photos. */
@@ -1047,7 +1012,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   // the latest state without re-binding listeners on every keystroke.
   const flushRef = useRef<() => void>(() => {});
   flushRef.current = () => {
-    if (isEditing || isBatchEdit || !draftReady || submitting) return;
+    if (isBatchEdit || !draftReady || submitting) return;
     const d = buildDraftNow();
     if (d) saveDraft(d);
     else clearDraft(order.orderNumber);
@@ -1070,7 +1035,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   // ── Auto-save (debounced) ──
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (isEditing || isBatchEdit || !draftReady || submitting) return;
+    if (isBatchEdit || !draftReady || submitting) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const d = buildDraftNow();
@@ -1091,53 +1056,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   // ── Close guard ──
   const dirty = editorHasContent;
   function attemptClose() {
-    if (isEditing) {
-      onClose(); // edit mode: no draft to preserve
-      return;
-    }
     if (dirty) setClosing(true);
     else onClose();
   }
 
-  async function saveChanges() {
-    if (!editWriteUp || saving) return;
-    setSaving(true);
-    setError("");
-    // Commit any typed-but-not-added trim so it isn't lost on save.
-    const { editMats } = flushAdders();
-    const materialItems = editMats.length ? [...editMaterials, ...editMats] : editMaterials;
-    const label = editWriteUp.newProduct ? editUnitLabel.trim() : editUnitLabel;
-    const keepPhotos: WriteUpPhoto[] = editPhotos
-      .filter((p) => p.path)
-      .map((p) => ({ path: p.path!, name: p.name }));
-    const newPhotoFiles = editPhotos.filter((p) => !p.path && p.blob).map((p) => p.blob!);
-    const res = await updateWriteUp(editWriteUp.id, {
-      orderNumber: order.orderNumber || editWriteUp.orderNumber,
-      unitLabel: editUnitLabel.trim() || null,
-      lineItems: editWork,
-      specChanges: specChangesOf(editSpecs, label),
-      materialItems,
-      newProduct: editWriteUp.newProduct,
-      notes: editNote.trim(),
-      status,
-      keepPhotos,
-      newPhotoFiles,
-      updatedBy: user?.email || "",
-      updatedByName: user?.email?.split("@")[0] || "",
-    });
-    setSaving(false);
-    if (!res.ok) {
-      setError(res.error ? `Couldn't save: ${res.error}` : "Couldn't save changes — try again.");
-      return;
-    }
-    onSaved?.();
-    onClose();
-  }
-
   async function handleDeleteWriteUp() {
     if (deletingWriteUp) return;
-    // Batch edit deletes every row of the submission; flat edit deletes one row.
-    const rows = isBatchEdit ? editBatch || [] : editWriteUp ? [editWriteUp] : [];
+    // Deletes every row of the submission.
+    const rows = editBatch || [];
     if (rows.length === 0) return;
     setDeletingWriteUp(true);
     setError("");
@@ -1165,7 +1091,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       return;
     }
     if (incompleteManualUnits.length > 0) {
-      setError("Finish the manually-added unit(s): each needs a Unit # and a Product type, or remove it — otherwise its spec changes won't save.");
+      setError(incompleteUnitError);
+      flagIncompleteUnits();
       return;
     }
     setSaving(true);
@@ -1209,7 +1136,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
 
   async function submitWriteUp(sendEmail: boolean, startStatus: WriteUpStatus = "in_review") {
     if (startStatus !== "draft" && validIssues.length === 0) {
-      setError("Add at least one issue with a description and a scope.");
+      setError("Add at least one work item before submitting — a draft can be saved without one.");
       return;
     }
     if (startStatus === "draft" && !createHasContent) {
@@ -1217,7 +1144,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       return;
     }
     if (startStatus !== "draft" && incompleteManualUnits.length > 0) {
-      setError("Finish the manually-added unit(s): each needs a Unit # and a Product type, or remove it — otherwise its spec changes won't save.");
+      setError(incompleteUnitError);
+      flagIncompleteUnits();
       return;
     }
 
@@ -1360,7 +1288,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     }
   }
 
-  const totalUnits = buildInputs().length;
+  // Optional notes open themselves when they already hold something — a resumed
+  // draft or an edit shouldn't hide text the write-up already has.
+  const extraNotesOpen = showExtraNotes || financingNotes.trim().length > 0 || paintStainNotes.trim().length > 0;
 
   return (
     <div
@@ -1374,19 +1304,28 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-6">
           <div className="bg-background rounded-2xl shadow-xl w-full max-w-xs p-5 text-center">
             <RotateCcw className="w-8 h-8 text-amber-600 mx-auto mb-2" />
-            <p className="font-semibold">Leave this write-up?</p>
+            <p className="font-semibold">{isBatchEdit ? "Leave without saving?" : "Leave this write-up?"}</p>
             <p className="text-xs text-muted mt-1">
-              Your progress is saved as a draft — you can resume it later, or discard it now.
+              {isBatchEdit
+                ? "Your changes to this write-up haven't been saved yet."
+                : "Your progress is saved as a draft — you can resume it later, or discard it now."}
             </p>
             <div className="mt-4 space-y-2">
               <button onClick={() => setClosing(false)} className="w-full py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold">
                 Keep editing
               </button>
-              <button onClick={saveAndClose} className="w-full py-3 rounded-xl border border-border text-sm font-medium">
-                Save draft &amp; close
-              </button>
-              <button onClick={discardAndClose} className="w-full py-3 rounded-xl text-sm font-medium text-danger">
-                Discard write-up
+              {/* Drafts belong to new write-ups only — offering one here would
+               *  quietly copy an existing write-up into the job's draft slot. */}
+              {!isBatchEdit && (
+                <button onClick={saveAndClose} className="w-full py-3 rounded-xl border border-border text-sm font-medium">
+                  Save draft &amp; close
+                </button>
+              )}
+              <button
+                onClick={isBatchEdit ? onClose : discardAndClose}
+                className="w-full py-3 rounded-xl text-sm font-medium text-danger"
+              >
+                {isBatchEdit ? "Discard changes" : "Discard write-up"}
               </button>
             </div>
           </div>
@@ -1510,7 +1449,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             <Wrench className="w-5 h-5 text-amber-600 shrink-0" />
             <div className="min-w-0">
               <h2 className="text-base font-semibold leading-tight">
-                {isEditing || isBatchEdit ? "Edit Write-Up" : "Field Write-Up"}
+                {isBatchEdit ? "Edit Write-Up" : "Field Write-Up"}
               </h2>
               <p className="text-xs text-muted leading-tight truncate">
                 {order.customerName} · #{order.orderNumber}
@@ -1547,14 +1486,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
           {/* Status — edit mode only */}
-          {(isEditing || isBatchEdit) && (
+          {isBatchEdit && (
             <section>
               <SectionLabel>Status</SectionLabel>
               <div className="flex gap-2 mt-2">
                 {(["draft", "in_review", "open", "closed"] as WriteUpStatus[]).map((s) => (
                   <button
                     key={s}
-                    onClick={() => changeStatus(s)}
+                    onClick={() => setStatus(s)}
                     className={`flex-1 py-2.5 rounded-lg text-xs font-medium border transition-colors ${
                       status === s ? "bg-amber-500 border-amber-500 text-white" : "border-border text-muted"
                     }`}
@@ -1566,269 +1505,249 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             </section>
           )}
 
-          {isEditing ? (
-            /* ── Edit: one existing unit, flat form ── */
-            <>
-              <section>
-                <SectionLabel>What needs done? — {editUnitLabel || "Whole job"}</SectionLabel>
-                <div className="mt-3">
-                  <WorkNeeded
-                    presets={presets}
-                    items={editWork}
-                    onAdd={addWorkItem}
-                    onRemove={removeWorkItem}
-                    onNotes={setWorkItemNotes}
-                    allowComplete
-                    onToggleComplete={toggleWorkItemComplete}
-                  />
-                </div>
-              </section>
-              <UnitSpecSection
-                unit={editUnit}
-                specEntries={editSpecs}
-                onChange={setEditSpecs}
-                colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
-                finishOptions={options?.intFinishes || []}
-                speciesOptions={trimOptions?.species || []}
-                stainOptions={trimOptions?.stains || []}
-              />
-              <MaterialSection
-                materials={editMaterials}
-                onChange={setEditMaterials}
-                catalog={catalog}
-                colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
-                speciesOptions={trimOptions?.species || []}
-                vendorOptions={vendorOptions}
-                onRegisterFlush={(fn) => registerFlush("mat:edit", fn)}
-              />
-              <PhotoSection
-                photos={editPhotos}
-                onOpenCamera={() => openCamera({ kind: "edit" })}
-                onUpload={(files) => addPhotosTo({ kind: "edit" }, files)}
-                onRemove={removeEditPhoto}
-              />
-              <section>
-                <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
-                  <StickyNote className="w-3.5 h-3.5" /> Note
-                </span>
+          {/* The guided write-up flow — a new write-up and an edit both use it. */}
+            {/* 1. What's wrong — the one thing every write-up needs, asked first.
+             *  Financing / paint notes stay behind a link, and Responsibility
+             *  (office coding) waits until the bottom. */}
+            <section className="space-y-3">
+              <div>
+                <SectionLabel step={1}>What&apos;s wrong?</SectionLabel>
                 <textarea
-                  value={editNote}
-                  onChange={(e) => setEditNote(e.target.value)}
-                  rows={2}
-                  placeholder="Anything else the office should know…"
+                  value={background}
+                  onChange={(e) => setBackground(e.target.value)}
+                  rows={3}
+                  placeholder="Overall situation — e.g. the original windows were stained the wrong color…"
                   className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-3 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
                 />
-              </section>
-            </>
-          ) : (
-            /* ── Create: flat top-level flow ── */
-            <>
-              {/* 1. What's wrong + notes */}
-              <section className="space-y-3">
-                <div>
-                  <label className="text-xs text-muted block mb-1">Responsibility</label>
-                  <div className="flex flex-wrap gap-2">
-                    {RESPONSIBILITY_OPTIONS.map((o) => (
-                      <button
-                        type="button"
-                        key={o.value}
-                        onClick={() => {
-                          const next = responsibility === o.value ? "" : o.value;
-                          setResponsibility(next);
-                          if (next !== "retail") setDefectCode("");
-                        }}
-                        className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
-                          responsibility === o.value
-                            ? "bg-amber-500 text-white border-amber-500"
-                            : "border-border text-muted hover:border-amber-400/60"
-                        }`}
-                      >
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {responsibility === "retail" && (
+              </div>
+              {extraNotesOpen ? (
+                <>
                   <div>
-                    <label className="text-xs text-muted block mb-1">Defect code (source)</label>
-                    <select
-                      value={defectCode}
-                      onChange={(e) => setDefectCode(e.target.value)}
-                      className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-                    >
-                      <option value="">Select a source…</option>
-                      {DEFECT_CODES.map((d) => (
-                        <option key={d.code} value={d.code}>
-                          {d.code} — {d.source}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                <div>
-                  <SectionLabel step={1}>What&apos;s wrong?</SectionLabel>
-                  <textarea
-                    value={background}
-                    onChange={(e) => setBackground(e.target.value)}
-                    rows={3}
-                    placeholder="Overall situation — e.g. the original windows were stained the wrong color…"
-                    className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-3 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-muted block mb-1">Financing notes</label>
-                  <textarea
-                    value={financingNotes}
-                    onChange={(e) => setFinancingNotes(e.target.value)}
-                    rows={2}
-                    placeholder="Optional…"
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-muted block mb-1">Paint &amp; stain notes</label>
-                  <textarea
-                    value={paintStainNotes}
-                    onChange={(e) => setPaintStainNotes(e.target.value)}
-                    rows={2}
-                    placeholder="Optional…"
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-                  />
-                </div>
-              </section>
-
-              {/* 2. Units affected — pick units, opt into spec changes per unit */}
-              <section>
-                <SectionLabel step={2}>Units affected</SectionLabel>
-                <p className="text-[11px] text-muted mt-0.5">Tap the units on this job, or add one that isn&apos;t loaded.</p>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {unitOptions.map((o) => (
-                    <UnitChip
-                      key={o.label}
-                      active={wuUnits.some((u) => !u.isNewProduct && u.unitLabel === o.label)}
-                      label={o.label}
-                      onClick={() => toggleUnit(o.label)}
+                    <label className="text-xs text-muted block mb-1">Financing notes</label>
+                    <textarea
+                      value={financingNotes}
+                      onChange={(e) => setFinancingNotes(e.target.value)}
+                      rows={2}
+                      placeholder="Optional…"
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
                     />
-                  ))}
-                  <button
-                    onClick={addManualUnit}
-                    className="px-3 py-2.5 rounded-lg text-sm font-medium border border-dashed border-amber-500/50 text-amber-600 flex items-center gap-1"
-                  >
-                    <Plus className="w-4 h-4" /> Add unit manually
-                  </button>
-                </div>
-                {wuUnits.length > 0 && (
-                  <div className="mt-3 space-y-2">
-                    {wuUnits.map((u) => (
-                      <div
-                        key={u.key}
-                        className={`rounded-xl border p-3 space-y-2 ${
-                          u.isNewProduct ? "border-amber-500/40 bg-amber-500/5" : "border-border bg-surface/40"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-semibold">{unitTitle(u)}</span>
-                          {u.isNewProduct && (
-                            <button onClick={() => removeUnit(u.key)} className="p-1 rounded text-muted hover:text-danger">
-                              <X className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Paint &amp; stain notes</label>
+                    <textarea
+                      value={paintStainNotes}
+                      onChange={(e) => setPaintStainNotes(e.target.value)}
+                      rows={2}
+                      placeholder="Optional…"
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                    />
+                  </div>
+                </>
+              ) : (
+                <button
+                  onClick={() => setShowExtraNotes(true)}
+                  className="text-xs font-semibold text-amber-600 flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Financing or paint &amp; stain notes
+                </button>
+              )}
+            </section>
+
+            {/* 2. Units affected — pick units, opt into spec changes per unit */}
+            <section>
+              <SectionLabel step={2}>Units affected</SectionLabel>
+              <p className="text-[11px] text-muted mt-0.5">Tap the units on this job, or add one that isn&apos;t loaded.</p>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {unitOptions.map((o) => (
+                  <UnitChip
+                    key={o.label}
+                    active={wuUnits.some((u) => !u.isNewProduct && u.unitLabel === o.label)}
+                    label={o.label}
+                    onClick={() => toggleUnit(o.label)}
+                  />
+                ))}
+                <button
+                  onClick={addManualUnit}
+                  className="px-3 py-2.5 rounded-lg text-sm font-medium border border-dashed border-amber-500/50 text-amber-600 flex items-center gap-1"
+                >
+                  <Plus className="w-4 h-4" /> Add unit manually
+                </button>
+              </div>
+              {wuUnits.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {wuUnits.map((u) => {
+                    // Flagged by a blocked Submit and still unfinished. Clears
+                    // itself the moment the unit is valid.
+                    const flagged = badUnitKeys.includes(u.key) && !unitValid(u);
+                    return (
+                    <div
+                      key={u.key}
+                      id={`wu-unit-${u.key}`}
+                      className={`rounded-xl border p-3 space-y-2 ${
+                        flagged
+                          ? "border-danger bg-danger/5"
+                          : u.isNewProduct
+                          ? "border-amber-500/40 bg-amber-500/5"
+                          : "border-border bg-surface/40"
+                      }`}
+                    >
+                      {flagged && (
+                        <p className="text-xs font-medium text-danger flex items-center gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          Needs a Unit # and a Product type — or remove it.
+                        </p>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold">{unitTitle(u)}</span>
                         {u.isNewProduct && (
-                          <>
-                            <StackedInput label="Unit #" value={u.unitLabel} onChange={(v) => updateUnit(u.key, { unitLabel: v })} placeholder="101" />
-                            <ComboInput
-                              label="Product type"
-                              value={u.unitType}
-                              onChange={(v) => updateUnit(u.key, { unitType: v })}
-                              options={options?.productTypes || []}
-                              placeholder="Double Hung…"
-                            />
-                          </>
-                        )}
-                        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={u.hasSpecChange}
-                            onChange={(e) => updateUnit(u.key, { hasSpecChange: e.target.checked })}
-                            className="w-4 h-4 accent-amber-500"
-                          />
-                          Spec change needed on this unit
-                        </label>
-                        {u.hasSpecChange && (
-                          <div className="pt-1">
-                            <UnitSpecSection
-                              unit={unitObjFor(u)}
-                              specEntries={u.specEntries}
-                              onChange={(entries) => updateUnit(u.key, { specEntries: entries })}
-                              colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
-                              finishOptions={options?.intFinishes || []}
-                              speciesOptions={trimOptions?.species || []}
-                              stainOptions={trimOptions?.stains || []}
-                            />
-                          </div>
+                          <button onClick={() => removeUnit(u.key)} className="p-1 rounded text-muted hover:text-danger">
+                            <X className="w-4 h-4" />
+                          </button>
                         )}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-
-              {/* 3. Work to complete (issues) */}
-              <section>
-                <SectionLabel step={3}>Work to complete</SectionLabel>
-                <div className="mt-2 space-y-3">
-                  {issues.map((it, idx) => (
-                    <IssueCard
-                      key={it.id}
-                      issue={it}
-                      index={idx}
-                      presets={presets}
-                      affectedUnits={wuUnits}
-                      unitTitle={unitTitle}
-                      canRemove={issues.length > 1}
-                      catalog={catalog}
-                      partsCatalog={partsCatalog}
-                      colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
-                      speciesOptions={trimOptions?.species || []}
-                      vendorOptions={vendorOptions}
-                      onUpdate={(patch) => updateIssue(it.id, patch)}
-                      onRemove={() => removeIssue(it.id)}
-                      onToggleUnit={(unitKey) => toggleIssueUnit(it.id, unitKey)}
-                      onOpenCamera={() => openCamera({ kind: "issue", issueId: it.id })}
-                      onUpload={(files) => addPhotosTo({ kind: "issue", issueId: it.id }, files)}
-                      onRemovePhoto={(pid) => removeIssuePhoto(it.id, pid)}
-                      onRegisterFlush={registerFlush}
-                    />
-                  ))}
+                      {u.isNewProduct && (
+                        <>
+                          <StackedInput label="Unit #" value={u.unitLabel} onChange={(v) => updateUnit(u.key, { unitLabel: v })} placeholder="101" />
+                          <ComboInput
+                            label="Product type"
+                            value={u.unitType}
+                            onChange={(v) => updateUnit(u.key, { unitType: v })}
+                            options={options?.productTypes || []}
+                            placeholder="Double Hung…"
+                          />
+                        </>
+                      )}
+                      <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={u.hasSpecChange}
+                          onChange={(e) => updateUnit(u.key, { hasSpecChange: e.target.checked })}
+                          className="w-4 h-4 accent-amber-500"
+                        />
+                        Spec change needed on this unit
+                      </label>
+                      {u.hasSpecChange && (
+                        <div className="pt-1">
+                          <UnitSpecSection
+                            unit={unitObjFor(u)}
+                            specEntries={u.specEntries}
+                            onChange={(entries) => updateUnit(u.key, { specEntries: entries })}
+                            colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
+                            finishOptions={options?.intFinishes || []}
+                            speciesOptions={trimOptions?.species || []}
+                            stainOptions={trimOptions?.stains || []}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    );
+                  })}
                 </div>
-                <button
-                  onClick={addIssue}
-                  className="w-full mt-3 py-3 rounded-xl border-2 border-dashed border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-2"
-                >
-                  <Plus className="w-4 h-4" /> Add another work item
-                </button>
-              </section>
-
-              {unsavedCameraPhotos.length > 0 && (
-                <button
-                  onClick={() => setShowSavePrompt(true)}
-                  className="w-full py-3 rounded-xl border border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-2 active:bg-amber-500/10"
-                >
-                  <ImagePlus className="w-4 h-4" />
-                  Save {unsavedCameraPhotos.length} photo{unsavedCameraPhotos.length !== 1 ? "s" : ""} to camera roll
-                </button>
               )}
+            </section>
 
-              {buildInputs().length > 0 && (
-                <UnitSummary open={showSummary} onToggle={() => setShowSummary((v) => !v)} inputs={buildInputs()} />
+            {/* 3. Work to complete (issues) */}
+            <section>
+              <SectionLabel step={3}>Work to complete</SectionLabel>
+              <div className="mt-2 space-y-3">
+                {issues.map((it, idx) => (
+                  <IssueCard
+                    key={it.id}
+                    issue={it}
+                    index={idx}
+                    presets={presets}
+                    affectedUnits={wuUnits}
+                    unitTitle={unitTitle}
+                    unaddedUnits={unaddedUnitLabels}
+                    productTypes={options?.productTypes || []}
+                    onAddUnit={(label) => addUnitToIssue(it.id, label)}
+                    onAddManualUnit={() => addManualUnitToIssue(it.id)}
+                    onUpdateUnit={updateUnit}
+                    onRemoveUnit={removeUnit}
+                    canRemove={issues.length > 1}
+                    catalog={catalog}
+                    partsCatalog={partsCatalog}
+                    colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
+                    speciesOptions={trimOptions?.species || []}
+                    vendorOptions={vendorOptions}
+                    onUpdate={(patch) => updateIssue(it.id, patch)}
+                    onRemove={() => removeIssue(it.id)}
+                    onToggleUnit={(unitKey) => toggleIssueUnit(it.id, unitKey)}
+                    onOpenCamera={() => openCamera({ kind: "issue", issueId: it.id })}
+                    onUpload={(files) => addPhotosTo({ kind: "issue", issueId: it.id }, files)}
+                    onRemovePhoto={(pid) => removeIssuePhoto(it.id, pid)}
+                    onRegisterFlush={registerFlush}
+                  />
+                ))}
+              </div>
+              <button
+                onClick={addIssue}
+                className="w-full mt-3 py-3 rounded-xl border-2 border-dashed border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-2"
+              >
+                <Plus className="w-4 h-4" /> Add another work item
+              </button>
+            </section>
+
+            {/* Office coding — last, because it's the one question the field
+             *  can't answer from what's in front of them. */}
+            <section>
+              <SectionLabel>Responsibility</SectionLabel>
+              <p className="text-[11px] text-muted mt-0.5">Who the fix is on. Optional — the office uses it for coding.</p>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {RESPONSIBILITY_OPTIONS.map((o) => (
+                  <button
+                    type="button"
+                    key={o.value}
+                    onClick={() => {
+                      const next = responsibility === o.value ? "" : o.value;
+                      setResponsibility(next);
+                      if (next !== "retail") setDefectCode("");
+                    }}
+                    className={`px-3 py-1.5 rounded-lg border text-sm transition-colors ${
+                      responsibility === o.value
+                        ? "bg-amber-500 text-white border-amber-500"
+                        : "border-border text-muted hover:border-amber-400/60"
+                    }`}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              {responsibility === "retail" && (
+                <div className="mt-2">
+                  <label className="text-xs text-muted block mb-1">Defect code (source)</label>
+                  <select
+                    value={defectCode}
+                    onChange={(e) => setDefectCode(e.target.value)}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                  >
+                    <option value="">Select a source…</option>
+                    {DEFECT_CODES.map((d) => (
+                      <option key={d.code} value={d.code}>
+                        {d.code} — {d.source}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )}
-            </>
-          )}
+            </section>
 
+            {unsavedCameraPhotos.length > 0 && (
+              <button
+                onClick={() => setShowSavePrompt(true)}
+                className="w-full py-3 rounded-xl border border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-2 active:bg-amber-500/10"
+              >
+                <ImagePlus className="w-4 h-4" />
+                Save {unsavedCameraPhotos.length} photo{unsavedCameraPhotos.length !== 1 ? "s" : ""} to camera roll
+              </button>
+            )}
+
+            {buildInputs().length > 0 && (
+              <UnitSummary open={showSummary} onToggle={() => setShowSummary((v) => !v)} inputs={buildInputs()} />
+            )}
 
           {/* Danger zone — delete the whole write-up (edit mode) */}
-          {(isEditing || isBatchEdit) && (
+          {isBatchEdit && (
             <div className="pt-3 border-t border-border">
               {confirmDelete ? (
                 <div className="rounded-xl border border-danger/40 bg-danger/5 p-3">
@@ -1866,11 +1785,18 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             </div>
           )}
 
-          {error && <p className="text-sm text-danger">{error}</p>}
         </div>
 
         {/* Footer */}
         <div className="px-4 py-3 border-t border-border shrink-0">
+          {/* Errors sit with the button that triggers them — at the bottom of the
+           *  scroll they were easy to miss on a phone. */}
+          {shownError && (
+            <p className="text-sm text-danger mb-2 flex items-start gap-1.5">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{shownError}</span>
+            </p>
+          )}
           {isBatchEdit ? (
             <button
               onClick={saveGuidedEdit}
@@ -1881,24 +1807,6 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
                   {progress ? `Saving ${progress.done}/${progress.total}…` : "Saving…"}
-                </>
-              ) : (
-                <>
-                  <Check className="w-5 h-5" />
-                  Save changes
-                </>
-              )}
-            </button>
-          ) : isEditing ? (
-            <button
-              onClick={saveChanges}
-              disabled={saving || !editorHasContent}
-              className="w-full py-4 rounded-xl bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.99] transition-transform"
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Saving…
                 </>
               ) : (
                 <>
@@ -1921,7 +1829,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 </button>
                 <button
                   onClick={() => submitWriteUp(true, "in_review")}
-                  disabled={submitting || totalUnits === 0}
+                  disabled={submitting || validIssues.length === 0}
                   className="flex-1 py-4 rounded-xl bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.99] transition-transform"
                 >
                   {submitting ? (
@@ -1932,13 +1840,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                   ) : (
                     <>
                       <Send className="w-5 h-5" />
-                      Submit &amp; Email ({totalUnits})
+                      Submit &amp; Email
                     </>
                   )}
                 </button>
               </div>
               <p className="text-[11px] text-muted text-center mt-1.5">
-                <strong>Save draft</strong> keeps it as a draft · <strong>Submit</strong> sends it for review.
+                {validIssues.length} work item{validIssues.length !== 1 ? "s" : ""} ·{" "}
+                <strong>Save draft</strong> keeps it for later · <strong>Submit</strong> sends it for review.
               </p>
             </>
           )}
@@ -1947,151 +1856,6 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     </div>
   );
 }
-
-/* ── Work-needed: type-to-search + item rows with optional notes ── */
-function WorkNeeded({
-  presets,
-  items,
-  onAdd,
-  onRemove,
-  onNotes,
-  allowComplete = false,
-  onToggleComplete,
-}: {
-  presets: string[];
-  items: WriteUpLineItem[];
-  onAdd: (label: string, kind: "preset" | "custom") => void;
-  onRemove: (i: number) => void;
-  onNotes: (i: number, notes: string | undefined) => void;
-  /** Edit mode: show a done checkbox on each item. */
-  allowComplete?: boolean;
-  onToggleComplete?: (i: number) => void;
-}) {
-  const [draft, setDraft] = useState("");
-
-  const q = draft.trim().toLowerCase();
-  const matches = presets.filter(
-    (p) => p.toLowerCase().includes(q) && !items.some((w) => w.label.toLowerCase() === p.toLowerCase())
-  );
-  const exact = presets.some((p) => p.toLowerCase() === q);
-
-  function addCustom() {
-    if (!q) return;
-    onAdd(draft.trim(), exact ? "preset" : "custom");
-    setDraft("");
-  }
-
-  return (
-    <div>
-      {/* Added items */}
-      {items.length > 0 && (
-        <div className="space-y-2 mb-2">
-          {items.map((w, i) => (
-            <div key={i} className="rounded-xl border border-border bg-surface px-3 py-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  {allowComplete && (
-                    <button
-                      onClick={() => onToggleComplete?.(i)}
-                      className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
-                        w.completed ? "bg-green-600 border-green-600 text-white" : "border-border text-transparent"
-                      }`}
-                      title={w.completed ? "Mark not done" : "Mark done"}
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  <span className={`text-sm font-medium truncate ${w.completed ? "line-through text-muted" : ""}`}>
-                    {w.label}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => onNotes(i, w.notes === undefined ? "" : undefined)}
-                    className={`p-1.5 rounded-lg ${w.notes !== undefined ? "text-amber-600" : "text-muted hover:text-foreground"}`}
-                    title="Add a note"
-                  >
-                    <MessageSquare className="w-4 h-4" />
-                  </button>
-                  <button onClick={() => onRemove(i)} className="p-1.5 rounded-lg text-muted hover:text-danger">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-              {w.notes !== undefined && (
-                <textarea
-                  value={w.notes}
-                  onChange={(e) => onNotes(i, e.target.value)}
-                  rows={2}
-                  autoFocus
-                  placeholder="Add detail for this item (optional)…"
-                  className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-                />
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Search / add */}
-      <input
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            addCustom();
-          }
-        }}
-        placeholder="Type a task (e.g. Redo caulking)…"
-        className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-      />
-
-      {q && (
-        <div className="mt-2 rounded-xl border border-border overflow-hidden">
-          {matches.map((p) => (
-            <button
-              key={p}
-              onClick={() => {
-                onAdd(p, "preset");
-                setDraft("");
-              }}
-              className="w-full text-left px-3 py-3 text-sm border-b border-border last:border-b-0 hover:bg-surface flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4 text-muted" />
-              {p}
-            </button>
-          ))}
-          {!exact && (
-            <button
-              onClick={addCustom}
-              className="w-full text-left px-3 py-3 text-sm bg-amber-500/10 text-amber-700 font-medium flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Add “{draft.trim()}”
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* A couple of quick suggestions when the box is empty */}
-      {!q && items.length === 0 && (
-        <div className="flex flex-wrap gap-2 mt-2">
-          {presets.slice(0, 6).map((p) => (
-            <button
-              key={p}
-              onClick={() => onAdd(p, "preset")}
-              className="px-3 py-2 rounded-full text-sm font-medium border border-border bg-surface text-foreground hover:border-amber-400"
-            >
-              {p}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 
 /* ── Reusable: photos grid + take/upload ── */
 function PhotoSection({
@@ -2418,9 +2182,15 @@ function IssueCard({
   colorOptions,
   speciesOptions,
   vendorOptions,
+  unaddedUnits,
+  productTypes,
   onUpdate,
   onRemove,
   onToggleUnit,
+  onAddUnit,
+  onAddManualUnit,
+  onUpdateUnit,
+  onRemoveUnit,
   onOpenCamera,
   onUpload,
   onRemovePhoto,
@@ -2437,15 +2207,31 @@ function IssueCard({
   colorOptions: string[];
   speciesOptions: string[];
   vendorOptions: string[];
+  /** Labels of job units not on the write-up yet, addable from this item. */
+  unaddedUnits: string[];
+  productTypes: string[];
   onUpdate: (patch: Partial<WuIssue>) => void;
   onRemove: () => void;
   onToggleUnit: (unitKey: string) => void;
+  onAddUnit: (label: string) => void;
+  onAddManualUnit: () => void;
+  onUpdateUnit: (unitKey: string, patch: Partial<WuUnit>) => void;
+  onRemoveUnit: (unitKey: string) => void;
   onOpenCamera: () => void;
   onUpload: (files: File[]) => void;
   onRemovePhoto: (id: string) => void;
   /** Registers per-adder flushes (keyed) so Submit can commit pending entries. */
   onRegisterFlush?: (key: string, fn: (() => WriteUpMaterialItem | PartItem | null) | null) => void;
 }) {
+  const [adding, setAdding] = useState(false);
+  // A unit this item pulled in that still needs its number or type shows its
+  // fields inline below instead of a chip, so it gets finished on the spot.
+  const pendingUnits = affectedUnits.filter(
+    (u) => u.isNewProduct && issue.unitKeys.includes(u.key) && (!u.unitLabel.trim() || !u.unitType.trim())
+  );
+  const pendingKeys = new Set(pendingUnits.map((u) => u.key));
+  const chipUnits = affectedUnits.filter((u) => !pendingKeys.has(u.key));
+
   return (
     <section className="rounded-2xl border border-border bg-surface/40 p-3 space-y-3">
       <div className="flex items-center justify-between gap-2">
@@ -2487,21 +2273,77 @@ function IssueCard({
         />
       </div>
 
-      {/* Affects which units — right under what needs done */}
+      {/* Affects which units — every unit is reachable from here, including ones
+       *  not on the write-up yet, so picking units never means scrolling back up
+       *  to "Units affected" mid-thought. */}
       <div>
         <span className="text-xs font-bold text-muted uppercase tracking-wide">Affects</span>
-        {affectedUnits.length === 0 ? (
-          <p className="text-xs text-muted mt-1">
-            No units added yet — this counts as a whole-job item. Add units up top to attach them.
-          </p>
-        ) : (
-          <div className="flex flex-wrap gap-2 mt-2">
-            <UnitChip active={issue.unitKeys.length === 0} label="Whole job" onClick={() => onUpdate({ unitKeys: [] })} />
-            {affectedUnits.map((u) => (
-              <UnitChip key={u.key} active={issue.unitKeys.includes(u.key)} label={unitTitle(u)} onClick={() => onToggleUnit(u.key)} />
-            ))}
+        <div className="flex flex-wrap gap-2 mt-2">
+          <UnitChip active={issue.unitKeys.length === 0} label="Whole job" onClick={() => onUpdate({ unitKeys: [] })} />
+          {chipUnits.map((u) => (
+            <UnitChip key={u.key} active={issue.unitKeys.includes(u.key)} label={unitTitle(u)} onClick={() => onToggleUnit(u.key)} />
+          ))}
+          <button
+            onClick={() => setAdding((v) => !v)}
+            className="px-3 py-2.5 rounded-lg text-sm font-medium border border-dashed border-amber-500/50 text-amber-600 flex items-center gap-1"
+          >
+            <Plus className="w-4 h-4" /> Add unit
+          </button>
+        </div>
+
+        {adding && (
+          <div className="mt-2 rounded-xl border border-border bg-background/60 p-2.5">
+            {unaddedUnits.length > 0 ? (
+              <>
+                <p className="text-[11px] text-muted">Other units on this job — tap to add:</p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {unaddedUnits.map((label) => (
+                    <UnitChip key={label} unadded active={false} label={label} onClick={() => onAddUnit(label)} />
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="text-[11px] text-muted">Every unit on this job is already on the write-up.</p>
+            )}
+            <button
+              onClick={() => {
+                onAddManualUnit();
+                setAdding(false);
+              }}
+              className="w-full mt-2 py-2.5 rounded-lg text-sm font-medium border border-dashed border-border text-muted flex items-center justify-center gap-1"
+            >
+              <Plus className="w-4 h-4" /> Unit that isn&apos;t on this job
+            </button>
           </div>
         )}
+
+        {pendingUnits.map((u) => (
+          <div key={u.key} className="mt-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                New unit — needs a number and a type
+              </span>
+              <button onClick={() => onRemoveUnit(u.key)} className="p-1 rounded text-muted hover:text-danger shrink-0">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <StackedInput
+                label="Unit #"
+                value={u.unitLabel}
+                onChange={(v) => onUpdateUnit(u.key, { unitLabel: v })}
+                placeholder="101"
+              />
+              <ComboInput
+                label="Product type"
+                value={u.unitType}
+                onChange={(v) => onUpdateUnit(u.key, { unitType: v })}
+                options={productTypes}
+                placeholder="Double Hung…"
+              />
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Materials for this item */}
@@ -3298,11 +3140,14 @@ function UnitChip({
   onClick,
   label,
   added,
+  unadded,
 }: {
   active: boolean;
   onClick: () => void;
   label: string;
   added?: boolean;
+  /** Not on the write-up yet — tapping it adds the unit. */
+  unadded?: boolean;
 }) {
   return (
     <button
@@ -3312,10 +3157,13 @@ function UnitChip({
           ? "bg-primary border-primary text-white"
           : added
           ? "bg-amber-500/10 border-amber-500/40 text-amber-700"
+          : unadded
+          ? "bg-transparent border-dashed border-border text-muted hover:border-primary/40 hover:text-foreground"
           : "bg-surface border-border text-foreground hover:border-primary/40"
       }`}
     >
       {added && <Check className="w-3.5 h-3.5" />}
+      {unadded && <Plus className="w-3.5 h-3.5" />}
       {label}
     </button>
   );
