@@ -197,7 +197,11 @@ export default function FloatersBanner({
 
       {expanded && (
         <div className="px-3 pb-2 pt-0.5 space-y-1.5 border-t border-border/60">
-          {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map((d) => {
+          {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+            // Saturday and Sunday work is by request, so the lookup returns
+            // nothing for them. Listing them would read as "everyone booked".
+            .filter((d) => d.getDay() !== 0 && d.getDay() !== 6)
+            .map((d) => {
             const iso = format(d, "yyyy-MM-dd");
             const names = freeOn(iso);
             const isCurrent = iso === dayStr;
