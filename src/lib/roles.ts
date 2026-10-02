@@ -108,6 +108,9 @@ export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   // Change-order-app role (no calendar capabilities on its own; calendar access
   // is plain member-level).
   { value: "sales", label: "Sales (Change Orders)" },
+  // TrimGauge role (no calendar capabilities on its own). Admin or measure-tech
+  // can sign in to TrimGauge and record/listen to job audio notes.
+  { value: "measure-tech", label: "Measure Tech (TrimGauge)" },
   // Cut-list-app roles (no calendar capabilities on their own).
   { value: "configuring", label: "Configuring (Cut List)" },
   { value: "configuring-editing", label: "Configuring + Editing (Cut List)" },
@@ -130,6 +133,7 @@ export const ROLE_STYLES: Record<string, string> = {
   member: "bg-surface border border-border text-muted",
   "process-manager": "bg-orange-500/15 text-orange-600 dark:text-orange-400",
   sales: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
+  "measure-tech": "bg-orange-500/15 text-orange-600 dark:text-orange-400",
   configuring: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
   "configuring-editing": "bg-purple-500/15 text-purple-600 dark:text-purple-400",
   "standalone-trim": "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
