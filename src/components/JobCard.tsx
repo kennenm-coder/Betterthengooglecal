@@ -26,7 +26,7 @@ import {
   Link2,
   Users,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import ActionModal from "./ActionModal";
 import WriteUpModal from "./WriteUpModal";
@@ -49,15 +49,36 @@ function phoneHref(phone: string): string {
   return "tel:" + phone.replace(/[\s\-\(\)]/g, "");
 }
 
-function mapsHref(address: string): string {
+/** Google Maps on the web — works on every platform, needs no user agent. */
+function webMapsHref(address: string): string {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+}
+
+/** The handset's own maps app, where there is one. Client-side only. */
+function nativeMapsHref(address: string): string {
   const encoded = encodeURIComponent(address);
-  if (typeof navigator === "undefined") {
-    return `https://www.google.com/maps/search/?api=1&query=${encoded}`;
-  }
   const ua = navigator.userAgent;
   if (/iPhone|iPad|iPod/i.test(ua)) return `maps:?q=${encoded}`;
   if (/Android/i.test(ua)) return `geo:0,0?q=${encoded}`;
-  return `https://www.google.com/maps/search/?api=1&query=${encoded}`;
+  return webMapsHref(address);
+}
+
+/**
+ * The map link for an address: the web URL to begin with, swapped for the
+ * native deep link once mounted.
+ *
+ * Picking the href from navigator.userAgent while rendering made the server and
+ * the client disagree, and React does not patch up a mismatched attribute — it
+ * keeps what the server sent. Rendered on the server, a phone would have been
+ * left holding the web URL for good. Deciding after mount means both renders
+ * agree and the deep link is applied by an effect, which React does honour.
+ */
+function useMapsHref(address: string): string {
+  const [href, setHref] = useState(() => webMapsHref(address));
+  useEffect(() => {
+    setHref(nativeMapsHref(address));
+  }, [address]);
+  return href;
 }
 
 function isMultiDay(order: WorkOrder): boolean {
@@ -124,6 +145,7 @@ export default function JobCard({
   const [editingLegacy, setEditingLegacy] = useState(false);
   const [legacyInput, setLegacyInput] = useState("");
   const [savingLegacy, setSavingLegacy] = useState(false);
+  const addressHref = useMapsHref(order.address);
 
   async function saveLegacyLink() {
     const url = legacyInput.trim();
@@ -311,7 +333,7 @@ export default function JobCard({
                   long address on a phone. */}
               <span className="min-w-0">
                 <a
-                  href={mapsHref(order.address)}
+                  href={addressHref}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary underline break-words"
