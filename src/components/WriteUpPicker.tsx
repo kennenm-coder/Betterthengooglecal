@@ -16,9 +16,9 @@ interface Props {
  * PO#, or address, returning WorkOrder-shaped results. This surfaces programmed
  * jobs that aren't in the work_orders table yet (e.g. not scheduled).
  */
-function matchMaterialJobs(jobs: Map<string, MaterialJobData>, query: string, limit = 15): WorkOrder[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
+function matchMaterialJobs(jobs: Map<string, MaterialJobData>, query: string, limit = 25): WorkOrder[] {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return [];
   const out: WorkOrder[] = [];
   for (const mat of jobs.values()) {
     const job = mat.job;
@@ -26,7 +26,7 @@ function matchMaterialJobs(jobs: Map<string, MaterialJobData>, query: string, li
     const customer = String(job.customerName || "");
     const address = String(job.address || "");
     const hay = `${po} ${customer} ${address}`.toLowerCase();
-    if (!hay.includes(q)) continue;
+    if (!terms.every((t) => hay.includes(t))) continue;
     out.push({
       id: `mat-${po || mat.id || out.length}`,
       orderNumber: po,
@@ -122,7 +122,7 @@ export default function WriteUpPicker({ onPick, onClose }: Props) {
         const jobs = jobsRef.current || (jobsPromiseRef.current ? await jobsPromiseRef.current : null);
         if (cancelled) return;
         const jobMatches = jobs ? matchMaterialJobs(jobs, q) : [];
-        const have = new Set(rows.map((r) => r.orderNumber));
+        const have = new Set(rows.map((r) => r.orderNumber).filter(Boolean));
         setResults([...rows, ...jobMatches.filter((j) => !have.has(j.orderNumber))]);
       } catch {
         if (!cancelled) setResults([]);
@@ -215,7 +215,7 @@ export default function WriteUpPicker({ onPick, onClose }: Props) {
                   autoFocus
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Customer, account, order #, or WO #…"
+                  placeholder="Customer, address, order #, or WO #…"
                   className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
                 />
               </div>

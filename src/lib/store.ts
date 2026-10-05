@@ -466,31 +466,107 @@ export async function upsertWorkOrders(orders: WorkOrder[]): Promise<boolean> {
 }
 
 /**
- * Search work orders (and imported account rows) by customer name, account
- * name, order number, or work order number. Backs the "start a write-up"
- * picker so a field manager can attach a write-up to any existing job/account.
+ * Columns a job search looks through. Mirrors what the scheduling app matches
+ * on, so the same typing finds the same job in both apps.
  */
-export async function searchWorkOrders(query: string, limit = 25): Promise<WorkOrder[]> {
+const JOB_SEARCH_COLUMNS = [
+  "customer_name",
+  "account_name",
+  "order_number",
+  "work_order_number",
+  "address",
+  "contact_name",
+  "primary_resource",
+  "installer",
+  "tech_measure",
+  "service_rep",
+];
+
+/** Rows carrying a real job identity, as opposed to an address-only account. */
+const HAS_JOB_IDENTITY = "customer_name.not.is.null,order_number.not.is.null";
+
+/**
+ * Which work order best stands in for a job. One order number usually has
+ * several (an install plus the tech measure that preceded it); a write-up is
+ * nearly always about the install, so that wins. A row whose work order number
+ * is exactly what was typed beats all of it — that's the row being asked for,
+ * which is how the Changes page resolves one specific work order.
+ */
+function workOrderRank(row: WorkOrderRow, exactWorkOrders: Set<string>): number {
+  if (exactWorkOrders.has((row.work_order_number || "").trim().toLowerCase())) return -1;
+  switch (row.work_order_type) {
+    case "Install":
+      return 0;
+    case "Service":
+      return 1;
+    case "Job Site Visit":
+      return 2;
+    case "Tech Measure":
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+/**
+ * Search the whole work-orders table — every job on file, scheduled or not —
+ * by customer name, account name, address, order number, work order number, or
+ * assigned resource. Backs the "start a write-up" picker, so a write-up can be
+ * started on a job that hasn't been installed yet.
+ */
+export async function searchWorkOrders(query: string, limit = 40): Promise<WorkOrder[]> {
   const supabase = getSupabase();
-  const q = query.trim();
-  if (!supabase || q.length < 2) return [];
-  // Strip LIKE wildcards and the comma that would break the .or() filter list.
-  const term = q.replace(/[%_,]/g, " ").trim();
-  const like = `%${term}%`;
-  const { data, error } = await supabase
-    .from("work_orders")
-    .select("*")
-    .or(
-      [
-        `customer_name.ilike.${like}`,
-        `account_name.ilike.${like}`,
-        `order_number.ilike.${like}`,
-        `work_order_number.ilike.${like}`,
-      ].join(",")
-    )
-    .limit(limit);
-  if (error || !data) return [];
-  return (data as WorkOrderRow[]).map(rowToWorkOrder);
+  const raw = query.trim();
+  if (!supabase || raw.length < 2) return [];
+
+  // Strip LIKE wildcards and the comma that would break the .or() filter list,
+  // then require every word to land in some column, so "long 04962" or
+  // "smith chestnut" narrows down instead of coming back empty.
+  const cleaned = raw.replace(/[%_,]/g, " ").trim();
+  const terms = cleaned.split(/\s+/).filter((t) => t.length >= 2);
+  if (!terms.length) terms.push(cleaned);
+  const exactWorkOrders = new Set(terms.map((t) => t.toLowerCase()));
+
+  // Two passes, real jobs first. Nine rows in ten are address-only account
+  // records imported from Salesforce, and a single unordered query hands back
+  // an arbitrary slice of the matches — so a common word like "Hill" filled the
+  // whole result list with addresses and buried the actual jobs. Asking for
+  // jobs in their own query means they can never be crowded out.
+  const run = async (jobsOnly: boolean): Promise<WorkOrderRow[]> => {
+    let qb = supabase.from("work_orders").select("*");
+    for (const t of terms.slice(0, 5)) {
+      qb = qb.or(JOB_SEARCH_COLUMNS.map((c) => `${c}.ilike.%${t}%`).join(","));
+    }
+    qb = jobsOnly
+      ? qb.or(HAS_JOB_IDENTITY)
+      : qb.is("customer_name", null).is("order_number", null);
+    const { data } = await qb.order("updated_at", { ascending: false }).limit(limit);
+    return (data as WorkOrderRow[] | null) || [];
+  };
+
+  const [jobRows, accountRows] = await Promise.all([run(true), run(false)]);
+
+  // Collapse to one row per job so the picker doesn't list the same customer
+  // three times, keeping first-seen order (jobs ahead of accounts).
+  const chosen = new Map<string, WorkOrderRow>();
+  const keyOrder: string[] = [];
+  const unkeyed: WorkOrderRow[] = [];
+  for (const row of [...jobRows, ...accountRows]) {
+    const key = (row.order_number || "").trim();
+    if (!key) {
+      unkeyed.push(row);
+      continue;
+    }
+    const prev = chosen.get(key);
+    if (!prev) {
+      chosen.set(key, row);
+      keyOrder.push(key);
+    } else if (workOrderRank(row, exactWorkOrders) < workOrderRank(prev, exactWorkOrders)) {
+      chosen.set(key, row);
+    }
+  }
+
+  return [...keyOrder.map((k) => chosen.get(k)!), ...unkeyed].map(rowToWorkOrder);
 }
 
 // --- Material jobs ---
