@@ -28,6 +28,8 @@ export async function addTimeOffRequest(
       department: req.department,
       start_date: req.start_date,
       end_date: req.end_date || null,
+      start_time: req.start_time || null,
+      end_time: req.end_time || null,
     })
     .select()
     .single();
@@ -46,6 +48,21 @@ export async function deleteTimeOffRequest(id: string): Promise<boolean> {
     .eq("id", id);
 
   return !error;
+}
+
+/**
+ * "14:30" or "14:30:00" (what Postgres hands back) -> "2:30 PM".
+ * Returns "" for a missing or unparseable time so callers can skip it.
+ */
+export function formatTimeDisplay(time: string | null | undefined): string {
+  if (!time) return "";
+  const [h, m] = time.split(":");
+  const hour = Number(h);
+  const minute = Number(m);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "";
+  const suffix = hour < 12 ? "AM" : "PM";
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${hour12}:${String(minute).padStart(2, "0")} ${suffix}`;
 }
 
 export function getTimeOffForDate(

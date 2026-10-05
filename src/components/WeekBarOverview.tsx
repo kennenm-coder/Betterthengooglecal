@@ -3,7 +3,7 @@
 import { WorkOrder, TimeOffRequest } from "@/lib/types";
 import { typeColor, typeTileText } from "@/lib/calendar-utils";
 import { lastFirst, crewsForDate } from "@/lib/format-utils";
-import { getTimeOffForDate } from "@/lib/time-off-store";
+import { getTimeOffForDate, formatTimeDisplay } from "@/lib/time-off-store";
 import { format } from "date-fns";
 import { useState, useMemo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
@@ -13,6 +13,19 @@ type BarItem =
   | { kind: "timeOff"; request: TimeOffRequest };
 
 const MAX_VISIBLE = 3;
+
+// "out 12:00 PM · back 9:00 AM", but only on the day each time applies to.
+function timeOffTimes(request: TimeOffRequest, dateStr: string): string {
+  const lastDay = request.end_date || request.start_date;
+  const parts: string[] = [];
+  if (request.start_time && dateStr === request.start_date) {
+    parts.push(`out ${formatTimeDisplay(request.start_time)}`);
+  }
+  if (request.end_time && dateStr === lastDay) {
+    parts.push(`back ${formatTimeDisplay(request.end_time)}`);
+  }
+  return parts.join(" · ");
+}
 
 export default function WeekBarOverview({
   days,
@@ -98,13 +111,15 @@ export default function WeekBarOverview({
                     </button>
                   );
                 }
+                const times = timeOffTimes(bar.request, key);
                 return (
                   <div
                     key={bar.request.id}
                     className="w-full text-left text-white text-[10px] leading-tight px-1.5 py-0.5 rounded truncate bg-rba-green"
-                    title={`${bar.request.employee_name} - Off`}
+                    title={`${bar.request.employee_name} - Off${times ? ` (${times})` : ""}`}
                   >
                     {bar.request.employee_name} OFF
+                    {times ? ` (${times})` : ""}
                   </div>
                 );
               })}

@@ -9,6 +9,7 @@ import {
   deleteTimeOffRequest,
   fetchEmployees,
   addEmployee,
+  formatTimeDisplay,
 } from "@/lib/time-off-store";
 import {
   ArrowLeft,
@@ -22,6 +23,7 @@ import {
   UserPlus,
   Filter,
   ShieldX,
+  Clock,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { canManageTimeOff } from "@/lib/roles";
@@ -32,6 +34,8 @@ interface DraftRow {
   department: string;
   start_date: string;
   end_date: string;
+  start_time: string;
+  end_time: string;
 }
 
 const emptyDraft: DraftRow = {
@@ -39,6 +43,8 @@ const emptyDraft: DraftRow = {
   department: "",
   start_date: "",
   end_date: "",
+  start_time: "",
+  end_time: "",
 };
 
 interface NewEmployee {
@@ -73,6 +79,8 @@ function TimeOffContent() {
   const nameInputRef = useRef<HTMLInputElement>(null);
   const startDateRef = useRef<HTMLInputElement>(null);
   const endDateRef = useRef<HTMLInputElement>(null);
+  const startTimeRef = useRef<HTMLInputElement>(null);
+  const endTimeRef = useRef<HTMLInputElement>(null);
   const filterStartRef = useRef<HTMLInputElement>(null);
   const filterEndRef = useRef<HTMLInputElement>(null);
 
@@ -179,6 +187,8 @@ function TimeOffContent() {
       department: draft.department,
       start_date: draft.start_date,
       end_date: draft.end_date || null,
+      start_time: draft.start_time || null,
+      end_time: draft.end_time || null,
     });
     if (result) {
       setRequests((prev) =>
@@ -215,14 +225,16 @@ function TimeOffContent() {
   function exportCsv() {
     const data = filteredRequests;
     if (data.length === 0) return;
-    const header = "Employee,Department,Start Date,End Date";
+    const header = "Employee,Department,Start Date,Time Leaving,End Date,Time Returning";
     const rows = data.map((r) => {
       const esc = (s: string) => `"${s.replace(/"/g, '""')}"`;
       return [
         esc(r.employee_name),
         esc(r.department),
         r.start_date,
+        esc(formatTimeDisplay(r.start_time)),
         r.end_date || "",
+        esc(formatTimeDisplay(r.end_time)),
       ].join(",");
     });
     const csv = [header, ...rows].join("\n");
@@ -508,45 +520,91 @@ function TimeOffContent() {
                   )}
 
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-muted mb-1">
-                        Start Date <span className="text-danger">*</span>
-                      </label>
-                      <div
-                        className="relative border border-border rounded-lg bg-background focus-within:ring-2 focus-within:ring-rba-green cursor-pointer"
-                        onClick={() => startDateRef.current?.showPicker?.()}
-                      >
-                        <input
-                          ref={startDateRef}
-                          type="date"
-                          value={draft.start_date}
-                          onChange={(e) =>
-                            setDraft((d) => d && { ...d, start_date: e.target.value })
-                          }
-                          className="w-full px-3 py-2.5 text-sm bg-transparent focus:outline-none cursor-pointer"
-                        />
+                    <div className="space-y-2.5">
+                      <div>
+                        <label className="block text-xs font-medium text-muted mb-1">
+                          Start Date <span className="text-danger">*</span>
+                        </label>
+                        <div
+                          className="relative border border-border rounded-lg bg-background focus-within:ring-2 focus-within:ring-rba-green cursor-pointer"
+                          onClick={() => startDateRef.current?.showPicker?.()}
+                        >
+                          <input
+                            ref={startDateRef}
+                            type="date"
+                            value={draft.start_date}
+                            onChange={(e) =>
+                              setDraft((d) => d && { ...d, start_date: e.target.value })
+                            }
+                            className="w-full px-3 py-2.5 text-sm bg-transparent focus:outline-none cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted mb-1">
+                          Time Leaving <span className="text-xs font-normal">(optional)</span>
+                        </label>
+                        <div
+                          className="relative border border-border rounded-lg bg-background focus-within:ring-2 focus-within:ring-rba-green cursor-pointer"
+                          onClick={() => startTimeRef.current?.showPicker?.()}
+                        >
+                          <input
+                            ref={startTimeRef}
+                            type="time"
+                            value={draft.start_time}
+                            onChange={(e) =>
+                              setDraft((d) => d && { ...d, start_time: e.target.value })
+                            }
+                            className="w-full px-3 py-2.5 text-sm bg-transparent focus:outline-none cursor-pointer"
+                          />
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <label className="block text-xs font-medium text-muted mb-1">
-                        End Date <span className="text-xs font-normal">(optional)</span>
-                      </label>
-                      <div
-                        className="relative border border-border rounded-lg bg-background focus-within:ring-2 focus-within:ring-rba-green cursor-pointer"
-                        onClick={() => endDateRef.current?.showPicker?.()}
-                      >
-                        <input
-                          ref={endDateRef}
-                          type="date"
-                          value={draft.end_date}
-                          onChange={(e) =>
-                            setDraft((d) => d && { ...d, end_date: e.target.value })
-                          }
-                          className="w-full px-3 py-2.5 text-sm bg-transparent focus:outline-none cursor-pointer"
-                        />
+                    <div className="space-y-2.5">
+                      <div>
+                        <label className="block text-xs font-medium text-muted mb-1">
+                          End Date <span className="text-xs font-normal">(optional)</span>
+                        </label>
+                        <div
+                          className="relative border border-border rounded-lg bg-background focus-within:ring-2 focus-within:ring-rba-green cursor-pointer"
+                          onClick={() => endDateRef.current?.showPicker?.()}
+                        >
+                          <input
+                            ref={endDateRef}
+                            type="date"
+                            value={draft.end_date}
+                            onChange={(e) =>
+                              setDraft((d) => d && { ...d, end_date: e.target.value })
+                            }
+                            className="w-full px-3 py-2.5 text-sm bg-transparent focus:outline-none cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted mb-1">
+                          Time Returning <span className="text-xs font-normal">(optional)</span>
+                        </label>
+                        <div
+                          className="relative border border-border rounded-lg bg-background focus-within:ring-2 focus-within:ring-rba-green cursor-pointer"
+                          onClick={() => endTimeRef.current?.showPicker?.()}
+                        >
+                          <input
+                            ref={endTimeRef}
+                            type="time"
+                            value={draft.end_time}
+                            onChange={(e) =>
+                              setDraft((d) => d && { ...d, end_time: e.target.value })
+                            }
+                            className="w-full px-3 py-2.5 text-sm bg-transparent focus:outline-none cursor-pointer"
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
+
+                  <p className="text-xs text-muted">
+                    Leave the times blank for a full day off.
+                  </p>
                 </div>
 
                 <button
@@ -565,7 +623,7 @@ function TimeOffContent() {
             )}
 
             {/* Desktop table header */}
-            <div className="hidden sm:grid grid-cols-[1fr_140px_120px_120px_40px] bg-surface border-b border-border text-xs font-semibold text-muted px-4 py-2 sticky top-0 z-10">
+            <div className="hidden sm:grid grid-cols-[1fr_140px_150px_150px_40px] bg-surface border-b border-border text-xs font-semibold text-muted px-4 py-2 sticky top-0 z-10">
               <span>Employee</span>
               <span>Department</span>
               <span>Start</span>
@@ -576,13 +634,25 @@ function TimeOffContent() {
             {/* Rows */}
             {filteredRequests.map((r) => (
               <div key={r.id} className="border-b border-border/50 hover:bg-surface/50">
-                <div className="hidden sm:grid grid-cols-[1fr_140px_120px_120px_40px] px-4 py-2.5 text-sm items-center">
+                <div className="hidden sm:grid grid-cols-[1fr_140px_150px_150px_40px] px-4 py-2.5 text-sm items-center">
                   <span className="font-medium">{r.employee_name}</span>
                   <span className="text-muted">{r.department}</span>
-                  <span>{formatDateDisplay(r.start_date)}</span>
-                  <span className="text-muted">
-                    {r.end_date ? formatDateDisplay(r.end_date) : "—"}
-                  </span>
+                  <div>
+                    <div>{formatDateDisplay(r.start_date)}</div>
+                    {r.start_time && (
+                      <div className="text-xs text-muted">
+                        leaves {formatTimeDisplay(r.start_time)}
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-muted">
+                    <div>{r.end_date ? formatDateDisplay(r.end_date) : "—"}</div>
+                    {r.end_time && (
+                      <div className="text-xs">
+                        back {formatTimeDisplay(r.end_time)}
+                      </div>
+                    )}
+                  </div>
                   <button
                     onClick={() => handleDelete(r.id)}
                     className="p-1 rounded-full hover:bg-danger/10 text-muted hover:text-danger transition-colors"
@@ -605,6 +675,19 @@ function TimeOffContent() {
                         </>
                       )}
                     </div>
+                    {(r.start_time || r.end_time) && (
+                      <div className="flex items-center gap-1.5 mt-1 text-xs text-muted">
+                        <Clock className="w-3 h-3" />
+                        <span>
+                          {[
+                            r.start_time && `leaves ${formatTimeDisplay(r.start_time)}`,
+                            r.end_time && `back ${formatTimeDisplay(r.end_time)}`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <button
                     onClick={() => handleDelete(r.id)}

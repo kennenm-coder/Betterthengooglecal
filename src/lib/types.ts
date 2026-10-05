@@ -272,6 +272,10 @@ export interface TimeOffRequest {
   department: string;
   start_date: string;
   end_date: string | null;
+  /** Optional time of day they leave on start_date. Null = off all day. */
+  start_time: string | null;
+  /** Optional time of day they return on the last day. Null = off all day. */
+  end_time: string | null;
   created_at: string;
 }
 
