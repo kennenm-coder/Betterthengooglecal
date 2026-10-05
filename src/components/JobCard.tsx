@@ -245,7 +245,7 @@ export default function JobCard({
                 <button
                   onClick={() => setShowWriteUp(true)}
                   className="p-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 transition-colors"
-                  title="Field Write-Up"
+                  title="Write-Up"
                 >
                   <Hammer className="w-5 h-5 text-amber-600" />
                 </button>

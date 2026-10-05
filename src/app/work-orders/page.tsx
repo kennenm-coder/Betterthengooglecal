@@ -360,7 +360,7 @@ export default function WorkOrdersPage() {
       <div className="flex flex-col h-full">
         <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
           <Wrench className="w-8 h-8 text-muted" />
-          <p className="text-sm text-muted">Field write-ups aren&apos;t available for your account.</p>
+          <p className="text-sm text-muted">Write-ups aren&apos;t available for your account.</p>
           <Link href="/" className="text-sm text-primary underline">
             Back to calendar
           </Link>
@@ -384,7 +384,7 @@ export default function WorkOrdersPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Wrench className="w-5 h-5 text-amber-600" />
-            <h1 className="text-lg font-semibold">Field Write-Ups</h1>
+            <h1 className="text-lg font-semibold">Write-Ups</h1>
           </div>
           <div className="flex items-center gap-2">
             <button

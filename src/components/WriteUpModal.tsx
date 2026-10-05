@@ -1510,7 +1510,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             <Wrench className="w-5 h-5 text-amber-600 shrink-0" />
             <div className="min-w-0">
               <h2 className="text-base font-semibold leading-tight">
-                {isEditing || isBatchEdit ? "Edit Write-Up" : "Field Write-Up"}
+                {isEditing || isBatchEdit ? "Edit Write-Up" : "Write-Up"}
               </h2>
               <p className="text-xs text-muted leading-tight truncate">
                 {order.customerName} · #{order.orderNumber}

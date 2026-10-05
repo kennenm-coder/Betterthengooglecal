@@ -355,12 +355,12 @@ export default function InstallInstructionsPage() {
           </div>
         </div>
 
-        {/* Field Write-Ups */}
+        {/* Write-Ups */}
         {openWriteUps.length > 0 && (
           <div className="mb-5">
             <div className="bg-amber-500 text-white text-[11px] font-bold tracking-wider uppercase px-3.5 py-1.5 flex items-center gap-2">
               <Hammer className="w-3.5 h-3.5" />
-              Field Write-Ups ({openWriteUps.length})
+              Write-Ups ({openWriteUps.length})
             </div>
             <div className="border border-amber-500/30 rounded-b-lg divide-y divide-border">
               {openWriteUps.map((w) => (

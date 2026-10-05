@@ -58,7 +58,7 @@ export default function WorkOrderDocPage() {
   if (!canView) {
     return (
       <div className="flex flex-col items-center justify-center h-screen gap-3 px-6 text-center">
-        <p className="text-muted">Field write-ups aren&apos;t available for your account.</p>
+        <p className="text-muted">Write-ups aren&apos;t available for your account.</p>
         <button onClick={() => router.push("/")} className="text-primary underline text-sm">
           Back to calendar
         </button>

@@ -1079,7 +1079,7 @@ export function writeUpsToPlainText(writeUps: FieldWorkOrder[]): string {
   if (!writeUps.length) return "";
   const first = writeUps[0];
   const lines: string[] = [];
-  lines.push(`FIELD WRITE-UP — ${first.customerName || ""} (#${first.orderNumber})`.trim());
+  lines.push(`WRITE-UP — ${first.customerName || ""} (#${first.orderNumber})`.trim());
   if (first.address) lines.push(first.address);
   lines.push("");
 
@@ -1186,9 +1186,9 @@ export function buildWriteUpEmailContent(
   entries: WriteUpEntryInput[],
   docLink: string
 ): { subject: string; body: string } {
-  const subject = `Field Write-Up - ${ctx.customerName || ""} - ${ctx.orderNumber}`;
+  const subject = `Write-Up - ${ctx.customerName || ""} - ${ctx.orderNumber}`;
   const lines: string[] = [
-    "A field write-up was completed:",
+    "A write-up was completed:",
     "",
     `Customer: ${ctx.customerName || "—"}`,
     `Job #: ${ctx.orderNumber}`,
