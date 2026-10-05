@@ -365,31 +365,68 @@ export default function JobCard({
               </InfoRow>
             )}
 
-            {order.phones.length > 0 && (
-              <InfoRow icon={Phone} label="Phone">
-                <div className="flex flex-wrap gap-x-3 gap-y-1">
-                  {order.phones.map((p, i) => (
-                    <span key={i} className="inline-flex items-center gap-1">
-                      <a href={phoneHref(p.number)} className="text-primary underline">
-                        {p.number}
-                      </a>
-                      <span className="text-xs text-muted">({p.label})</span>
-                      <CopyButton text={p.number} label={p.label} />
-                    </span>
-                  ))}
-                </div>
-              </InfoRow>
-            )}
-
-            {order.email && (
-              <InfoRow icon={Mail} label="Email">
-                <a href={`mailto:${order.email}`} className="text-primary underline break-all">
-                  {order.email}
-                </a>
-                <CopyButton text={order.email} label="email" />
-              </InfoRow>
-            )}
           </div>
+
+          {/* Customer contact — phone and email come from the bill-to contact,
+              so they sat directly under the crew rows and read as the measure
+              tech's number. Kept in their own block, under the customer's name,
+              so there's no question whose number it is. */}
+          {(order.phones.length > 0 || order.email || order.contactName) && (
+            <div className="mt-3 pt-3 border-t border-border">
+              <div className="rounded-lg bg-surface p-3">
+                <div className="flex items-center gap-1.5 mb-2 text-muted">
+                  <User className="w-3.5 h-3.5" />
+                  <span className="text-xs font-semibold uppercase tracking-wide">
+                    Customer Contact
+                  </span>
+                </div>
+
+                {order.customerName && (
+                  <p className="text-[15px] font-semibold break-words mb-2">
+                    {order.customerName}
+                  </p>
+                )}
+
+                <div className="space-y-2">
+                  {order.phones.length > 0 && (
+                    <InfoRow icon={Phone} label="Phone">
+                      <div className="flex flex-wrap gap-x-3 gap-y-1">
+                        {order.phones.map((p, i) => (
+                          <span key={i} className="inline-flex items-center gap-1">
+                            <a href={phoneHref(p.number)} className="text-primary underline">
+                              {p.number}
+                            </a>
+                            <span className="text-xs text-muted">({p.label})</span>
+                            <CopyButton text={p.number} label={p.label} />
+                          </span>
+                        ))}
+                      </div>
+                    </InfoRow>
+                  )}
+
+                  {order.email && (
+                    <InfoRow icon={Mail} label="Email">
+                      <a
+                        href={`mailto:${order.email}`}
+                        className="text-primary underline break-all"
+                      >
+                        {order.email}
+                      </a>
+                      <CopyButton text={order.email} label="email" />
+                    </InfoRow>
+                  )}
+
+                  {/* The on-site contact, when it isn't the bill-to customer. */}
+                  {order.contactName && order.contactName !== order.customerName && (
+                    <InfoRow icon={User} label="On-Site">
+                      <span className="break-words">{order.contactName}</span>
+                      <CopyButton text={order.contactName} label="on-site contact" />
+                    </InfoRow>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {expanded && (
             <div className="mt-3 pt-3 border-t border-border space-y-1.5 text-[15px]">
@@ -542,7 +579,13 @@ function InfoRow({
   return (
     <div className="flex items-start gap-2 text-[15px]">
       <Icon className="w-4 h-4 text-muted mt-0.5 shrink-0" />
-      <div className="flex items-center gap-1 flex-wrap min-w-0">{children}</div>
+      <div className="flex items-center gap-1 flex-wrap min-w-0">
+        {/* The label used to be accepted and thrown away, which left every row
+            as a bare icon and a value — a phone number under a person's name
+            with nothing saying whose it was. */}
+        <span className="text-muted shrink-0">{label}:</span>
+        {children}
+      </div>
     </div>
   );
 }
