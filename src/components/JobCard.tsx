@@ -305,15 +305,21 @@ export default function JobCard({
             </InfoRow>
 
             <InfoRow icon={MapPin} label="Address">
-              <a
-                href={mapsHref(order.address)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary underline break-words"
-              >
-                {order.address}
-              </a>
-              <CopyButton text={order.address} label="address" />
+              {/* Link and copy button share one flex item so the button flows
+                  inline after the last word. As two items the button was a
+                  wrap candidate of its own and dropped to its own line under a
+                  long address on a phone. */}
+              <span className="min-w-0">
+                <a
+                  href={mapsHref(order.address)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline break-words"
+                >
+                  {order.address}
+                </a>
+                <CopyButton text={order.address} label="address" />
+              </span>
             </InfoRow>
 
             {order.primaryResource && (
