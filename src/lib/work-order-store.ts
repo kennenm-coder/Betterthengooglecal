@@ -1,5 +1,5 @@
 import { getSupabase } from "./supabase";
-import { fetchCatalogAndOffsets, fetchTrimCatalogOptions } from "./nwo-builder";
+import { fetchCatalogAndOffsets, fetchTrimCatalogOptions, MaterialCatalog } from "./nwo-builder";
 import { fetchMaterialJobs } from "./store";
 import {
   FieldWorkOrder,
@@ -246,6 +246,9 @@ export interface CatalogPickItem {
   unit: string;
   nicknames: string[];
   species: string[];
+  /** Every vendor seen across the item's options, for the picker's list. Which
+   *  ONE of them applies to a given colour + species is decided by
+   *  resolveVendor over `options` — this flat list cannot answer that. */
   vendors: string[];
 }
 
@@ -273,6 +276,14 @@ export async function fetchCatalogPickItems(): Promise<CatalogPickItem[]> {
   items.sort((a: CatalogPickItem, b: CatalogPickItem) => a.profile.localeCompare(b.profile));
   _pickCache = items;
   return items;
+}
+
+/** The shared material catalog itself — items with their colour groups and the
+ *  vendor directory — so the write-up trim adder can resolve a line's vendor the
+ *  same way the material-list maker does. Cached by fetchCatalogAndOffsets. */
+export async function fetchMaterialCatalog(): Promise<MaterialCatalog> {
+  const { catalog } = await fetchCatalogAndOffsets();
+  return catalog;
 }
 
 // ─── Trim option lists (colors / species / stains) ──────────────────────────
@@ -306,11 +317,13 @@ export async function fetchTrimOptions(): Promise<TrimOptions> {
 
 // ─── Parts catalog (Andersen replacement parts) ─────────────────────────────
 
-/** A color+size combination and its specific part number. */
+/** A color+size combination, its part number, and optionally its own price. */
 export interface PartVariant {
   color: string;
   size: string;
   partNumber: string;
+  /** Overrides the part-level price for this combination. */
+  price?: number | null;
 }
 
 export interface PartsCatalogItem {
@@ -324,9 +337,35 @@ export interface PartsCatalogItem {
   variants: PartVariant[];
   /** false = auto-added from a write-up, awaiting an admin/field-manager review. */
   verified: boolean;
+  /** Other names people call this part. The write-up picker SEARCHES these and
+   *  shows the matched one in parentheses; the saved line keeps the real name. */
+  nicknames: string[];
+  /** Each, before any variant override. null = no price recorded (show a dash,
+   *  never a confident $0.00). Shown while picking; never saved on a write-up. */
+  price: number | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  updatedAt: string | null;
 }
 
-const PART_SELECT = "id, product_type, category, part_name, position, colors, sizes, variants, verified";
+const PART_SELECT =
+  "id, product_type, category, part_name, position, colors, sizes, variants, " +
+  "verified, nicknames, price, created_by, updated_by, updated_at";
+
+/** Everything that existed before migration 031 — the fallback select. */
+const PART_SELECT_LEGACY =
+  "id, product_type, category, part_name, position, colors, sizes, variants, verified";
+
+/** numeric(10,2) comes back from PostgREST as a string; null stays null. */
+function num(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function strList(v: unknown): string[] {
+  return Array.isArray(v) ? (v as unknown[]).map((x) => String(x || "").trim()).filter(Boolean) : [];
+}
 
 function rowToPart(r: Record<string, unknown>): PartsCatalogItem {
   return {
@@ -339,7 +378,49 @@ function rowToPart(r: Record<string, unknown>): PartsCatalogItem {
     sizes: Array.isArray(r.sizes) ? (r.sizes as string[]) : [],
     variants: Array.isArray(r.variants) ? (r.variants as PartVariant[]) : [],
     verified: r.verified !== false,
+    nicknames: strList(r.nicknames),
+    price: num(r.price),
+    createdBy: (r.created_by as string) || null,
+    updatedBy: (r.updated_by as string) || null,
+    updatedAt: (r.updated_at as string) || null,
   };
+}
+
+/** A part's price for a colour/size, falling back to the part-level price. */
+export function partPrice(part: PartsCatalogItem, color?: string, size?: string): number | null {
+  const v = part.variants.find((x) => (x.color || "") === (color || "") && (x.size || "") === (size || ""));
+  const vp = num(v?.price);
+  return vp != null ? vp : part.price;
+}
+
+// ─── Who is editing ────────────────────────────────────────────────────────
+// Stamped onto every parts write so a review can see who added a part and when
+// — including the tech whose typed-in custom part got auto-added. Resolved from
+// the session on first use and cached: the display name from allowed_emails
+// when there is one, otherwise the email.
+let _actor: string | null = null;
+async function actor(): Promise<string> {
+  if (_actor) return _actor;
+  const supabase = getSupabase();
+  if (!supabase) return "unknown";
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user?.email) return "unknown";
+    const { data } = await supabase
+      .from("allowed_emails")
+      .select("name")
+      .eq("email", user.email.toLowerCase())
+      .maybeSingle();
+    _actor = (data?.name as string) || user.email;
+    return _actor;
+  } catch {
+    return "unknown";
+  }
+}
+
+/** True when a write failed only because migration 031 hasn't been run. */
+function isMissingColumn(error: { message?: string } | null): boolean {
+  return /column .* does not exist|schema cache/i.test(error?.message || "");
 }
 
 let _partsCache: PartsCatalogItem[] | null = null;
@@ -360,16 +441,27 @@ export async function fetchPartsCatalog(): Promise<PartsCatalogItem[]> {
     .order("product_type", { ascending: true })
     .order("category", { ascending: true });
   let rows = rich.data as Record<string, unknown>[] | null;
-  // Fallback for before migration 014 (new columns don't exist yet): the basic
-  // columns still work, so the picker keeps suggesting parts.
+  // Fallback for a database that hasn't caught up with the code yet (018's
+  // columns, or 031's nicknames/price/audit): the older column sets still work,
+  // so the picker keeps suggesting parts instead of going blank.
   if (rich.error) {
-    const basic = await supabase
+    const mid = await supabase
       .from("parts_catalog")
-      .select("id, product_type, category, part_name, position")
+      .select(PART_SELECT_LEGACY)
       .eq("active", true)
+      .eq("verified", true)
       .order("product_type", { ascending: true })
       .order("category", { ascending: true });
-    rows = basic.data as Record<string, unknown>[] | null;
+    rows = mid.data as Record<string, unknown>[] | null;
+    if (mid.error) {
+      const basic = await supabase
+        .from("parts_catalog")
+        .select("id, product_type, category, part_name, position")
+        .eq("active", true)
+        .order("product_type", { ascending: true })
+        .order("category", { ascending: true });
+      rows = basic.data as Record<string, unknown>[] | null;
+    }
   }
   if (!rows) return [];
   const mapped = rows.map(rowToPart);
@@ -382,15 +474,28 @@ export async function fetchPartsCatalog(): Promise<PartsCatalogItem[]> {
 export async function fetchAllParts(): Promise<PartsCatalogItem[]> {
   const supabase = getSupabase();
   if (!supabase) return [];
-  const { data, error } = await supabase
+  const rich = await supabase
     .from("parts_catalog")
     .select(PART_SELECT)
     .eq("active", true)
     .order("verified", { ascending: true })
     .order("product_type", { ascending: true })
     .order("category", { ascending: true });
-  if (error || !data) return [];
-  return (data as Record<string, unknown>[]).map(rowToPart);
+  let rows = rich.data as Record<string, unknown>[] | null;
+  // Same reason as fetchPartsCatalog: don't empty the catalog editor just
+  // because migration 031 hasn't been run on this database yet.
+  if (rich.error) {
+    const legacy = await supabase
+      .from("parts_catalog")
+      .select(PART_SELECT_LEGACY)
+      .eq("active", true)
+      .order("verified", { ascending: true })
+      .order("product_type", { ascending: true })
+      .order("category", { ascending: true });
+    rows = legacy.data as Record<string, unknown>[] | null;
+  }
+  if (!rows) return [];
+  return rows.map(rowToPart);
 }
 
 export interface PartInput {
@@ -403,12 +508,14 @@ export interface PartInput {
   sizes: string[];
   variants: PartVariant[];
   verified?: boolean;
+  nicknames?: string[];
+  price?: number | null;
 }
 
 export async function upsertPart(input: PartInput): Promise<{ ok: boolean; error: string | null }> {
   const supabase = getSupabase();
   if (!supabase) return { ok: false, error: "Not signed in." };
-  const row = {
+  const legacy = {
     product_type: input.productType.trim(),
     category: input.category.trim(),
     part_name: input.partName.trim(),
@@ -419,10 +526,26 @@ export async function upsertPart(input: PartInput): Promise<{ ok: boolean; error
     verified: input.verified !== false,
     active: true,
   };
-  const q = input.id
-    ? supabase.from("parts_catalog").update(row).eq("id", input.id)
-    : supabase.from("parts_catalog").insert(row);
-  const { error } = await q;
+  const who = await actor();
+  const row: Record<string, unknown> = {
+    ...legacy,
+    nicknames: strList(input.nicknames),
+    price: num(input.price),
+    updated_by: who,
+    updated_at: new Date().toISOString(),
+  };
+  const send = (r: Record<string, unknown>) =>
+    input.id
+      ? supabase.from("parts_catalog").update(r).eq("id", input.id)
+      : supabase.from("parts_catalog").insert({ ...r, created_by: who });
+
+  let { error } = await send(row);
+  // Before migration 031 those columns don't exist. Save what we can rather
+  // than refusing the edit outright — nicknames and price are then dropped,
+  // which the editor shows plainly, instead of silent corruption.
+  if (error && isMissingColumn(error)) {
+    ({ error } = await send(legacy));
+  }
   if (error) {
     console.error("upsertPart failed:", error);
     return { ok: false, error: error.message };
@@ -445,9 +568,17 @@ export async function addCustomPart(partName: string, productType?: string): Pro
   if (!name) return;
   const supabase = getSupabase();
   if (!supabase) return;
-  const { data } = await supabase.from("parts_catalog").select("id").ilike("part_name", name).limit(1);
-  if (Array.isArray(data) && data.length) return; // already in the catalog
-  await supabase.from("parts_catalog").insert({
+  // A nickname counts as already-in-the-catalog. Once someone has folded this
+  // text into a real part, typing it again must not recreate the duplicate —
+  // otherwise the cleanup never finishes. (The nickname query fails harmlessly
+  // on a database without migration 031, leaving the old name-only behaviour.)
+  const [byName, byNick] = await Promise.all([
+    supabase.from("parts_catalog").select("id").ilike("part_name", name).limit(1),
+    supabase.from("parts_catalog").select("id").overlaps("nicknames", [name, name.toLowerCase()]).limit(1),
+  ]);
+  if (byName.data?.length || byNick.data?.length) return; // already in the catalog
+
+  const legacy = {
     product_type: (productType || "").trim() || "Custom",
     category: "Custom",
     part_name: name,
@@ -456,8 +587,98 @@ export async function addCustomPart(partName: string, productType?: string): Pro
     variants: [],
     verified: false,
     active: true,
-  });
+  };
+  // Stamp the tech who typed it, so whoever reviews the unverified pile can
+  // see where it came from.
+  const who = await actor();
+  let { error } = await supabase
+    .from("parts_catalog")
+    .insert({ ...legacy, created_by: who, updated_by: who, updated_at: new Date().toISOString() });
+  if (error && isMissingColumn(error)) {
+    ({ error } = await supabase.from("parts_catalog").insert(legacy));
+  }
   invalidatePartsCache();
+}
+
+// ─── Parts bundles ──────────────────────────────────────────────────────────
+// A named set of parts and quantities — "Triple Casement Brick Mould" is these
+// five parts. The write-up picker offers them alongside individual parts; one
+// tap adds every member. Built and maintained in the NWO material-list app's
+// Material Catalog; this app only reads them.
+
+export interface BundleMember {
+  partId: string;
+  qty: number;
+}
+
+export interface PartsBundle {
+  id: string;
+  name: string;
+  productType: string;
+  nicknames: string[];
+  members: BundleMember[];
+  /** Set only when the bundle is quoted as a kit; otherwise sum the members. */
+  priceOverride: number | null;
+}
+
+const BUNDLE_SELECT = "id, name, product_type, nicknames, members, price_override";
+
+let _bundlesCache: PartsBundle[] | null = null;
+export function invalidateBundlesCache() {
+  _bundlesCache = null;
+}
+
+/**
+ * Active bundles. Returns [] on any error — including a database without
+ * migration 031, where the table simply doesn't exist yet — so the picker
+ * degrades to parts-only rather than breaking.
+ */
+export async function fetchPartsBundles(): Promise<PartsBundle[]> {
+  if (_bundlesCache) return _bundlesCache;
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("parts_bundles")
+    .select(BUNDLE_SELECT)
+    .eq("active", true)
+    .order("name", { ascending: true });
+  if (error || !data) return [];
+  const mapped = (data as Record<string, unknown>[]).map((r) => ({
+    id: String(r.id),
+    name: String(r.name || ""),
+    productType: String(r.product_type || ""),
+    nicknames: strList(r.nicknames),
+    members: (Array.isArray(r.members) ? (r.members as BundleMember[]) : [])
+      .filter((m) => m && m.partId)
+      .map((m) => ({ partId: String(m.partId), qty: Math.max(1, Number(m.qty) || 1) })),
+    priceOverride: num(r.price_override),
+  }));
+  // Don't cache an empty read — RLS returns 0 rows before auth resolves.
+  if (mapped.length > 0) _bundlesCache = mapped;
+  return mapped;
+}
+
+/**
+ * What a bundle costs: the override when set, otherwise its members' prices
+ * times their quantities. `partial` means at least one member has no price, so
+ * the total is a floor — show "$42.00+" rather than passing off an undercount.
+ */
+export function bundlePrice(
+  bundle: PartsBundle,
+  partsById: Map<string, PartsCatalogItem>
+): { total: number | null; partial: boolean } {
+  if (bundle.priceOverride != null) return { total: bundle.priceOverride, partial: false };
+  let total = 0;
+  let partial = false;
+  let any = false;
+  for (const m of bundle.members) {
+    const part = partsById.get(m.partId);
+    const p = part ? partPrice(part) : null;
+    if (p == null) { partial = true; continue; }
+    any = true;
+    total += p * m.qty;
+  }
+  return any ? { total: Math.round(total * 100) / 100, partial } : { total: null, partial };
 }
 
 // ─── Work-to-complete catalog (feeds "what needs done") ─────────────────────
@@ -1102,11 +1323,23 @@ export function writeUpsToPlainText(writeUps: FieldWorkOrder[]): string {
         lines.push(`   - ${c.field}: ${c.oldValue || "—"} -> ${c.newValue}`);
       }
     }
-    if (w.materialItems.length) {
-      lines.push("  Materials:");
-      for (const m of w.materialItems) {
+    // Trim and parts listed apart, because they're two orders to two different
+    // suppliers. A line with no kind is trim — see splitMaterialLines.
+    const trimLines = w.materialItems.filter((m) => m.kind !== "part");
+    const partLines = w.materialItems.filter((m) => m.kind === "part");
+    if (trimLines.length) {
+      lines.push("  Trim / material to order:");
+      for (const m of trimLines) {
         lines.push(
-          `   - ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${m.lengths ? ` (${m.lengths})` : ""}${m.vendor ? ` [${m.vendor}]` : ""}`
+          `   - ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${m.species ? ` ${m.species}` : ""}${m.lengths ? ` (${m.lengths})` : ""}${m.vendor ? ` [${m.vendor}]` : ""}`
+        );
+      }
+    }
+    if (partLines.length) {
+      lines.push("  Parts to order:");
+      for (const m of partLines) {
+        lines.push(
+          `   - ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${m.size ? ` ${m.size}` : ""}${m.partNumber ? ` Part# ${m.partNumber}` : ""}`
         );
       }
     }

@@ -21,7 +21,7 @@ import {
 } from "@/lib/work-order-store";
 import { getWriteUpEmails } from "@/lib/action-settings";
 import { dedupeRecipients } from "@/lib/email-recipients";
-import { groupWriteUpSections, padSeq, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
+import { groupWriteUpSections, padSeq, splitMaterialLines, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
 import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibility";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
@@ -649,6 +649,11 @@ function ReviewSection({
 }) {
   const allWork = [...section.outstanding, ...section.completed].sort((a, b) => a.seq - b.seq);
   const allReviewed = allWork.length > 0 && allWork.every((i) => i.reviewed);
+  // Trim and parts are two different orders to two different suppliers, so they
+  // get a table each instead of one blended list the office has to sort by eye.
+  const { trim: sectionTrim, parts: sectionParts } = splitMaterialLines(section.materials);
+  const trimPcs = sectionTrim.reduce((sum, m) => sum + (m.qty || 0), 0);
+  const partsPcs = sectionParts.reduce((sum, m) => sum + (m.qty || 0), 0);
   // The job can only be closed once every work item is checked off installed.
   const allCompleted = allWork.length > 0 && allWork.every((i) => i.completed);
   const [confirmPhotos, setConfirmPhotos] = useState(false);
@@ -825,14 +830,14 @@ function ReviewSection({
         </div>
       )}
 
-      {/* 4. Trim / material */}
-      {section.materials.length > 0 && (
+      {/* 4a. Trim / material — ordered from a lumber vendor by the piece. */}
+      {sectionTrim.length > 0 && (
         <div className="overflow-x-auto">
           <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">Trim / material</div>
           <table className="w-full border-collapse text-left">
             <thead>
               <tr className="bg-[#1a1a1a]">
-                {[`QTY: ${section.totalPcs}`, "Unit", "Item", "Color", "Species", "Lengths", "Vendor"].map((h) => (
+                {[`QTY: ${trimPcs}`, "Unit", "Item", "Color", "Species", "Lengths", "Vendor"].map((h) => (
                   <th key={h} className="px-2 py-1 text-[9px] font-bold tracking-wider uppercase text-white">
                     {h}
                   </th>
@@ -840,7 +845,7 @@ function ReviewSection({
               </tr>
             </thead>
             <tbody>
-              {section.materials.map((m, i) => (
+              {sectionTrim.map((m, i) => (
                 <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-surface"}>
                   <td className="px-2 py-1 text-xs border-b border-border font-bold whitespace-nowrap">
                     {m.qty} {m.unit}
@@ -851,6 +856,40 @@ function ReviewSection({
                   <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.species || "—"}</td>
                   <td className="px-2 py-1 text-xs border-b border-border text-muted font-mono">{m.lengths || "—"}</td>
                   <td className="px-2 py-1 text-xs border-b border-border font-bold text-[#6DB344]">{m.vendor || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* 4b. Parts — ordered from Andersen by part number. A separate table
+             because it's a different order to a different supplier, and its
+             useful columns (part number) aren't the trim ones. */}
+      {sectionParts.length > 0 && (
+        <div className="overflow-x-auto">
+          <div className="text-[10px] font-bold uppercase tracking-wide text-muted mb-1">Parts</div>
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="bg-[#1a1a1a]">
+                {[`QTY: ${partsPcs}`, "Unit", "Part", "Color", "Size", "Part #"].map((h) => (
+                  <th key={h} className="px-2 py-1 text-[9px] font-bold tracking-wider uppercase text-white">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sectionParts.map((m, i) => (
+                <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-surface"}>
+                  <td className="px-2 py-1 text-xs border-b border-border font-bold whitespace-nowrap">
+                    {m.qty} {m.unit}
+                  </td>
+                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.unitLabel || "—"}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border font-semibold">{m.item}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.color || "—"}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.size || "—"}</td>
+                  <td className="px-2 py-1 text-xs border-b border-border font-mono font-bold">{m.partNumber || "—"}</td>
                 </tr>
               ))}
             </tbody>

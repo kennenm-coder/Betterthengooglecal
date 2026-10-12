@@ -33,7 +33,7 @@ export interface DraftUnit {
   specChanges: SpecChange[];
 }
 
-/** A part flagged as needing ordered on an issue. */
+/** A part to order on an issue. */
 export interface DraftPart {
   key: string;
   name: string;
@@ -41,6 +41,11 @@ export interface DraftPart {
   qty: number;
   custom?: boolean;
   unitKeys: string[];
+  /** parts_catalog.id, so a resumed draft can still offer the part's variants. */
+  catalogId?: string;
+  color?: string;
+  size?: string;
+  partNumber?: string;
 }
 
 /** A work-to-complete item in a draft — its own materials/photos + unit keys. */
@@ -48,7 +53,9 @@ export interface DraftIssue {
   id: string;
   label: string;
   note: string;
-  needsOrdering: boolean;
+  /** Only on drafts saved before the parts list stopped hiding behind a
+   *  checkbox. Read for backwards compatibility, never written. */
+  needsOrdering?: boolean;
   parts: DraftPart[];
   orderingNotes: string;
   unitKeys: string[];

@@ -59,13 +59,23 @@ export interface NwoRow {
   profileId?: string;
 }
 
-interface CatalogItem {
+export interface CatalogItemOption {
+  species: string;
+  vendors: string[];
+  /** Name of a list in MaterialCatalog.colorGroups, or "none". Drives which
+   *  colors this option (and so its vendors) applies to. */
+  colorGroup?: string;
+  /** Vendor name → unit price for this species/color combination. */
+  prices?: Record<string, number | string>;
+}
+
+export interface CatalogItem {
   id: string;
   profile: string;
   category: string;
   calcMethod: string;
   unit?: string;
-  options?: { species: string; vendors: string[] }[];
+  options?: CatalogItemOption[];
   nicknames?: string[];
   sendExtra?: boolean;
   sendExtraRate?: number;
@@ -75,10 +85,14 @@ interface CatalogItem {
   requiresCAD?: boolean;
 }
 
-interface MaterialCatalog {
+export interface MaterialCatalog {
   items?: CatalogItem[];
   stains?: string[];
   paints?: string[];
+  /** Named color lists the items' options point at by name. */
+  colorGroups?: Record<string, string[]>;
+  /** Vendor directory — name plus the abbreviation PO numbers are built from. */
+  vendors?: { name: string; abbr?: string; includePricing?: boolean }[];
   calcMethods?: { id: string; formula: string; multiplier?: number; stockLengths?: number[] }[];
 }
 

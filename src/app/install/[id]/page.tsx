@@ -393,8 +393,15 @@ export default function InstallInstructionsPage() {
                         <div key={i} className="flex gap-1.5">
                           <span className="font-semibold whitespace-nowrap">{m.qty} {m.unit}</span>
                           <span>{m.item}</span>
+                          {/* A part's useful details are its variant and part
+                              number; trim's are its specs and vendor. */}
                           <span className="text-muted">
-                            {[m.color, m.species, m.lengths, m.vendor].filter(Boolean).join(" · ")}
+                            {(m.kind === "part"
+                              ? [m.color, m.size, m.partNumber ? `Part# ${m.partNumber}` : ""]
+                              : [m.color, m.species, m.lengths, m.vendor]
+                            )
+                              .filter(Boolean)
+                              .join(" · ")}
                           </span>
                         </div>
                       ))}

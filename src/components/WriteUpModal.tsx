@@ -24,6 +24,10 @@ import {
   TrimOptions,
   fetchPartsCatalog,
   PartsCatalogItem,
+  fetchPartsBundles,
+  PartsBundle,
+  partPrice,
+  bundlePrice,
   addCustomPart,
   addCustomWork,
   lengthsToQty,
@@ -37,7 +41,11 @@ import {
   deleteWriteUp,
   getSignedPhotoUrl,
   WriteUpEntryInput,
+  fetchMaterialCatalog,
 } from "@/lib/work-order-store";
+import type { MaterialCatalog } from "@/lib/nwo-builder";
+import { autoVendorFor, isInHouse, isOrderable } from "@/lib/trim-vendor";
+import { sendTrimToOrdering, newlyAddedTrim, TrimOrderResult } from "@/lib/trim-order-handoff";
 import {
   WriteUpDraft,
   saveDraft,
@@ -108,7 +116,7 @@ interface LocalPhoto {
 //   2. Units affected (picked or added manually) — a top-level list
 //   3. Spec changes per unit
 //   4. Work to complete (issues) — each references which units it affects
-//   5. Trim / material — one list
+//   5. Trim / material + parts — two lists, one per catalog
 //   6. Photos — one set
 
 /** A unit affected by this write-up: identity + its spec corrections. */
@@ -132,6 +140,15 @@ interface PartItem {
   custom?: boolean;
   /** Which affected units need this part; empty = all affected units. */
   unitKeys: string[];
+  /** parts_catalog.id when picked from the catalog — how the row finds its
+   *  colours, sizes and variants again. Absent on a custom part. */
+  catalogId?: string;
+  /** The picked variant. Together these choose the part number below. */
+  color?: string;
+  size?: string;
+  /** The Andersen part number for that colour + size, so whoever places the
+   *  order doesn't have to look it up a second time. */
+  partNumber?: string;
 }
 
 /** A work-to-complete item — its own materials + photos, references the units
@@ -140,9 +157,9 @@ interface WuIssue {
   id: string;
   label: string;
   note: string;
-  /** "Something needs ordered" flag → parts + notes. */
-  needsOrdering: boolean;
   parts: PartItem[];
+  /** Special instructions for whoever places the order (rush it, pull from the
+   *  shop) — not a place to list items; the two lists do that. */
   orderingNotes: string;
   unitKeys: string[];
   materials: WriteUpMaterialItem[];
@@ -303,6 +320,45 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const [options, setOptions] = useState<UnitOptions | null>(null);
   const [trimOptions, setTrimOptions] = useState<TrimOptions | null>(null);
   const [partsCatalog, setPartsCatalog] = useState<PartsCatalogItem[]>([]);
+  const [partsBundles, setPartsBundles] = useState<PartsBundle[]>([]);
+  // The shared material catalog itself — needed to resolve a trim line's vendor
+  // from its profile + colour + species, which the flat pick list can't do.
+  const [materialCatalog, setMaterialCatalog] = useState<MaterialCatalog | null>(null);
+  // Set when a submitted write-up opened a trim order in the ordering queue.
+  const [trimOrder, setTrimOrder] = useState<TrimOrderResult | null>(null);
+  // The trim already on this write-up when it was opened for editing. Saving an
+  // edit hands over only what's been ADDED since: re-sending the whole list
+  // would open an order duplicating the first one. Empty on the create flow.
+  const materialsBeforeEdit = useMemo<WriteUpMaterialItem[]>(() => {
+    if (editBatch && editBatch.length) return editBatch.flatMap((r) => r.materialItems || []);
+    if (editWriteUp) return editWriteUp.materialItems || [];
+    return [];
+  }, [editWriteUp, editBatch]);
+
+  /** Hand any newly-added trim to the ordering queue after an edit saves.
+   *  Same rules as a first submit, and equally unable to fail the save. */
+  async function handOffEditedTrim(
+    nextMaterials: WriteUpMaterialItem[]
+  ): Promise<TrimOrderResult | null> {
+    const added = newlyAddedTrim(materialsBeforeEdit, nextMaterials);
+    if (!added.length) return null;
+    const handoff = await sendTrimToOrdering({
+      orderNumber: order.orderNumber,
+      customerName: order.customerName,
+      materials: added,
+    });
+    if (handoff) setTrimOrder(handoff);
+    return handoff;
+  }
+
+  /** Close now, or hold the confirmation open when there's a trim order to
+   *  read. A repeat order on the job is the one that must not flash past. */
+  function finishAfterEdit(handoff: TrimOrderResult | null) {
+    onSaved?.();
+    if (!handoff) return onClose();
+    setSentOk("updated");
+    if (handoff.sequence === 1) setTimeout(() => onClose(), 1500);
+  }
 
   // CREATE (flat model): background + notes, units, per-unit specs live on the
   // units, work-to-complete issues, one material list, one photo set.
@@ -338,7 +394,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   } | null>(null);
   const [resending, setResending] = useState(false);
   // Brief success confirmation shown after a submit before the modal closes.
-  const [sentOk, setSentOk] = useState<null | "emailed" | "saved">(null);
+  const [sentOk, setSentOk] = useState<null | "emailed" | "saved" | "updated">(null);
   // Edit mode: status + saving flag
   const [status, setStatus] = useState<WriteUpStatus>(editWriteUp?.status || "open");
   const [saving, setSaving] = useState(false);
@@ -359,9 +415,12 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   useEffect(() => {
     getWriteUpPresets().then(setPresets);
     fetchCatalogPickItems().then(setCatalog).catch(() => setCatalog([]));
+    fetchMaterialCatalog().then(setMaterialCatalog).catch(() => setMaterialCatalog(null));
     fetchUnitOptions().then(setOptions).catch(() => setOptions(null));
     fetchTrimOptions().then(setTrimOptions).catch(() => setTrimOptions(null));
     fetchPartsCatalog().then(setPartsCatalog).catch(() => setPartsCatalog([]));
+    // Bundles are a convenience; a database without migration 031 just has none.
+    fetchPartsBundles().then(setPartsBundles).catch(() => setPartsBundles([]));
   }, []);
 
   // Self-heal: if the parts catalog came back empty (e.g. the first fetch fired
@@ -489,7 +548,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     setWuUnits(hydUnits);
 
     // Issues = line items grouped by their number (or label) across rows.
-    interface IAgg { key: string; label: string; note: string; needsOrdering: boolean; orderingNotes: string; unitKeys: Set<string>; order: number; }
+    interface IAgg { key: string; label: string; note: string; orderingNotes: string; unitKeys: Set<string>; order: number; }
     const iMap = new Map<string, IAgg>();
     let order = 0;
     for (const r of editBatch) {
@@ -497,13 +556,16 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         const gk = li.seq != null ? `s:${li.seq}` : `l:${li.label.trim().toLowerCase()}`;
         let g = iMap.get(gk);
         if (!g) {
-          let note = "", needsOrdering = false, orderingNotes = "";
+          let note = "", orderingNotes = "";
           for (const b of (li.notes || "").split(" · ")) {
-            if (b.startsWith("NEEDS ORDERED: ")) { needsOrdering = true; orderingNotes = b.slice("NEEDS ORDERED: ".length); }
-            else if (b === "NEEDS ORDERED") needsOrdering = true;
+            // A write-up saved before the two lists were split apart carries the
+            // old marker in its notes. Any instructions it held are kept; the
+            // bare marker is now derived from the lists, so it just drops.
+            if (b.startsWith("NEEDS ORDERED: ")) orderingNotes = b.slice("NEEDS ORDERED: ".length);
+            else if (b === "NEEDS ORDERED") { /* derived now */ }
             else if (b.trim()) note = note ? `${note} · ${b}` : b;
           }
-          g = { key: crypto.randomUUID(), label: li.label, note, needsOrdering, orderingNotes, unitKeys: new Set(), order: order++ };
+          g = { key: crypto.randomUUID(), label: li.label, note, orderingNotes, unitKeys: new Set(), order: order++ };
           iMap.set(gk, g);
         }
         const k = r.unitLabel ? labelToKey.get(r.unitLabel.trim()) : undefined;
@@ -538,7 +600,6 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       id: g.key,
       label: g.label,
       note: g.note,
-      needsOrdering: g.needsOrdering,
       parts: [],
       orderingNotes: g.orderingNotes,
       unitKeys: [...g.unitKeys],
@@ -686,7 +747,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
 
   // ── Work to complete (create): issues that reference affected units ──
   function makeIssue(): WuIssue {
-    return { id: crypto.randomUUID(), label: "", note: "", needsOrdering: false, parts: [], orderingNotes: "", unitKeys: [], materials: [], photos: [] };
+    return { id: crypto.randomUUID(), label: "", note: "", parts: [], orderingNotes: "", unitKeys: [], materials: [], photos: [] };
   }
   function addIssue() {
     setIssues((prev) => [...prev, makeIssue()]);
@@ -891,26 +952,39 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     // or the whole-job bucket. Each issue gets a stable 1-based number (seq)
     // shared across every unit it fans out to, so the doc/PDF number it once.
     builtIssues.forEach((it, issueIdx) => {
+      // "NEEDS ORDERED" used to come from a checkbox. It's now derived from the
+      // two lists, so the office's email and PDF still flag an item that needs
+      // ordering without anyone having to tick anything: a part is always
+      // ordered, and trim is ordered unless its vendor says we already have it.
+      const hasOrderables =
+        it.parts.some((p) => p.name.trim()) || it.materials.some((m) => isOrderable(m.vendor));
       const noteBits = [
         it.note.trim(),
-        it.needsOrdering && it.orderingNotes.trim() ? `NEEDS ORDERED: ${it.orderingNotes.trim()}` : it.needsOrdering ? "NEEDS ORDERED" : "",
+        it.orderingNotes.trim()
+          ? `NEEDS ORDERED: ${it.orderingNotes.trim()}`
+          : hasOrderables
+            ? "NEEDS ORDERED"
+            : "",
       ].filter(Boolean);
       const task: WriteUpLineItem = { kind: "custom", label: it.label.trim(), notes: noteBits.join(" · ") || undefined, seq: issueIdx + 1 };
       const keys = it.unitKeys.filter((k) => byKey.has(k));
       const targets = keys.length === 0 ? [whole()] : keys.map((k) => byKey.get(k)!);
       const partToMaterial = (p: PartItem): WriteUpMaterialItem => ({
         item: p.productType ? `${p.name.trim()} (${p.productType})` : p.name.trim(),
-        color: "",
+        color: p.color || "",
         species: "",
         qty: p.qty > 0 ? p.qty : 1,
         unit: "EA",
         lengths: "",
         vendor: "",
         custom: p.custom,
+        kind: "part",
+        partNumber: p.partNumber || undefined,
+        size: p.size || undefined,
       });
       // Parts checked for specific units go on each of those units' rows; the
       // rest (no units checked = all affected) go on the item's first target.
-      const namedParts = it.needsOrdering ? it.parts.filter((p) => p.name.trim()) : [];
+      const namedParts = it.parts.filter((p) => p.name.trim());
       const generalParts: PartItem[] = [];
       for (const p of namedParts) {
         const valid = (p.unitKeys || []).filter((k) => byKey.has(k));
@@ -987,8 +1061,18 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         id: it.id,
         label: it.label,
         note: it.note,
-        needsOrdering: !!it.needsOrdering,
-        parts: (it.parts || []).map((p) => ({ key: p.key, name: p.name, productType: p.productType, qty: p.qty, custom: p.custom, unitKeys: p.unitKeys || [] })),
+        parts: (it.parts || []).map((p) => ({
+          key: p.key,
+          name: p.name,
+          productType: p.productType,
+          qty: p.qty,
+          custom: p.custom,
+          unitKeys: p.unitKeys || [],
+          catalogId: p.catalogId,
+          color: p.color,
+          size: p.size,
+          partNumber: p.partNumber,
+        })),
         orderingNotes: it.orderingNotes || "",
         unitKeys: it.unitKeys,
         materials: it.materials || [],
@@ -1033,8 +1117,18 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         id: it.id,
         label: it.label,
         note: it.note,
-        needsOrdering: it.needsOrdering,
-        parts: it.parts.map((p) => ({ key: p.key, name: p.name, productType: p.productType, qty: p.qty, custom: p.custom, unitKeys: p.unitKeys })),
+        parts: it.parts.map((p) => ({
+          key: p.key,
+          name: p.name,
+          productType: p.productType,
+          qty: p.qty,
+          custom: p.custom,
+          unitKeys: p.unitKeys,
+          catalogId: p.catalogId,
+          color: p.color,
+          size: p.size,
+          partNumber: p.partNumber,
+        })),
         orderingNotes: it.orderingNotes,
         unitKeys: it.unitKeys,
         materials: it.materials,
@@ -1130,8 +1224,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       setError(res.error ? `Couldn't save: ${res.error}` : "Couldn't save changes — try again.");
       return;
     }
-    onSaved?.();
-    onClose();
+    finishAfterEdit(await handOffEditedTrim(materialItems));
   }
 
   async function handleDeleteWriteUp() {
@@ -1194,8 +1287,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       return;
     }
     autoAddToCatalogs();
-    onSaved?.();
-    onClose();
+    finishAfterEdit(await handOffEditedTrim(buildInputs(mergedIssues).flatMap((i) => i.materialItems)));
   }
   async function saveAndClose() {
     const d = buildDraftNow();
@@ -1258,6 +1350,21 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     await clearDraft(order.orderNumber);
     autoAddToCatalogs();
 
+    // Trim that needs ordering opens a standalone order in the trim ordering
+    // queue, as a shell to finish there. Deliberately AFTER the write-up has
+    // saved, and deliberately unable to fail the submit: the write-up is the
+    // record that matters, and the handoff resolves null on any problem.
+    // Drafts don't hand anything over — nothing has been submitted yet.
+    let handoff: TrimOrderResult | null = null;
+    if (startStatus !== "draft") {
+      handoff = await sendTrimToOrdering({
+        orderNumber: order.orderNumber,
+        customerName: order.customerName,
+        materials: inputs.flatMap((i) => i.materialItems),
+      });
+      if (handoff) setTrimOrder(handoff);
+    }
+
     if (sendEmail) {
       const origin = typeof window !== "undefined" ? window.location.origin : "";
       const docLink = `${origin}/work-orders/${encodeURIComponent(order.orderNumber)}`;
@@ -1282,7 +1389,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     // Flash a short success confirmation, then close — so the field manager sees
     // the notification went out (not just that the modal vanished).
     setSentOk(sendEmail ? "emailed" : "saved");
-    setTimeout(() => onClose(), 1500);
+    // A repeat trim order on this job is something to read, not a 1.5s flash —
+    // that dialog waits to be dismissed instead of closing itself.
+    if (!(handoff && handoff.sequence > 1)) setTimeout(() => onClose(), 1500);
   }
 
   // LINKED FEATURE: this write-up email send is mirrored by the "field notes"
@@ -1352,10 +1461,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     for (const it of issues) {
       const label = it.label.trim();
       if (label && !presetSet.has(label.toLowerCase())) addCustomWork(label).catch(() => {});
-      if (it.needsOrdering) {
-        for (const p of it.parts) {
-          if (p.custom && p.name.trim()) addCustomPart(p.name.trim(), p.productType).catch(() => {});
-        }
+      for (const p of it.parts) {
+        if (p.custom && p.name.trim()) addCustomPart(p.name.trim(), p.productType).catch(() => {});
       }
     }
   }
@@ -1450,16 +1557,73 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             <div className="w-14 h-14 rounded-full bg-green-500/15 flex items-center justify-center mx-auto mb-3">
               <Check className="w-8 h-8 text-green-600" />
             </div>
-            <p className="font-semibold">Write-up submitted</p>
+            <p className="font-semibold">
+              {sentOk === "updated" ? "Changes saved" : "Write-up submitted"}
+            </p>
             <p className="text-xs text-muted mt-1 flex items-center justify-center gap-1.5">
               {sentOk === "emailed" ? (
                 <>
                   <Send className="w-3.5 h-3.5 text-green-600" /> Notification email sent
                 </>
+              ) : sentOk === "updated" ? (
+                "Write-up updated"
               ) : (
                 "Saved for review"
               )}
             </p>
+
+            {/* The trim handoff. A second order on the same job is called out
+                here, with what the earlier one already covers, so it can be
+                checked for overlap before anyone orders twice. */}
+            {trimOrder && (
+              <div className="mt-3 pt-3 border-t border-border text-left">
+                <p className="text-xs">
+                  <strong>{trimOrder.lineCount}</strong> trim line
+                  {trimOrder.lineCount === 1 ? "" : "s"} sent to trim ordering as{" "}
+                  <span className="font-mono font-semibold">{trimOrder.po}</span>.
+                </p>
+                {trimOrder.sequence > 1 && (
+                  <div className="mt-2 rounded-lg bg-amber-500/10 border border-amber-500/40 p-2.5">
+                    <p className="text-xs font-semibold text-amber-700 dark:text-amber-500 flex items-start gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      Trim order #{trimOrder.sequence} on this job
+                    </p>
+                    <p className="text-[11px] text-muted mt-1">
+                      Check the earlier order{trimOrder.priorOrders.length === 1 ? "" : "s"} before
+                      ordering — some of this may already be covered.
+                    </p>
+                    <ul className="mt-1.5 space-y-1">
+                      {trimOrder.priorOrders.map((pr) => (
+                        <li key={pr.po} className="text-[11px]">
+                          <span className="font-mono font-semibold">{pr.po}</span>
+                          <span className="text-muted">
+                            {" "}
+                            ({pr.status === "ordered"
+                              ? "ordered"
+                              : pr.status === "on_hold"
+                                ? "on hold"
+                                : "not ordered yet"}
+                            )
+                          </span>
+                          {pr.profiles.length > 0 && (
+                            <span className="text-muted"> — {pr.profiles.join(", ")}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {trimOrder && trimOrder.sequence > 1 && (
+              <button
+                onClick={onClose}
+                className="w-full mt-4 py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold"
+              >
+                Got it
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1596,6 +1760,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 materials={editMaterials}
                 onChange={setEditMaterials}
                 catalog={catalog}
+                materialCatalog={materialCatalog}
                 colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
                 speciesOptions={trimOptions?.species || []}
                 vendorOptions={vendorOptions}
@@ -1788,7 +1953,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                       unitTitle={unitTitle}
                       canRemove={issues.length > 1}
                       catalog={catalog}
+                      materialCatalog={materialCatalog}
                       partsCatalog={partsCatalog}
+                      partsBundles={partsBundles}
                       colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
                       speciesOptions={trimOptions?.species || []}
                       vendorOptions={vendorOptions}
@@ -2231,6 +2398,7 @@ function MaterialSection({
   materials,
   onChange,
   catalog,
+  materialCatalog,
   colorOptions,
   speciesOptions,
   vendorOptions,
@@ -2239,6 +2407,7 @@ function MaterialSection({
   materials: WriteUpMaterialItem[];
   onChange: (m: WriteUpMaterialItem[]) => void;
   catalog: CatalogPickItem[];
+  materialCatalog: MaterialCatalog | null;
   colorOptions: string[];
   speciesOptions: string[];
   vendorOptions: string[];
@@ -2253,6 +2422,10 @@ function MaterialSection({
       <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
         <Package className="w-3.5 h-3.5" /> Trim / material
       </span>
+      <p className="text-[11px] text-muted mt-0.5">
+        Trim, casing, lattice, EJ — ordered by the piece. Set the vendor to the
+        shop or warehouse for anything we already have.
+      </p>
       {materials.length > 0 && (
         <div className="mt-2 space-y-2">
           {materials.map((m, i) =>
@@ -2260,6 +2433,7 @@ function MaterialSection({
               <MaterialRowEditor
                 key={i}
                 initial={m}
+                materialCatalog={materialCatalog}
                 colorOptions={colorOptions}
                 speciesOptions={speciesOptions}
                 vendorOptions={vendorOptions}
@@ -2278,6 +2452,11 @@ function MaterialSection({
                   <span className="text-muted">
                     {[m.color, m.species, m.lengths, m.vendor].filter(Boolean).map((s) => ` · ${s}`).join("")}
                   </span>
+                  {isInHouse(m.vendor) && (
+                    <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-muted">
+                      on hand
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center shrink-0">
                   <button
@@ -2302,6 +2481,7 @@ function MaterialSection({
       )}
       <MaterialAdder
         catalog={catalog}
+        materialCatalog={materialCatalog}
         colorOptions={colorOptions}
         speciesOptions={speciesOptions}
         vendorOptions={vendorOptions}
@@ -2315,6 +2495,7 @@ function MaterialSection({
 /* ── Inline editor for one already-added trim / material item ── */
 function MaterialRowEditor({
   initial,
+  materialCatalog,
   colorOptions,
   speciesOptions,
   vendorOptions,
@@ -2322,6 +2503,7 @@ function MaterialRowEditor({
   onCancel,
 }: {
   initial: WriteUpMaterialItem;
+  materialCatalog: MaterialCatalog | null;
   colorOptions: string[];
   speciesOptions: string[];
   vendorOptions: string[];
@@ -2334,6 +2516,18 @@ function MaterialRowEditor({
   const [species, setSpecies] = useState(initial.species || "");
   const [lengths, setLengths] = useState(initial.lengths || "");
   const [vendor, setVendor] = useState(initial.vendor || "");
+
+  // Same derived vendor as the adder, so a row saved before the auto-fill
+  // existed (or one whose vendor was cleared) still gets the catalog's answer.
+  const autoVendor = useMemo(
+    () =>
+      autoVendorFor(
+        { profile: item, profileId: initial.profileId, species, color },
+        materialCatalog
+      ),
+    [item, initial.profileId, species, color, materialCatalog]
+  );
+  const vendorShown = vendor || autoVendor;
 
   // Same rule as the adder: quantity is derived from the lengths field so it's
   // never double-entered. Fall back to the saved qty for older items that were
@@ -2352,7 +2546,7 @@ function MaterialRowEditor({
       qty: effectiveQty,
       unit: unit.trim() || "PCS",
       lengths: lengths.trim(),
-      vendor: vendor.trim(),
+      vendor: vendor.trim() || autoVendor,
     });
   }
 
@@ -2384,7 +2578,10 @@ function MaterialRowEditor({
       </p>
       <ComboInput label="Color" value={color} onChange={setColor} options={colorOptions} placeholder="Start typing a color or stain…" />
       <ComboInput label="Species" value={species} onChange={setSpecies} options={speciesOptions} placeholder="Start typing a species…" />
-      <ComboInput label="Vendor" value={vendor} onChange={setVendor} options={vendorOptions} placeholder="Start typing a vendor…" />
+      <ComboInput label="Vendor" value={vendorShown} onChange={setVendor} options={vendorOptions} placeholder="Start typing a vendor…" />
+      {!vendor && autoVendor && (
+        <p className="text-[11px] text-muted -mt-1">Filled in from the catalog — change it if it&apos;s wrong.</p>
+      )}
       <div className="flex gap-2">
         <button
           onClick={onCancel}
@@ -2414,7 +2611,9 @@ function IssueCard({
   unitTitle,
   canRemove,
   catalog,
+  materialCatalog,
   partsCatalog,
+  partsBundles,
   colorOptions,
   speciesOptions,
   vendorOptions,
@@ -2433,7 +2632,9 @@ function IssueCard({
   unitTitle: (u: WuUnit) => string;
   canRemove: boolean;
   catalog: CatalogPickItem[];
+  materialCatalog: MaterialCatalog | null;
   partsCatalog: PartsCatalogItem[];
+  partsBundles: PartsBundle[];
   colorOptions: string[];
   speciesOptions: string[];
   vendorOptions: string[];
@@ -2504,54 +2705,46 @@ function IssueCard({
         )}
       </div>
 
-      {/* Materials for this item */}
+      {/* Two lists, because there are two catalogs behind them and each needs
+          different details entered. Both are always visible: the headings are
+          what tell someone which list their thing belongs in, so hiding either
+          one behind a tick sent trim into the parts box without its specs. */}
+
+      {/* 1. Trim / material — profiles from the trim catalog, ordered from a
+             lumber vendor by the piece in lengths. */}
       <MaterialSection
         materials={issue.materials}
         onChange={(m) => onUpdate({ materials: m })}
         catalog={catalog}
+        materialCatalog={materialCatalog}
         colorOptions={colorOptions}
         speciesOptions={speciesOptions}
         vendorOptions={vendorOptions}
         onRegisterFlush={(fn) => onRegisterFlush?.(`mat:${issue.id}`, fn)}
       />
 
-      {/* Ordering — flag anything that needs ordered (lives with materials) */}
+      {/* 2. Parts — from the parts catalog, ordered from Andersen by part
+             number for one unit. */}
+      <PartsPicker
+        parts={issue.parts}
+        catalog={partsCatalog}
+        bundles={partsBundles}
+        affectedUnits={affectedUnits.filter((u) => issue.unitKeys.length === 0 || issue.unitKeys.includes(u.key))}
+        unitTitle={unitTitle}
+        onChange={(parts) => onUpdate({ parts })}
+        onRegisterFlush={(fn) => onRegisterFlush?.(`parts:${issue.id}`, fn)}
+      />
+
+      {/* Instructions about HOW to order — not a third place to list items. */}
       <div>
-        <button
-          onClick={() => onUpdate({ needsOrdering: !issue.needsOrdering })}
-          className="flex items-center gap-2 text-sm"
-        >
-          <span
-            className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
-              issue.needsOrdering ? "bg-amber-500 border-amber-500 text-white" : "border-border text-transparent"
-            }`}
-          >
-            <Check className="w-3.5 h-3.5" />
-          </span>
-          Something needs ordered
-        </button>
-        {issue.needsOrdering && (
-          <div className="mt-2 space-y-3">
-            <PartsPicker
-              parts={issue.parts}
-              catalog={partsCatalog}
-              affectedUnits={affectedUnits.filter((u) => issue.unitKeys.length === 0 || issue.unitKeys.includes(u.key))}
-              unitTitle={unitTitle}
-              onChange={(parts) => onUpdate({ parts })}
-              onRegisterFlush={(fn) => onRegisterFlush?.(`parts:${issue.id}`, fn)}
-            />
-            <div>
-              <span className="text-xs font-bold text-muted uppercase tracking-wide">Ordering notes</span>
-              <textarea
-                value={issue.orderingNotes}
-                onChange={(e) => onUpdate({ orderingNotes: e.target.value })}
-                rows={2}
-                placeholder="Anything else about what needs ordered…"
-                className="w-full mt-1 rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-              />
-            </div>
-          </div>
-        )}
+        <span className="text-xs font-bold text-muted uppercase tracking-wide">Ordering notes</span>
+        <textarea
+          value={issue.orderingNotes}
+          onChange={(e) => onUpdate({ orderingNotes: e.target.value })}
+          rows={2}
+          placeholder="Special instructions only — rush it, pull from the shop…"
+          className="w-full mt-1 rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+        />
       </div>
 
       {/* Photos for this item */}
@@ -2560,11 +2753,46 @@ function IssueCard({
   );
 }
 
+/** The Andersen part number for a colour + size, or "" when that combination
+ *  isn't in the catalog. Loose on a blank: a part listed with one size and
+ *  several colours still resolves once the colour is picked. */
+function partNumberFor(part: PartsCatalogItem, color: string, size: string): string {
+  const hit = part.variants.find(
+    (v) => (!color || (v.color || "") === color) && (!size || (v.size || "") === size)
+  );
+  return hit?.partNumber || "";
+}
+
+/** A fresh part row. A part with exactly one variant has only one possible part
+ *  number, so there's nothing to ask — take it; otherwise the row asks for
+ *  colour + size. */
+function newPartRow(
+  name: string,
+  productType?: string,
+  custom?: boolean,
+  item?: PartsCatalogItem
+): PartItem {
+  const only = item && item.variants.length === 1 ? item.variants[0] : undefined;
+  return {
+    key: crypto.randomUUID(),
+    name,
+    productType,
+    qty: 1,
+    custom,
+    unitKeys: [],
+    catalogId: item?.id,
+    color: only?.color || undefined,
+    size: only?.size || undefined,
+    partNumber: only?.partNumber || undefined,
+  };
+}
+
 /* ── Parts needed picker — type-ahead over the parts catalog, grouped by
  *    product type, with custom entries and per-part quantity. ── */
 function PartsPicker({
   parts,
   catalog,
+  bundles,
   affectedUnits,
   unitTitle,
   onChange,
@@ -2572,6 +2800,7 @@ function PartsPicker({
 }: {
   parts: PartItem[];
   catalog: PartsCatalogItem[];
+  bundles: PartsBundle[];
   affectedUnits: WuUnit[];
   unitTitle: (u: WuUnit) => string;
   onChange: (parts: PartItem[]) => void;
@@ -2580,6 +2809,9 @@ function PartsPicker({
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  // How many of each bundle to add. Stepped with buttons rather than a text
+  // input so the search box never loses focus and close the dropdown.
+  const [bundleCounts, setBundleCounts] = useState<Record<string, number>>({});
   const q = query.trim().toLowerCase();
 
   // Register a flush so a typed-but-not-added custom part is committed on Submit
@@ -2606,6 +2838,31 @@ function PartsPicker({
   const label = (c: PartsCatalogItem) =>
     c.position ? `${c.category} — ${c.partName} · ${c.position}` : `${c.category} — ${c.partName}`;
 
+  // The nickname that put this part in the results — only when the visible
+  // label doesn't already contain what was typed. Someone who searched "cam
+  // lock" needs to see why "Sash lock" came back; someone who searched "lock"
+  // does not.
+  const nicknameReason = (c: PartsCatalogItem): string | undefined => {
+    if (!q) return undefined;
+    const visible = `${c.productType} ${c.category} ${c.partName} ${c.position || ""}`.toLowerCase();
+    if (visible.includes(q)) return undefined;
+    return (c.nicknames || []).find((n) => n.toLowerCase().includes(q));
+  };
+
+  const fmtPrice = (n: number | null) => (n == null ? "" : `$${n.toFixed(2)}`);
+
+  const partsById = useMemo(() => new Map(catalog.map((c) => [c.id, c])), [catalog]);
+
+  const shownBundles = useMemo(() => {
+    if (!q) return bundles;
+    return bundles.filter(
+      (b) =>
+        b.name.toLowerCase().includes(q) ||
+        b.productType.toLowerCase().includes(q) ||
+        b.nicknames.some((n) => n.toLowerCase().includes(q))
+    );
+  }, [bundles, q]);
+
   const groups = useMemo(() => {
     const filtered = catalog.filter((c) => {
       if (!q) return true;
@@ -2613,7 +2870,8 @@ function PartsPicker({
         c.productType.toLowerCase().includes(q) ||
         c.category.toLowerCase().includes(q) ||
         c.partName.toLowerCase().includes(q) ||
-        (c.position || "").toLowerCase().includes(q)
+        (c.position || "").toLowerCase().includes(q) ||
+        (c.nicknames || []).some((n) => n.toLowerCase().includes(q))
       );
     });
     const byType = new Map<string, PartsCatalogItem[]>();
@@ -2629,8 +2887,38 @@ function PartsPicker({
     });
   }, [catalog, q, relevantTypes]);
 
-  function addPart(name: string, productType?: string, custom?: boolean) {
-    onChange([...parts, { key: crypto.randomUUID(), name, productType, qty: 1, custom, unitKeys: [] }]);
+  function addPart(name: string, productType?: string, custom?: boolean, item?: PartsCatalogItem) {
+    onChange([...parts, newPartRow(name, productType, custom, item)]);
+    setQuery("");
+    setOpen(false);
+  }
+
+  /** Set a row's colour or size. The part number is resolved by the caller —
+   *  which already has the catalog part in hand — so only plain strings cross
+   *  into the update and nothing holds on to a catalog object. */
+  function setVariant(key: string, patch: { color?: string; size?: string; partNumber?: string }) {
+    onChange(parts.map((p) => (p.key === key ? { ...p, ...patch } : p)));
+  }
+
+  /**
+   * A bundle is a shortcut, not a thing in its own right: it drops its members
+   * in as ordinary part lines and disappears. Each line can then be re-counted
+   * or removed like any other, and nothing downstream has to know bundles
+   * exist. `count` multiplies every member's quantity.
+   */
+  function addBundle(b: PartsBundle, count: number) {
+    const added: PartItem[] = [];
+    for (const m of b.members) {
+      const part = partsById.get(m.partId);
+      // Skip a member whose part has been deleted or unverified since — the
+      // row count below tells the writer how many actually came through.
+      if (!part) continue;
+      added.push({
+        ...newPartRow(label(part), part.productType, false, part),
+        qty: Math.max(1, m.qty * count),
+      });
+    }
+    if (added.length) onChange([...parts, ...added]);
     setQuery("");
     setOpen(false);
   }
@@ -2656,10 +2944,21 @@ function PartsPicker({
   return (
     <div>
       <span className="text-xs font-bold text-muted uppercase tracking-wide">Parts needed</span>
+      <p className="text-[11px] text-muted mt-0.5">
+        Hardware, sash, screens, locks, balances &mdash; ordered from Andersen by
+        part number.
+      </p>
 
       {parts.length > 0 && (
         <div className="mt-2 space-y-2">
-          {parts.map((p) => (
+          {parts.map((p) => {
+            const part = p.catalogId ? partsById.get(p.catalogId) : undefined;
+            const colors = part?.colors || [];
+            const sizes = part?.sizes || [];
+            // Only worth asking when the part has more than one variant — with
+            // one there's a single possible part number and it's already set.
+            const asksVariant = !!part && part.variants.length > 1 && (colors.length > 0 || sizes.length > 0);
+            return (
             <div key={p.key} className="rounded-lg border border-border bg-background px-2.5 py-2 space-y-2">
               <div className="flex items-center gap-2">
                 <div className="flex-1 min-w-0">
@@ -2692,6 +2991,64 @@ function PartsPicker({
                   <X className="w-4 h-4" />
                 </button>
               </div>
+              {/* Colour + size pick the part number, which is what an order
+                  actually needs. Without it whoever orders has to look the
+                  part up again from the name. */}
+              {asksVariant && (
+                <div className="grid grid-cols-2 gap-2">
+                  {colors.length > 0 && (
+                    <div>
+                      <label className="text-[11px] text-muted block mb-1">Colour</label>
+                      <select
+                        value={p.color || ""}
+                        onChange={(e) =>
+                          setVariant(p.key, {
+                            color: e.target.value,
+                            partNumber: part ? partNumberFor(part, e.target.value, p.size || "") : p.partNumber,
+                          })
+                        }
+                        className="w-full rounded-md border border-border bg-background px-2 py-2 text-sm"
+                      >
+                        <option value="">Pick…</option>
+                        {colors.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {sizes.length > 0 && (
+                    <div>
+                      <label className="text-[11px] text-muted block mb-1">Size</label>
+                      <select
+                        value={p.size || ""}
+                        onChange={(e) =>
+                          setVariant(p.key, {
+                            size: e.target.value,
+                            partNumber: part ? partNumberFor(part, p.color || "", e.target.value) : p.partNumber,
+                          })
+                        }
+                        className="w-full rounded-md border border-border bg-background px-2 py-2 text-sm"
+                      >
+                        <option value="">Pick…</option>
+                        {sizes.map((z) => (
+                          <option key={z} value={z}>{z}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+              {p.partNumber ? (
+                <div className="text-[11px] text-muted">
+                  Part #<span className="font-mono font-semibold text-foreground">{p.partNumber}</span>
+                </div>
+              ) : asksVariant ? (
+                <div className="text-[11px] text-muted">
+                  Pick {colors.length > 0 && sizes.length > 0 ? "colour and size" : colors.length > 0 ? "a colour" : "a size"} to
+                  pin down the part number.
+                </div>
+              ) : null}
+
               {affectedUnits.length > 0 && (
                 <div>
                   <span className="text-[11px] text-muted">For</span>
@@ -2713,7 +3070,8 @@ function PartsPicker({
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -2740,27 +3098,95 @@ function PartsPicker({
                 <Plus className="w-3.5 h-3.5" /> Add custom: &ldquo;{query.trim()}&rdquo;
               </button>
             )}
+            {shownBundles.length > 0 && (
+              <div>
+                <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-muted bg-surface sticky top-0">
+                  Bundles
+                </div>
+                {shownBundles.map((b) => {
+                  const count = bundleCounts[b.id] || 1;
+                  const price = bundlePrice(b, partsById);
+                  const step = (delta: number) =>
+                    setBundleCounts((prev) => ({ ...prev, [b.id]: Math.max(1, (prev[b.id] || 1) + delta) }));
+                  return (
+                    <div key={b.id} className="flex items-center gap-2 px-3 py-2.5 border-b border-border last:border-b-0 hover:bg-surface">
+                      <button
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          addBundle(b, count);
+                        }}
+                        className="flex-1 min-w-0 text-left"
+                      >
+                        <div className="text-sm truncate">
+                          {b.name}
+                          {count > 1 && <span className="text-amber-600 font-semibold"> × {count}</span>}
+                        </div>
+                        <div className="text-[11px] text-muted truncate">
+                          {[
+                            `bundle · ${b.members.length} part${b.members.length === 1 ? "" : "s"}`,
+                            b.productType || null,
+                            price.total != null ? `${fmtPrice(price.total * count)}${price.partial ? "+" : ""}` : null,
+                          ].filter(Boolean).join(" · ")}
+                        </div>
+                      </button>
+                      {/* preventDefault keeps focus in the search box, so the
+                          dropdown's blur-to-close doesn't fire mid-adjustment. */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); step(-1); }}
+                          className="w-7 h-7 rounded-md border border-border text-muted flex items-center justify-center"
+                          aria-label={`One fewer ${b.name}`}
+                        >
+                          −
+                        </button>
+                        <span className="w-5 text-center text-sm tabular-nums">{count}</span>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); step(1); }}
+                          className="w-7 h-7 rounded-md border border-border text-muted flex items-center justify-center"
+                          aria-label={`One more ${b.name}`}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {groups.map(([type, items]) => (
               <div key={type}>
                 <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-muted bg-surface sticky top-0">
                   {type}
                 </div>
-                {items.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      addPart(label(c), c.productType);
-                    }}
-                    className="w-full text-left px-3 py-2.5 text-sm hover:bg-surface border-b border-border last:border-b-0"
-                  >
-                    {label(c)}
-                  </button>
-                ))}
+                {items.map((c) => {
+                  const nick = nicknameReason(c);
+                  const price = partPrice(c);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                addPart(label(c), c.productType, false, c);
+                      }}
+                      className="w-full flex items-center gap-2 text-left px-3 py-2.5 text-sm hover:bg-surface border-b border-border last:border-b-0"
+                    >
+                      <span className="flex-1 min-w-0">
+                        {label(c)}
+                        {nick && <span className="text-muted"> ({nick})</span>}
+                      </span>
+                      {price != null && (
+                        <span className="shrink-0 text-xs text-muted tabular-nums">{fmtPrice(price)}</span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             ))}
-            {groups.length === 0 && !q && (
+            {groups.length === 0 && shownBundles.length === 0 && !q && (
               <div className="px-3 py-3 text-sm text-muted">No parts catalog loaded — type a custom part above.</div>
             )}
           </div>
@@ -3014,6 +3440,7 @@ function SpecEntryRow({
 /* ── Material adder — single-column, big touch targets ── */
 function MaterialAdder({
   catalog,
+  materialCatalog,
   colorOptions,
   speciesOptions,
   vendorOptions,
@@ -3021,6 +3448,7 @@ function MaterialAdder({
   onRegisterFlush,
 }: {
   catalog: CatalogPickItem[];
+  materialCatalog: MaterialCatalog | null;
   colorOptions: string[];
   speciesOptions: string[];
   vendorOptions: string[];
@@ -3053,6 +3481,28 @@ function MaterialAdder({
     [picked, vendorOptions]
   );
 
+  // The vendor the catalog says supplies this profile in this colour + species.
+  // Derived rather than written into the field, which is how the material-list
+  // maker does it (JobEditor's `am.vendor || autoVendor`): a typed vendor always
+  // wins and is never overwritten, and until someone types one this stays in
+  // step with the colour and species as they're filled in. The value it lands on
+  // is baked into the row when it's added, so the saved write-up carries a real
+  // vendor even if the catalog changes later.
+  const autoVendor = useMemo(
+    () =>
+      autoVendorFor(
+        {
+          profile: picked ? picked.profile : search,
+          profileId: picked?.id,
+          species,
+          color,
+        },
+        materialCatalog
+      ),
+    [picked, search, species, color, materialCatalog]
+  );
+  const vendorShown = vendor || autoVendor;
+
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q || picked) return [];
@@ -3066,7 +3516,9 @@ function MaterialAdder({
     setCustom(false);
     setSearch(c.profile);
     setUnit(c.unit || "PCS");
-    if (c.vendors.length === 1) setVendor(c.vendors[0]);
+    // Deliberately NOT setting the vendor here. The catalog decides it from
+    // colour + species, and writing one in now would look like a typed choice
+    // and stop the auto-fill ever correcting it.
     if (c.species.length === 1) setSpecies(c.species[0]);
   }
   function chooseCustom() {
@@ -3096,8 +3548,11 @@ function MaterialAdder({
       qty: Math.max(1, computedQty),
       unit: unit.trim() || "PCS",
       lengths: lengths.trim(),
-      vendor: vendor.trim(),
+      // A typed vendor wins; otherwise the catalog's answer is baked in here.
+      vendor: vendor.trim() || autoVendor,
       custom: custom || !picked,
+      kind: "trim",
+      category: picked?.category || undefined,
     };
   }
   function add() {
@@ -3190,11 +3645,21 @@ function MaterialAdder({
               (shop / warehouse / etc.). Custom typing still allowed. */}
           <ComboInput
             label="Vendor"
-            value={vendor}
+            value={vendorShown}
             onChange={setVendor}
             options={vendorList}
             placeholder="Start typing a vendor…"
           />
+          {!vendor && autoVendor && (
+            <p className="text-[11px] text-muted -mt-1">
+              Filled in from the catalog — change it if it&apos;s wrong.
+            </p>
+          )}
+          {!vendorShown && (
+            <p className="text-[11px] text-muted -mt-1">
+              Fill in colour and species and the catalog fills the vendor in.
+            </p>
+          )}
           <button
             onClick={add}
             disabled={computedQty < 1}

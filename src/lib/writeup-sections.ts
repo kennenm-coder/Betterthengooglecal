@@ -43,6 +43,26 @@ export interface SectionMaterialLine extends WriteUpMaterialItem {
   unitLabel: string | null;
 }
 
+/**
+ * Split a write-up's material lines into the two things they actually are:
+ * trim ordered from a lumber vendor by the piece, and parts ordered from
+ * Andersen by part number. They share one stored list because a part has always
+ * been saved as a material line, which left the office reading one blended
+ * table and sorting it out by eye.
+ *
+ * A line with no `kind` is trim. Every write-up saved before the two lists were
+ * split apart has no kind, and those have always been shown as trim — so an old
+ * write-up reads exactly as it did before, parts included.
+ */
+export function splitMaterialLines<T extends WriteUpMaterialItem>(
+  lines: T[]
+): { trim: T[]; parts: T[] } {
+  const trim: T[] = [];
+  const parts: T[] = [];
+  for (const m of lines) (m.kind === "part" ? parts : trim).push(m);
+  return { trim, parts };
+}
+
 export interface WriteUpSection {
   key: string;
   /** 1-based position of this write-up within the job (chronological). */

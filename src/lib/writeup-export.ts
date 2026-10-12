@@ -3,7 +3,7 @@
 // are dynamically imported so they only load when the user hits Download.
 
 import type { FieldWorkOrder } from "./types";
-import { groupWriteUpSections, padSeq, type SectionMaterialLine } from "./writeup-sections";
+import { groupWriteUpSections, padSeq, splitMaterialLines, type SectionMaterialLine } from "./writeup-sections";
 
 export interface WriteUpExportInput {
   orderNumber: string;
@@ -128,17 +128,35 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
   y += 16;
 
   // Draws one material table (its own QTY total) for a write-up section.
-  function materialTable(materials: SectionMaterialLine[], totalPcs: number) {
+  // `kind` picks the columns: trim is ordered from a lumber vendor by the piece
+  // in lengths, a part from Andersen by its part number — so the two orders need
+  // different details on the page, and a shared set of columns left half of
+  // every row reading "—".
+  function materialTable(
+    materials: SectionMaterialLine[],
+    totalPcs: number,
+    kind: "trim" | "part" = "trim"
+  ) {
     ensure(30);
-    const cols = [
-      { label: `QTY: ${totalPcs}`, w: 56 },
-      { label: "Unit", w: 46 },
-      { label: "Item", w: 126 },
-      { label: "Color", w: 74 },
-      { label: "Species", w: 62 },
-      { label: "Lengths", w: 88 },
-      { label: "Vendor", w: contentW - 56 - 46 - 126 - 74 - 62 - 88 },
-    ];
+    const cols =
+      kind === "part"
+        ? [
+            { label: `QTY: ${totalPcs}`, w: 56 },
+            { label: "Unit", w: 46 },
+            { label: "Part", w: 170 },
+            { label: "Color", w: 84 },
+            { label: "Size", w: 70 },
+            { label: "Part #", w: contentW - 56 - 46 - 170 - 84 - 70 },
+          ]
+        : [
+            { label: `QTY: ${totalPcs}`, w: 56 },
+            { label: "Unit", w: 46 },
+            { label: "Item", w: 126 },
+            { label: "Color", w: 74 },
+            { label: "Species", w: 62 },
+            { label: "Lengths", w: 88 },
+            { label: "Vendor", w: contentW - 56 - 46 - 126 - 74 - 62 - 88 },
+          ];
     setFill(DARK);
     doc.rect(M, y, contentW, 16, "F");
     doc.setFont("helvetica", "bold");
@@ -154,7 +172,10 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     doc.setFontSize(8.5);
     for (const m of materials) {
       ensure(14);
-      const cells = [`${m.qty} ${m.unit}`, m.unitLabel || "—", m.item || "—", m.color || "—", m.species || "—", m.lengths || "—", m.vendor || "—"];
+      const cells =
+        kind === "part"
+          ? [`${m.qty} ${m.unit}`, m.unitLabel || "—", m.item || "—", m.color || "—", m.size || "—", m.partNumber || "—"]
+          : [`${m.qty} ${m.unit}`, m.unitLabel || "—", m.item || "—", m.color || "—", m.species || "—", m.lengths || "—", m.vendor || "—"];
       x = M + 4;
       for (let i = 0; i < cols.length; i++) {
         setColor(i === 0 ? BLACK : MUTED);
@@ -300,10 +321,18 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
       }
     }
 
-    // 4. Trim / material, then 5. photos.
-    if (sec.materials.length > 0) {
+    // 4. Trim / material and parts — one table each, then 5. photos.
+    const { trim: secTrim, parts: secParts } = splitMaterialLines(sec.materials);
+    const pcsOf = (rows: SectionMaterialLine[]) => rows.reduce((t, m) => t + (m.qty || 0), 0);
+    if (secTrim.length > 0) {
       y += 4;
-      materialTable(sec.materials, sec.totalPcs);
+      line("TRIM / MATERIAL", M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      materialTable(secTrim, pcsOf(secTrim), "trim");
+    }
+    if (secParts.length > 0) {
+      y += 4;
+      line("PARTS", M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      materialTable(secParts, pcsOf(secParts), "part");
     }
     photoGrid(sec.photos);
     y += 12;

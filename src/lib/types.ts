@@ -191,6 +191,18 @@ export interface WriteUpMaterialItem {
   lengths: string;
   vendor: string;
   custom?: boolean;
+  /** Which of the two catalogs this line came from. Absent on every write-up
+   *  saved before the two lists were split apart, which is why readers must
+   *  treat a missing value as "trim" — that is how those lines have always
+   *  been displayed. */
+  kind?: "trim" | "part";
+  /** Parts only: the Andersen part number for the picked colour + size, so an
+   *  order can be placed from the write-up without looking it up again. */
+  partNumber?: string;
+  /** Parts only: the variant size that, with `color`, chose the part number. */
+  size?: string;
+  /** Trim only: the catalog item's category, needed by the trim order line. */
+  category?: string;
 }
 
 /** A photo attached to a unit's write-up, stored in the writeup-photos bucket. */
@@ -266,6 +278,8 @@ export interface Employee {
   department: string;
 }
 
+export type TimeOffStatus = "pending" | "approved" | "denied";
+
 export interface TimeOffRequest {
   id: string;
   employee_name: string;
@@ -277,6 +291,29 @@ export interface TimeOffRequest {
   /** Optional time of day they return on the last day. Null = off all day. */
   end_time: string | null;
   created_at: string;
+
+  // --- Approval workflow (added by the kiosk app's migration 002) ---
+  // Everything below is optional so rows read before the migration, and any
+  // other writer that doesn't set them, still typecheck.
+  //
+  // `status` defaults to 'approved' in the database, so a row added here or by
+  // RBANWO-Scheduling behaves exactly as it always did: on the calendar the
+  // moment it is saved. Only kiosk requests arrive as 'pending'.
+  status?: TimeOffStatus;
+  /** PTO | Unpaid | Sick | Bereavement | Other. */
+  request_type?: string | null;
+  reason?: string | null;
+  /** Which app created the row: calendar | kiosk | scheduling. */
+  source?: string | null;
+  /** Kiosk reference code (KSK-YYYY-NNNNNN) printed on the signed PDF. */
+  reference_code?: string | null;
+  kiosk_submission_id?: string | null;
+  /** Path in the private kiosk-signed bucket. Fetch via /api/time-off/[id]/pdf. */
+  signed_pdf_path?: string | null;
+  signed_at?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  review_note?: string | null;
 }
 
 export interface ActionPerson {
