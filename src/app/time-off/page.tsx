@@ -10,7 +10,10 @@ import {
   fetchEmployees,
   addEmployee,
   formatTimeDisplay,
+  timeOffStatus,
+  isPending,
 } from "@/lib/time-off-store";
+import PendingTimeOffSection from "@/components/PendingTimeOffSection";
 import {
   ArrowLeft,
   Plus,
@@ -24,6 +27,7 @@ import {
   Filter,
   ShieldX,
   Clock,
+  FileSignature,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { canManageTimeOff } from "@/lib/roles";
@@ -63,11 +67,45 @@ export default function TimeOffPage() {
   );
 }
 
+/**
+ * What is worth saying about a row at a glance: whether it was denied (kept for
+ * the record but not on the calendar), and whether it came from the kiosk with
+ * a signed PDF behind it.
+ */
+function TimeOffRowBadges({ request }: { request: TimeOffRequest }) {
+  const status = timeOffStatus(request);
+  return (
+    <>
+      {status === "denied" && (
+        <span className="shrink-0 rounded-full bg-danger/15 px-2 py-0.5 text-[10px] font-semibold text-danger">
+          DENIED
+        </span>
+      )}
+      {request.signed_pdf_path && (
+        <a
+          href={`/api/time-off/${request.id}/pdf`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title={
+            request.reference_code
+              ? `Signed at the kiosk — ${request.reference_code}`
+              : "Signed at the kiosk"
+          }
+          className="shrink-0 inline-flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[10px] font-medium text-muted hover:text-foreground"
+        >
+          <FileSignature className="w-2.5 h-2.5" /> Signed
+        </a>
+      )}
+    </>
+  );
+}
+
 function TimeOffContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const fromScheduler = searchParams.get("from") === "scheduler";
-  const { roles, loading: authLoading } = useAuth();
+  const { roles, user, loading: authLoading } = useAuth();
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,9 +144,22 @@ function TimeOffContent() {
 
   useEffect(() => { loadData(); }, []);
 
+  // Requests awaiting a payroll decision. These are kiosk submissions; they are
+  // NOT on the calendar yet, so they get their own queue at the top of the
+  // screen rather than being mixed into the log below.
+  const pendingRequests = useMemo(
+    () =>
+      requests
+        .filter(isPending)
+        .sort((a, b) => a.start_date.localeCompare(b.start_date)),
+    [requests]
+  );
+
   const filteredRequests = useMemo(() => {
-    if (!filterStart && !filterEnd) return requests;
-    return requests.filter((r) => {
+    // Decided rows only — pending ones live in the approval queue above.
+    const decided = requests.filter((r) => !isPending(r));
+    if (!filterStart && !filterEnd) return decided;
+    return decided.filter((r) => {
       const reqEnd = r.end_date || r.start_date;
       if (filterStart && reqEnd < filterStart) return false;
       if (filterEnd && r.start_date > filterEnd) return false;
@@ -225,7 +276,8 @@ function TimeOffContent() {
   function exportCsv() {
     const data = filteredRequests;
     if (data.length === 0) return;
-    const header = "Employee,Department,Start Date,Time Leaving,End Date,Time Returning";
+    const header =
+      "Employee,Department,Start Date,Time Leaving,End Date,Time Returning,Status,Type,Reason,Source,Reference,Reviewed By";
     const rows = data.map((r) => {
       const esc = (s: string) => `"${s.replace(/"/g, '""')}"`;
       return [
@@ -235,6 +287,12 @@ function TimeOffContent() {
         esc(formatTimeDisplay(r.start_time)),
         r.end_date || "",
         esc(formatTimeDisplay(r.end_time)),
+        timeOffStatus(r),
+        esc(r.request_type || ""),
+        esc(r.reason || ""),
+        esc(r.source || "calendar"),
+        esc(r.reference_code || ""),
+        esc(r.reviewed_by || ""),
       ].join(",");
     });
     const csv = [header, ...rows].join("\n");
@@ -392,6 +450,18 @@ function TimeOffContent() {
                 </div>
               </div>
             )}
+
+            {/* Kiosk requests waiting on a payroll decision */}
+            <PendingTimeOffSection
+              requests={pendingRequests}
+              reviewerName={user?.email || "payroll"}
+              formatDateDisplay={formatDateDisplay}
+              onDecided={(updated) =>
+                setRequests((prev) =>
+                  prev.map((r) => (r.id === updated.id ? updated : r))
+                )
+              }
+            />
 
             {/* Date filter bar */}
             <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 bg-surface/50 border-b border-border">
@@ -635,7 +705,10 @@ function TimeOffContent() {
             {filteredRequests.map((r) => (
               <div key={r.id} className="border-b border-border/50 hover:bg-surface/50">
                 <div className="hidden sm:grid grid-cols-[1fr_140px_150px_150px_40px] px-4 py-2.5 text-sm items-center">
-                  <span className="font-medium">{r.employee_name}</span>
+                  <span className="font-medium flex items-center gap-2 min-w-0">
+                    <span className="truncate">{r.employee_name}</span>
+                    <TimeOffRowBadges request={r} />
+                  </span>
                   <span className="text-muted">{r.department}</span>
                   <div>
                     <div>{formatDateDisplay(r.start_date)}</div>
@@ -663,7 +736,10 @@ function TimeOffContent() {
 
                 <div className="sm:hidden px-4 py-3 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm">{r.employee_name}</div>
+                    <div className="font-medium text-sm flex items-center gap-2 min-w-0">
+                      <span className="truncate">{r.employee_name}</span>
+                      <TimeOffRowBadges request={r} />
+                    </div>
                     <div className="text-xs text-muted mt-0.5">{r.department}</div>
                     <div className="flex items-center gap-1.5 mt-1 text-xs">
                       <Calendar className="w-3 h-3 text-muted" />
