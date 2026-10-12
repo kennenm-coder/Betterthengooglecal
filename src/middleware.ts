@@ -79,8 +79,19 @@ export async function middleware(request: NextRequest) {
   if (user && pathname.startsWith("/login")) {
     const dest = request.nextUrl.searchParams.get("redirect");
     // Honor a same-origin redirect target (path + query); else fall back home.
-    if (dest && dest.startsWith("/") && !dest.startsWith("//")) {
-      return NextResponse.redirect(new URL(dest, request.url));
+    // Same-origin only. Resolve the target first, then compare origins — a
+    // prefix check is not enough, because "/\evil.com" starts with a single
+    // slash yet new URL() resolves it to https://evil.com, which would make
+    // this an open redirect off a trusted login link.
+    if (dest) {
+      try {
+        const target = new URL(dest, request.url);
+        if (target.origin === request.nextUrl.origin) {
+          return NextResponse.redirect(target);
+        }
+      } catch {
+        // Malformed — fall through to the home redirect below.
+      }
     }
     const url = request.nextUrl.clone();
     url.pathname = "/";

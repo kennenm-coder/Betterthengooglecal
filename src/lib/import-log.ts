@@ -7,7 +7,7 @@
  * they are not a change a field manager needs to see on the Changes tab.
  */
 
-import { createClient } from "@supabase/supabase-js";
+import { getAdminClient } from "@/lib/auth";
 
 export const TTL_DAYS = 7;
 
@@ -52,10 +52,7 @@ export interface ImportLogEntry {
 
 /** Server-side only: get a service-role client */
 function getServiceClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  return getAdminClient();
 }
 
 /** How many order rows we keep per log entry. */

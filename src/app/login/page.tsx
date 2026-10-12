@@ -29,7 +29,17 @@ type Status =
 function redirectDest(): string {
   if (typeof window === "undefined") return "/";
   const p = new URLSearchParams(window.location.search).get("redirect");
-  return p && p.startsWith("/") && !p.startsWith("//") ? p : "/";
+  if (!p) return "/";
+  // Resolve first, then compare origins. A prefix check is not enough:
+  // "/\evil.com" starts with a single slash yet resolves to https://evil.com,
+  // so it would send a just-signed-in user straight off-site.
+  try {
+    const target = new URL(p, window.location.origin);
+    if (target.origin !== window.location.origin) return "/";
+    return target.pathname + target.search;
+  } catch {
+    return "/";
+  }
 }
 
 export default function LoginPage() {
@@ -53,6 +63,17 @@ export default function LoginPage() {
       setStatus("idle");
       setErrorMsg("");
     }
+  }
+
+  /** Let the admin know a new request landed. Fire-and-forget: the request is
+   *  already saved in the database, so a failed or unconfigured email must
+   *  never change what the person on the login screen sees. */
+  function notifyAdminOfRequest(requestEmail: string) {
+    void fetch("/api/access-requests/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: requestEmail }),
+    }).catch(() => {});
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -139,10 +160,10 @@ export default function LoginPage() {
             .maybeSingle();
 
           if (!existing) {
-            await supabase.from("access_requests").insert({
-              email: trimmedEmail,
-              name: fullName,
-            });
+            const { error: requestError } = await supabase
+              .from("access_requests")
+              .insert({ email: trimmedEmail, name: fullName });
+            if (!requestError) notifyAdminOfRequest(trimmedEmail);
           }
 
           // Sign them out so middleware doesn't redirect-loop
@@ -215,6 +236,7 @@ export default function LoginPage() {
         return;
       }
 
+      notifyAdminOfRequest(trimmedEmail);
       setStatus("requested");
     } catch {
       setStatus("error");

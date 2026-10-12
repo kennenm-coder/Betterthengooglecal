@@ -242,17 +242,27 @@ function PartForm({
   const [sizes, setSizes] = useState<string[]>(part?.sizes || []);
   const [variants, setVariants] = useState<PartVariant[]>(part?.variants || []);
   const [verified, setVerified] = useState(part?.verified ?? true);
+  const [nicknames, setNicknames] = useState<string[]>(part?.nicknames || []);
+  const [price, setPrice] = useState(part?.price != null ? String(part.price) : "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const colorOpts = colors.length ? colors : [""];
   const sizeOpts = sizes.length ? sizes : [""];
-  const partNumberFor = (c: string, s: string) => variants.find((v) => v.color === c && v.size === s)?.partNumber || "";
-  function setPartNumber(c: string, s: string, num: string) {
+  const variantAt = (c: string, s: string) => variants.find((v) => v.color === c && v.size === s);
+  const partNumberFor = (c: string, s: string) => variantAt(c, s)?.partNumber || "";
+  /** Keep a variant row while it carries either a part number or its own price. */
+  function setVariantField(c: string, s: string, field: "partNumber" | "price", val: string) {
     setVariants((prev) => {
       const rest = prev.filter((v) => !(v.color === c && v.size === s));
-      return num.trim() ? [...rest, { color: c, size: s, partNumber: num }] : rest;
+      const cur = prev.find((v) => v.color === c && v.size === s) || { color: c, size: s, partNumber: "" };
+      const next: PartVariant =
+        field === "partNumber"
+          ? { ...cur, partNumber: val }
+          : { ...cur, price: val === "" ? null : Number(val) };
+      const keep = next.partNumber.trim() !== "" || (next.price != null && Number.isFinite(next.price));
+      return keep ? [...rest, next] : rest;
     });
   }
 
@@ -268,8 +278,11 @@ function PartForm({
       position: position || null,
       colors,
       sizes,
-      variants: variants.filter((v) => v.partNumber.trim()),
+      // A variant earns its row by carrying a part number or its own price.
+      variants: variants.filter((v) => v.partNumber.trim() || v.price != null),
       verified,
+      nicknames,
+      price: price === "" ? null : Number(price),
     });
     setSaving(false);
     if (!res.ok) { setError(res.error || "Couldn't save."); return; }
@@ -280,13 +293,15 @@ function PartForm({
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <div className={label}>Product type</div>
-          <input list="pt-list" value={productType} onChange={(e) => setProductType(e.target.value)} placeholder="Double Hung…" className={field} />
+          <div className={label}>Model</div>
+          <input list="pt-list" value={productType} onChange={(e) => setProductType(e.target.value)} placeholder="A-Series Patio Door…" className={field} />
           <datalist id="pt-list">{productTypes.map((t) => <option key={t} value={t} />)}</datalist>
         </div>
         <div>
-          <div className={label}>Category</div>
-          <input list="cat-list" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Sash, Lock…" className={field} />
+          {/* One field for both "where on the unit" and "what kind of thing" —
+              a part gets found by whichever the person happens to know. */}
+          <div className={label}>Location / part type</div>
+          <input list="cat-list" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Top frame, handle set, weather stripping…" className={field} />
           <datalist id="cat-list">{categories.map((c) => <option key={c} value={c} />)}</datalist>
         </div>
       </div>
@@ -300,6 +315,24 @@ function PartForm({
       </div>
 
       <div>
+        <div className={label}>Nicknames (optional)</div>
+        <ChipList items={nicknames} onChange={setNicknames} placeholder="cam lock, sash latch…" />
+        <p className="text-[11px] text-muted mt-1">
+          What people call it when they don&apos;t use the real name. A write-up search finds the part by these,
+          and shows the nickname in brackets — the write-up still records the real name.
+        </p>
+      </div>
+
+      <div>
+        <div className={label}>Price (each, optional)</div>
+        <input type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" className={field} />
+        <p className="text-[11px] text-muted mt-1">
+          Shown while picking a part, so the wrong one stands out by costing more than expected.
+          It is never printed on the write-up.
+        </p>
+      </div>
+
+      <div>
         <div className={label}>Color options (optional)</div>
         <ChipList items={colors} onChange={setColors} placeholder="Add a color…" />
       </div>
@@ -309,7 +342,9 @@ function PartForm({
       </div>
 
       <div>
-        <div className={label}>Part number{colorOpts.length * sizeOpts.length > 1 ? "s — per color / size" : ""}</div>
+        <div className={label}>
+          Part number{colorOpts.length * sizeOpts.length > 1 ? "s and prices — per color / size" : " and price"}
+        </div>
         <div className="space-y-1.5">
           {colorOpts.map((c) =>
             sizeOpts.map((s) => (
@@ -317,7 +352,15 @@ function PartForm({
                 {(c || s) && (
                   <span className="text-xs text-muted shrink-0 w-28 truncate">{[c, s].filter(Boolean).join(" · ") || "Any"}</span>
                 )}
-                <input value={partNumberFor(c, s)} onChange={(e) => setPartNumber(c, s, e.target.value)} placeholder="Part #" className={field} />
+                <input value={partNumberFor(c, s)} onChange={(e) => setVariantField(c, s, "partNumber", e.target.value)} placeholder="Part #" className={field} />
+                <input
+                  type="number" min="0" step="0.01"
+                  value={variantAt(c, s)?.price ?? ""}
+                  onChange={(e) => setVariantField(c, s, "price", e.target.value)}
+                  placeholder={price ? Number(price).toFixed(2) : "price"}
+                  title="Leave blank to use the part price above"
+                  className={`${field} w-24 shrink-0`}
+                />
               </div>
             ))
           )}
@@ -328,6 +371,17 @@ function PartForm({
         <input type="checkbox" checked={verified} onChange={(e) => setVerified(e.target.checked)} className="w-4 h-4 accent-amber-500" />
         Verified (show in write-up suggestions)
       </label>
+
+      {part && (part.createdBy || part.updatedBy) && (
+        <p className="text-[11px] text-muted border-t border-border pt-2">
+          {[
+            part.createdBy ? `Added by ${part.createdBy}` : null,
+            part.updatedBy
+              ? `last changed by ${part.updatedBy}${part.updatedAt ? ` on ${new Date(part.updatedAt).toLocaleDateString()}` : ""}`
+              : null,
+          ].filter(Boolean).join(" · ")}
+        </p>
+      )}
 
       {error && <p className="text-sm text-danger">{error}</p>}
 

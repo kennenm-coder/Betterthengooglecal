@@ -1,12 +1,20 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { requireAuth, getAdminClient } from "@/lib/auth";
 import { TTL_DAYS } from "@/lib/import-log";
 
+// Import history for the /log page. These rows carry customer names, work
+// order numbers and before/after values, and this route both reads them and
+// prunes expired ones with the service-role key — so it must never answer an
+// anonymous caller. Any allowlisted user may read it; the /log page is the
+// only caller.
 export async function GET() {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const { error: authError } = await requireAuth();
+  if (authError) return authError;
+
+  // Service role: pruning deletes rows no signed-in role is granted to delete.
+  // getAdminClient() throws when the key is missing rather than silently
+  // falling back to the anon key and half-working.
+  const supabase = getAdminClient();
 
   // Clean up expired entries
   const cutoff = new Date();
@@ -28,7 +36,8 @@ export async function GET() {
     .limit(100);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("[import-logs] read failed:", error.message);
+    return NextResponse.json({ error: "Could not load import history." }, { status: 500 });
   }
 
   return NextResponse.json(data || []);

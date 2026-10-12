@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { parseXlsHtml } from "@/lib/parse-xls";
 import { parseCsv } from "@/lib/parse-csv";
 import { isAccountsCsv, parseAccountsCsv, AccountRow } from "@/lib/parse-accounts-csv";
-import { createClient } from "@supabase/supabase-js";
 import { WorkOrder } from "@/lib/types";
-import { requireRole } from "@/lib/auth";
+import { requireRole, getAdminClient } from "@/lib/auth";
 import { writeImportLog, fetchExistingOrders, computeOrderChanges } from "@/lib/import-log";
 
 /**
@@ -126,10 +125,7 @@ function detectFormat(text: string): "xls" | "csv" | "accounts_csv" | "unknown" 
  * scheduling app's docs/phase2-dropped-from-rforce.md before touching this.
  */
 async function upsertToSupabase(orders: WorkOrder[]) {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const supabase = getAdminClient();
 
   const rows = orders.map((wo) => ({
     id: wo.id,
@@ -184,10 +180,7 @@ async function upsertToSupabase(orders: WorkOrder[]) {
 }
 
 async function upsertAccountsToSupabase(accounts: AccountRow[]) {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const supabase = getAdminClient();
   const now = new Date().toISOString();
 
   // Deduplicate input by account_name — last occurrence wins
