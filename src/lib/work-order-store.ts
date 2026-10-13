@@ -204,13 +204,18 @@ export async function fetchUnitOptions(): Promise<UnitOptions> {
  * Overlay field spec corrections (from write-ups) onto a copy of the units so
  * the calendar always shows the field-verified value. Non-destructive — the
  * source `jobs` blob is never touched.
+ *
+ * Drafts are skipped alongside closed write-ups. A draft is still being typed
+ * and nobody has submitted it, so letting it rewrite a size or colour would
+ * silently change what the installer reads off the sheet with nothing on the
+ * page to say where the new value came from.
  */
 export function applySpecChangesToUnits(
   units: MaterialUnit[],
   writeUps: FieldWorkOrder[]
 ): MaterialUnit[] {
   const changes: SpecChange[] = writeUps
-    .filter((w) => w.status !== "closed")
+    .filter((w) => w.status !== "closed" && w.status !== "draft")
     .flatMap((w) => w.specChanges || []);
   if (!changes.length) return units;
 

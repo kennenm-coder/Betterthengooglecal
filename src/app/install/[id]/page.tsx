@@ -249,7 +249,10 @@ export default function InstallInstructionsPage() {
 
   // Overlay field spec corrections so the calendar shows verified values.
   const displayUnits = applySpecChangesToUnits(job.units, writeUps);
-  const openWriteUps = writeUps.filter((w) => w.status !== "closed");
+  // Submitted write-ups only. A draft hasn't been sent in yet, so showing it
+  // here would put unfinished field notes on the install sheet looking exactly
+  // like an approved one.
+  const openWriteUps = writeUps.filter((w) => w.status !== "closed" && w.status !== "draft");
   const summaryRows = buildSummaryRows(displayUnits);
   const miscUnits = displayUnits.filter((u) => u.isMisc && u.approved);
   const totalQty =
