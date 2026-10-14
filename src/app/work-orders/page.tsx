@@ -10,6 +10,7 @@ import {
   fetchWriteUps,
   updateWriteUpStatus,
   updateWriteUpLineItems,
+  updateWriteUpSuggestedCrews,
   writeUpsToPlainText,
   deleteWriteUpPhotos,
   loadCachedWriteUps,
@@ -25,6 +26,7 @@ import { groupWriteUpSections, padSeq, splitMaterialLines, type WriteUpSection, 
 import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibility";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
+import { CrewAssignmentField, type CrewAssignment } from "@/components/CrewPicker";
 import {
   Loader2,
   Wrench,
@@ -74,6 +76,7 @@ function writeUpSearchText(w: FieldWorkOrder): string {
     w.notes,
     w.responsibility,
     w.defectCode,
+    ...w.suggestedCrews,
     ...w.lineItems.flatMap((li) => [li.label, li.notes ?? ""]),
     ...w.specChanges.flatMap((sc) => [sc.field, sc.oldValue, sc.newValue]),
     ...w.materialItems.flatMap((m) => [m.item, m.color, m.species, m.vendor]),
@@ -195,6 +198,35 @@ export default function WorkOrdersPage() {
     if (results.every(Boolean)) {
       setWriteUps((prev) => prev.map((w) => (ids.includes(w.id) ? { ...w, status } : w)));
     }
+  }
+
+  /** Save the crews that could do a submission's work. They live on the
+   *  whole-job row; a submission with only unit rows keeps them on its first
+   *  row, and whichever row held them before is cleared so there is one list. */
+  async function setSectionCrews(section: WriteUpSection, a: CrewAssignment): Promise<boolean> {
+    const target =
+      section.rows.find((r) => r.unitLabel === null) ||
+      section.rows.find((r) => r.suggestedCrews.length) ||
+      section.rows[0];
+    if (!target) return false;
+    const allNeeded = a.crews.length >= 2 && a.allNeeded;
+    const stale = section.rows.filter((r) => r.id !== target.id && r.suggestedCrews.length);
+    const results = await Promise.all([
+      updateWriteUpSuggestedCrews(target.id, a.crews, allNeeded),
+      ...stale.map((r) => updateWriteUpSuggestedCrews(r.id, [], false)),
+    ]);
+    if (!results.every(Boolean)) return false;
+    const cleared = new Set(stale.map((r) => r.id));
+    setWriteUps((prev) =>
+      prev.map((w) =>
+        w.id === target.id
+          ? { ...w, suggestedCrews: a.crews, suggestedCrewsAll: allNeeded }
+          : cleared.has(w.id)
+            ? { ...w, suggestedCrews: [], suggestedCrewsAll: false }
+            : w
+      )
+    );
+    return true;
   }
 
   /** Mark the given numbered work items reviewed/unreviewed across the rows they
@@ -536,6 +568,7 @@ export default function WorkOrdersPage() {
                           onReviewItems={(itemsToReview, reviewed) => setItemsReviewed(sec, itemsToReview, reviewed)}
                           onToggleCompleted={(itemsToToggle, completed) => setItemsCompleted(sec, itemsToToggle, completed)}
                           onStatus={(status) => setSectionStatus(sec, status)}
+                          onSaveCrews={(crews) => setSectionCrews(sec, crews)}
                           onDeletePhotos={async () => {
                             for (const w of sec.rows) if (w.photos.length) await deletePhotos(w);
                           }}
@@ -634,6 +667,7 @@ function ReviewSection({
   onReviewItems,
   onToggleCompleted,
   onStatus,
+  onSaveCrews,
   onDeletePhotos,
 }: {
   section: WriteUpSection;
@@ -645,9 +679,33 @@ function ReviewSection({
   onReviewItems: (items: NumberedWorkItem[], reviewed: boolean) => void;
   onToggleCompleted: (items: NumberedWorkItem[], completed: boolean) => void;
   onStatus: (status: WriteUpStatus) => void | Promise<void>;
+  onSaveCrews: (a: CrewAssignment) => Promise<boolean>;
   onDeletePhotos: () => Promise<void>;
 }) {
   const allWork = [...section.outstanding, ...section.completed].sort((a, b) => a.seq - b.seq);
+  // Crews that could do this work — tile only, never the PDF. Editable in
+  // place so the office can tag crews after the fact without reopening the
+  // whole write-up.
+  const crewRow = section.rows.find((r) => r.suggestedCrews.length);
+  const suggestedCrews = crewRow?.suggestedCrews || [];
+  const suggestedCrewsAll = suggestedCrews.length >= 2 && !!crewRow?.suggestedCrewsAll;
+  const [editingCrews, setEditingCrews] = useState(false);
+  const [crewDraft, setCrewDraft] = useState<CrewAssignment>({ crews: [], allNeeded: false });
+  const [savingCrews, setSavingCrews] = useState(false);
+  const [crewError, setCrewError] = useState(false);
+  function startCrewEdit() {
+    setCrewDraft({ crews: suggestedCrews, allNeeded: suggestedCrewsAll });
+    setCrewError(false);
+    setEditingCrews(true);
+  }
+  async function saveCrews() {
+    setSavingCrews(true);
+    setCrewError(false);
+    const ok = await onSaveCrews(crewDraft);
+    setSavingCrews(false);
+    if (ok) setEditingCrews(false);
+    else setCrewError(true);
+  }
   const allReviewed = allWork.length > 0 && allWork.every((i) => i.reviewed);
   // Trim and parts are two different orders to two different suppliers, so they
   // get a table each instead of one blended list the office has to sort by eye.
@@ -725,6 +783,65 @@ function ReviewSection({
             <span className="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-xs font-medium text-muted">
               {defectCodeLabel(defectCode)}
             </span>
+          )}
+        </div>
+      )}
+
+      {/* Crews who could do the work — never printed */}
+      {(suggestedCrews.length > 0 || canEdit) && (
+        <div className="no-print">
+          {editingCrews ? (
+            <div className="space-y-2">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-muted">Who could do this work?</span>
+              <CrewAssignmentField value={crewDraft} onChange={setCrewDraft} autoFocus />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={saveCrews}
+                  disabled={savingCrews}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500 text-white disabled:opacity-60"
+                >
+                  {savingCrews ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingCrews(false)}
+                  disabled={savingCrews}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-border text-muted"
+                >
+                  Cancel
+                </button>
+                {crewError && <span className="text-xs text-red-600">Couldn&apos;t save — try again.</span>}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-muted">Who could do this</span>
+              {suggestedCrews.length >= 2 && (
+                <span className="text-xs text-muted">{suggestedCrewsAll ? "All of them together:" : "Any one of:"}</span>
+              )}
+              {suggestedCrews.map((name, i) => (
+                <span key={name} className="inline-flex items-center gap-1.5">
+                  {i > 0 && suggestedCrewsAll && <span className="text-xs text-muted">+</span>}
+                  <span className="inline-flex items-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 px-2.5 py-0.5 text-xs font-semibold">
+                    {name}
+                  </span>
+                </span>
+              ))}
+              {suggestedCrews.length === 0 && <span className="text-xs text-muted">Nobody picked yet</span>}
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={startCrewEdit}
+                  className="p-1 rounded-lg text-muted hover:text-amber-600"
+                  title={suggestedCrews.length ? "Change crews" : "Add crews"}
+                  aria-label={suggestedCrews.length ? "Change crews" : "Add crews"}
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

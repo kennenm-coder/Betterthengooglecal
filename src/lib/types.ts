@@ -257,6 +257,13 @@ export interface FieldWorkOrder {
   responsibility: string;
   /** Defect-code source (e.g. "A9"), set only when responsibility is retail. */
   defectCode: string;
+  /** Crews that could do this write-up's work (whole-job row only). A hint
+   *  for scheduling the return trip — Write-Ups tile only, NEVER the PDF or
+   *  email, since a crew left off the list would take it personally. */
+  suggestedCrews: string[];
+  /** With 2+ suggested crews: true = send all of them together (lead +
+   *  helpers), false = any one of them can take it. */
+  suggestedCrewsAll: boolean;
   status: WriteUpStatus;
   /** Phase 2 — photo support. */
   photoCount: number;

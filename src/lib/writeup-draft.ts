@@ -71,6 +71,8 @@ export interface WriteUpDraft {
   paintStainNotes: string;
   responsibility?: string;
   defectCode?: string;
+  suggestedCrews?: string[];
+  suggestedCrewsAll?: boolean;
   units: DraftUnit[];
   issues: DraftIssue[];
 }

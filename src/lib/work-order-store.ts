@@ -896,6 +896,8 @@ interface FieldWorkOrderRow {
   notes: string | null;
   responsibility: string | null;
   defect_code: string | null;
+  suggested_crews: string[] | null;
+  suggested_crews_all: boolean | null;
   status: string;
   photo_count: number | null;
   photos_uploaded: boolean | null;
@@ -925,6 +927,10 @@ function rowToWriteUp(row: FieldWorkOrderRow): FieldWorkOrder {
     notes: row.notes || "",
     responsibility: row.responsibility || "",
     defectCode: row.defect_code || "",
+    suggestedCrews: Array.isArray(row.suggested_crews)
+      ? row.suggested_crews.filter((c): c is string => typeof c === "string" && c.trim().length > 0)
+      : [],
+    suggestedCrewsAll: !!row.suggested_crews_all,
     status: (row.status as WriteUpStatus) || "open",
     photoCount: row.photo_count || 0,
     photosUploaded: !!row.photos_uploaded,
@@ -954,6 +960,8 @@ export interface NewWriteUp {
   notes: string;
   responsibility?: string;
   defectCode?: string;
+  suggestedCrews?: string[];
+  suggestedCrewsAll?: boolean;
   createdBy?: string;
   createdByName?: string;
   /** Shared id tying this row to the other units in the same submission. */
@@ -992,6 +1000,8 @@ export async function createWriteUp(input: NewWriteUp): Promise<CreateWriteUpRes
       notes: input.notes || "",
       responsibility: input.responsibility || null,
       defect_code: input.defectCode || null,
+      suggested_crews: input.suggestedCrews?.length ? input.suggestedCrews : null,
+      suggested_crews_all: crewsAllFlag(input.suggestedCrews, input.suggestedCrewsAll),
       status: input.status || "in_review",
       created_by: input.createdBy || null,
       created_by_name: input.createdByName || null,
@@ -1030,6 +1040,10 @@ export interface WriteUpEntryInput {
   /** Responsibility + defect code (whole-job row only; blank on unit rows). */
   responsibility?: string;
   defectCode?: string;
+  /** Crews that could do the work (whole-job row only; empty on unit rows).
+   *  Tile-only — the email builder and PDF must never read this. */
+  suggestedCrews?: string[];
+  suggestedCrewsAll?: boolean;
   /** Photos on this unit — new blobs (uploaded on save) and kept existing ones. */
   photos: EntryPhoto[];
 }
@@ -1121,6 +1135,8 @@ export async function submitWriteUpBatch(
       notes: e.notes,
       responsibility: e.responsibility,
       defectCode: e.defectCode,
+      suggestedCrews: e.suggestedCrews,
+      suggestedCrewsAll: e.suggestedCrewsAll,
       createdBy: ctx.createdBy,
       createdByName: ctx.createdByName,
       status: ctx.status || "in_review",
@@ -1184,6 +1200,8 @@ export async function saveWriteUpBatchEdit(
       notes: e.notes || "",
       responsibility: e.responsibility || null,
       defect_code: e.defectCode || null,
+      suggested_crews: e.suggestedCrews?.length ? e.suggestedCrews : null,
+      suggested_crews_all: crewsAllFlag(e.suggestedCrews, e.suggestedCrewsAll),
       status,
       updated_by: ctx.updatedBy || null,
       updated_by_name: ctx.updatedByName || null,
@@ -1584,6 +1602,31 @@ export async function updateWriteUpStatus(id: string, status: WriteUpStatus): Pr
   const { error } = await supabase
     .from("field_work_orders")
     .update({ status, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (!error) invalidateWriteUpsCache();
+  return !error;
+}
+
+/** "All of them together" only means something for two or more crews. */
+function crewsAllFlag(crews: string[] | undefined, all: boolean | undefined): boolean {
+  return !!all && (crews?.length ?? 0) >= 2;
+}
+
+/** Persist the crews that could do a write-up's work (edited from the tile). */
+export async function updateWriteUpSuggestedCrews(
+  id: string,
+  crews: string[],
+  allNeeded: boolean
+): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase) return false;
+  const { error } = await supabase
+    .from("field_work_orders")
+    .update({
+      suggested_crews: crews.length ? crews : null,
+      suggested_crews_all: crewsAllFlag(crews, allNeeded),
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", id);
   if (!error) invalidateWriteUpsCache();
   return !error;
