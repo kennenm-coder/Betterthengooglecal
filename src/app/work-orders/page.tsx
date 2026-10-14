@@ -11,6 +11,7 @@ import {
   updateWriteUpStatus,
   updateWriteUpLineItems,
   updateWriteUpSuggestedCrews,
+  snoozeWriteUpNudge,
   writeUpsToPlainText,
   deleteWriteUpPhotos,
   loadCachedWriteUps,
@@ -27,6 +28,15 @@ import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibili
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
 import { CrewAssignmentField, type CrewAssignment } from "@/components/CrewPicker";
+import {
+  nudgeFor,
+  needsCrew,
+  snoozeUntil,
+  ARCHIVE_AFTER_MONTHS,
+  CLOSE_AFTER_MONTHS,
+  SNOOZE_MONTHS,
+  type Nudge,
+} from "@/lib/writeup-nudges";
 import {
   Loader2,
   Wrench,
@@ -47,10 +57,15 @@ import {
   Archive,
   Search,
   X,
+  Flag,
+  Users,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
 type Filter = "draft" | "in_review" | "open" | "closed" | "archived" | "all";
+/** The pills at the top: write-ups asking to be archived, asking to be closed,
+ *  or submitted with nobody picked to do the work. */
+type Attention = "archive" | "close" | "nocrew";
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "draft", label: "Drafts" },
@@ -94,6 +109,9 @@ export default function WorkOrdersPage() {
   // Free-text search, applied on top of whichever status tab is active.
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // One of the pills at the top is tapped: narrow the list to just those
+  // write-ups. Cleared by tapping the pill again or switching tabs.
+  const [attention, setAttention] = useState<Attention | null>(null);
 
   // View: admin + field-manager (full) and scheduling + scheduling-manager
   // (view-only). Edit/create/review capabilities below stay field-work-gated.
@@ -196,7 +214,31 @@ export default function WorkOrdersPage() {
     const ids = section.rows.map((r) => r.id);
     const results = await Promise.all(ids.map((id) => updateWriteUpStatus(id, status)));
     if (results.every(Boolean)) {
-      setWriteUps((prev) => prev.map((w) => (ids.includes(w.id) ? { ...w, status } : w)));
+      // Mirror what updateWriteUpStatus stamps server-side so the nudges
+      // recompute without a refetch.
+      const now = new Date().toISOString();
+      setWriteUps((prev) =>
+        prev.map((w) =>
+          ids.includes(w.id)
+            ? {
+                ...w,
+                status,
+                nudgeSnoozedUntil: null,
+                closedAt: status === "closed" ? now : status === "archived" ? w.closedAt : null,
+              }
+            : w
+        )
+      );
+    }
+  }
+
+  /** "Not yet" to an archive/close nudge: hush it for a few months. */
+  async function snoozeSection(section: WriteUpSection): Promise<void> {
+    const until = snoozeUntil();
+    const ids = section.rows.map((r) => r.id);
+    const results = await Promise.all(ids.map((id) => snoozeWriteUpNudge(id, until)));
+    if (results.every(Boolean)) {
+      setWriteUps((prev) => prev.map((w) => (ids.includes(w.id) ? { ...w, nudgeSnoozedUntil: until } : w)));
     }
   }
 
@@ -322,6 +364,31 @@ export default function WorkOrdersPage() {
     return false;
   }
 
+  // Which rows belong to a write-up that needs attention, worked out once over
+  // everything loaded: the pills at the top count these, tapping a pill
+  // narrows the list to them, and flagged jobs sort to the top of their tab.
+  const flagged = useMemo(() => {
+    const archive = new Set<string>();
+    const close = new Set<string>();
+    const nocrew = new Set<string>();
+    const counts = { archive: 0, close: 0, nocrew: 0 };
+    for (const sec of groupWriteUpSections(writeUps)) {
+      const n = nudgeFor(sec);
+      if (n === "archive") {
+        counts.archive++;
+        for (const r of sec.rows) archive.add(r.id);
+      } else if (n === "close") {
+        counts.close++;
+        for (const r of sec.rows) close.add(r.id);
+      }
+      if (needsCrew(sec)) {
+        counts.nocrew++;
+        for (const r of sec.rows) nocrew.add(r.id);
+      }
+    }
+    return { archive, close, nocrew, counts };
+  }, [writeUps]);
+
   const visible = useMemo(() => {
     // "All" shows everything except archived; archived lives behind its own
     // filter so superseded/test write-ups stay out of the way.
@@ -329,32 +396,47 @@ export default function WorkOrdersPage() {
       filter === "all"
         ? writeUps.filter((w) => w.status !== "archived")
         : writeUps.filter((w) => w.status === filter);
+    // A tapped pill narrows further to just the write-ups it counted.
+    const byAttention = attention ? byStatus.filter((w) => flagged[attention].has(w.id)) : byStatus;
     // Search runs inside the active tab, so it works on every filter. All terms
     // must match somewhere in the write-up (order doesn't matter).
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (terms.length === 0) return byStatus;
-    return byStatus.filter((w) => {
+    if (terms.length === 0) return byAttention;
+    return byAttention.filter((w) => {
       const hay = writeUpSearchText(w);
       return terms.every((t) => hay.includes(t));
     });
-  }, [writeUps, filter, query]);
+  }, [writeUps, filter, query, attention, flagged]);
 
   // Group by order number (one job may have several unit write-ups). Jobs with
-  // any draft float to the top so unfinished write-ups are easy to find.
+  // any draft float to the top so unfinished write-ups are easy to find, then
+  // jobs with a write-up that is asking a question (archive? still open?).
   const groups = useMemo(() => {
     const map = new Map<string, FieldWorkOrder[]>();
     for (const w of visible) {
       if (!map.has(w.orderNumber)) map.set(w.orderNumber, []);
       map.get(w.orderNumber)!.push(w);
     }
+    const rank = (rows: FieldWorkOrder[]) =>
+      rows.some((w) => w.status === "draft")
+        ? 0
+        : rows.some((w) => flagged.archive.has(w.id) || flagged.close.has(w.id))
+          ? 1
+          : 2;
     const entries = Array.from(map.entries());
-    entries.sort((a, b) => {
-      const ad = a[1].some((w) => w.status === "draft") ? 0 : 1;
-      const bd = b[1].some((w) => w.status === "draft") ? 0 : 1;
-      return ad - bd;
-    });
+    entries.sort((a, b) => rank(a[1]) - rank(b[1]));
     return entries;
-  }, [visible]);
+  }, [visible, flagged]);
+
+  /** Tap a pill: jump to the tab it lives in and narrow to its write-ups. */
+  function toggleAttention(kind: Attention) {
+    if (attention === kind) {
+      setAttention(null);
+      return;
+    }
+    setAttention(kind);
+    setFilter(kind === "archive" ? "closed" : kind === "close" ? "open" : "all");
+  }
 
   // Tab counts = number of write-up SUBMISSIONS per status (not per-unit rows),
   // so the count matches the write-ups actually shown in the list. While a
@@ -437,11 +519,45 @@ export default function WorkOrdersPage() {
             )}
           </div>
         </div>
+        {(flagged.counts.archive > 0 || flagged.counts.close > 0 || flagged.counts.nocrew > 0) && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {flagged.counts.archive > 0 && (
+              <AttentionPill
+                active={attention === "archive"}
+                onClick={() => toggleAttention("archive")}
+                tone="red"
+                icon={<Flag className="w-3.5 h-3.5" />}
+                label={`${flagged.counts.archive} closed ${ARCHIVE_AFTER_MONTHS}+ months — archive?`}
+              />
+            )}
+            {flagged.counts.close > 0 && (
+              <AttentionPill
+                active={attention === "close"}
+                onClick={() => toggleAttention("close")}
+                tone="amber"
+                icon={<Flag className="w-3.5 h-3.5" />}
+                label={`${flagged.counts.close} open ${CLOSE_AFTER_MONTHS}+ months — still open?`}
+              />
+            )}
+            {flagged.counts.nocrew > 0 && (
+              <AttentionPill
+                active={attention === "nocrew"}
+                onClick={() => toggleAttention("nocrew")}
+                tone="gray"
+                icon={<Users className="w-3.5 h-3.5" />}
+                label={`${flagged.counts.nocrew} with no crew picked`}
+              />
+            )}
+          </div>
+        )}
         <div className="flex gap-1 mt-2 overflow-x-auto">
           {FILTERS.map((f) => (
             <button
               key={f.id}
-              onClick={() => setFilter(f.id)}
+              onClick={() => {
+                setFilter(f.id);
+                setAttention(null);
+              }}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
                 filter === f.id ? "bg-primary text-white" : "bg-surface text-muted"
               }`}
@@ -525,6 +641,15 @@ export default function WorkOrdersPage() {
                           {sections.map((s) => (
                             <StatusPill key={s.key} status={s.status} />
                           ))}
+                          {sections.map((s) => {
+                            const n = nudgeFor(s);
+                            if (n === "archive")
+                              return <FlagBadge key={`n-${s.key}`} tone="red" label="Archive?" />;
+                            if (n === "close")
+                              return <FlagBadge key={`n-${s.key}`} tone="amber" label="Still open?" />;
+                            if (needsCrew(s)) return <FlagBadge key={`n-${s.key}`} tone="gray" label="No crew" />;
+                            return null;
+                          })}
                         </div>
                       </div>
                       {isOpen ? (
@@ -569,6 +694,8 @@ export default function WorkOrdersPage() {
                           onToggleCompleted={(itemsToToggle, completed) => setItemsCompleted(sec, itemsToToggle, completed)}
                           onStatus={(status) => setSectionStatus(sec, status)}
                           onSaveCrews={(crews) => setSectionCrews(sec, crews)}
+                          nudge={nudgeFor(sec)}
+                          onSnooze={() => snoozeSection(sec)}
                           onDeletePhotos={async () => {
                             for (const w of sec.rows) if (w.photos.length) await deletePhotos(w);
                           }}
@@ -668,6 +795,8 @@ function ReviewSection({
   onToggleCompleted,
   onStatus,
   onSaveCrews,
+  nudge,
+  onSnooze,
   onDeletePhotos,
 }: {
   section: WriteUpSection;
@@ -680,8 +809,14 @@ function ReviewSection({
   onToggleCompleted: (items: NumberedWorkItem[], completed: boolean) => void;
   onStatus: (status: WriteUpStatus) => void | Promise<void>;
   onSaveCrews: (a: CrewAssignment) => Promise<boolean>;
+  /** The question this write-up is asking right now, if any. */
+  nudge: Nudge | null;
+  /** "Not yet" — hush the question for a while. */
+  onSnooze: () => Promise<void>;
   onDeletePhotos: () => Promise<void>;
 }) {
+  const [snoozing, setSnoozing] = useState(false);
+  const [closingFromNudge, setClosingFromNudge] = useState(false);
   const allWork = [...section.outstanding, ...section.completed].sort((a, b) => a.seq - b.seq);
   // Crews that could do this work — tile only, never the PDF. Editable in
   // place so the office can tag crews after the fact without reopening the
@@ -771,6 +906,90 @@ function ReviewSection({
           )}
         </div>
       </div>
+
+      {/* Lifecycle nudge: the question this write-up is asking, with a plain
+          yes / not-yet answer. Only people who can change status see it. */}
+      {nudge === "archive" && canReview && (
+        <div className="rounded-lg border border-danger/40 bg-danger/5 px-3 py-2.5 no-print">
+          <p className="text-sm font-semibold text-danger flex items-center gap-1.5">
+            <Flag className="w-4 h-4 shrink-0" />
+            Closed for {ARCHIVE_AFTER_MONTHS}+ months. Should this be archived?
+          </p>
+          <p className="text-xs text-muted mt-1">
+            {section.photos.length > 0
+              ? `Archiving deletes its ${section.photos.length} photo${section.photos.length !== 1 ? "s" : ""} for good and hides it from the doc.`
+              : "Archiving hides it from the doc."}{" "}
+            &ldquo;Not yet&rdquo; asks again in {SNOOZE_MONTHS} months.
+          </p>
+          <div className="flex gap-2 mt-2">
+            <button
+              type="button"
+              onClick={() => setConfirmArchive(true)}
+              disabled={snoozing}
+              className="flex-1 py-2 rounded-lg text-xs font-semibold bg-danger text-white flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              <Archive className="w-3.5 h-3.5" />
+              Yes, archive it
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                setSnoozing(true);
+                await onSnooze();
+                setSnoozing(false);
+              }}
+              disabled={snoozing}
+              className="flex-1 py-2 rounded-lg text-xs font-medium border border-border flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              {snoozing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              Not yet, keep it
+            </button>
+          </div>
+        </div>
+      )}
+      {nudge === "close" && canReview && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 no-print">
+          <p className="text-sm font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+            <Flag className="w-4 h-4 shrink-0" />
+            Open for {CLOSE_AFTER_MONTHS}+ months. Does this still need to be open?
+          </p>
+          <p className="text-xs text-muted mt-1">
+            {allCompleted
+              ? "Every work item is checked off, so it can be closed."
+              : "Check off every work item first if you want to close it."}{" "}
+            &ldquo;Still open&rdquo; asks again in {SNOOZE_MONTHS} months.
+          </p>
+          <div className="flex gap-2 mt-2">
+            <button
+              type="button"
+              onClick={async () => {
+                setClosingFromNudge(true);
+                await onStatus("closed");
+                setClosingFromNudge(false);
+              }}
+              disabled={!allCompleted || closingFromNudge || snoozing}
+              title={allCompleted ? "Close this write-up" : "Check off every work item first"}
+              className="flex-1 py-2 rounded-lg text-xs font-semibold bg-green-600 text-white flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {closingFromNudge ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              Yes, close it
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                setSnoozing(true);
+                await onSnooze();
+                setSnoozing(false);
+              }}
+              disabled={snoozing || closingFromNudge}
+              className="flex-1 py-2 rounded-lg text-xs font-medium border border-border flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              {snoozing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              Still open
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Responsibility matrix */}
       {responsibility && (
@@ -1164,6 +1383,62 @@ function ReviewSection({
         )}
       </div>
     </div>
+  );
+}
+
+const PILL_TONE = {
+  red: {
+    idle: "border-danger/40 text-danger bg-danger/5",
+    active: "bg-danger text-white border-danger",
+  },
+  amber: {
+    idle: "border-amber-500/50 text-amber-700 dark:text-amber-400 bg-amber-500/10",
+    active: "bg-amber-500 text-white border-amber-500",
+  },
+  gray: {
+    idle: "border-border text-muted bg-surface",
+    active: "bg-primary text-white border-primary",
+  },
+} as const;
+
+/** A tappable count at the top of the page. Tapping narrows the list to it. */
+function AttentionPill({
+  active,
+  onClick,
+  tone,
+  icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  tone: keyof typeof PILL_TONE;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  const t = PILL_TONE[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+        active ? t.active : t.idle
+      }`}
+    >
+      {icon}
+      {label}
+      {active && <X className="w-3.5 h-3.5 ml-0.5" />}
+    </button>
+  );
+}
+
+/** A small flag on a collapsed job row, so the question shows before opening it. */
+function FlagBadge({ tone, label }: { tone: keyof typeof PILL_TONE; label: string }) {
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${PILL_TONE[tone].idle}`}>
+      {tone === "gray" ? <Users className="w-3 h-3" /> : <Flag className="w-3 h-3" />}
+      {label}
+    </span>
   );
 }
 

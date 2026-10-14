@@ -265,6 +265,10 @@ export interface FieldWorkOrder {
    *  helpers), false = any one of them can take it. */
   suggestedCrewsAll: boolean;
   status: WriteUpStatus;
+  /** When this row was last marked closed (null while open; kept when archived). */
+  closedAt: string | null;
+  /** "Not yet" was answered to an archive/close nudge — quiet until this passes. */
+  nudgeSnoozedUntil: string | null;
   /** Phase 2 — photo support. */
   photoCount: number;
   photosUploaded: boolean;

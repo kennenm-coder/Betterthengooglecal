@@ -899,6 +899,8 @@ interface FieldWorkOrderRow {
   suggested_crews: string[] | null;
   suggested_crews_all: boolean | null;
   status: string;
+  closed_at: string | null;
+  nudge_snoozed_until: string | null;
   photo_count: number | null;
   photos_uploaded: boolean | null;
   created_by: string | null;
@@ -932,6 +934,8 @@ function rowToWriteUp(row: FieldWorkOrderRow): FieldWorkOrder {
       : [],
     suggestedCrewsAll: !!row.suggested_crews_all,
     status: (row.status as WriteUpStatus) || "open",
+    closedAt: row.closed_at || null,
+    nudgeSnoozedUntil: row.nudge_snoozed_until || null,
     photoCount: row.photo_count || 0,
     photosUploaded: !!row.photos_uploaded,
     createdBy: row.created_by || "",
@@ -1517,7 +1521,8 @@ export async function fetchWriteUpsForOrder(orderNumber: string): Promise<FieldW
 // in memory (shared for the page session) and in localStorage (survives reload
 // for instant paint). A short freshness window means rapid tab-switching reuses
 // the cache instead of hitting the network — the actual egress win.
-const WRITEUPS_CACHE_KEY = "rba-writeups-list-v1";
+// v2: rows gained closedAt / nudgeSnoozedUntil; a v1 cache would show them undefined.
+const WRITEUPS_CACHE_KEY = "rba-writeups-list-v2";
 const WRITEUPS_TTL_MS = 2 * 60 * 1000; // 2 min: reuse without refetching
 let _writeUpsCache: { data: FieldWorkOrder[]; ts: number } | null = null;
 
@@ -1596,12 +1601,30 @@ export async function fetchOpenWriteUpCounts(): Promise<Map<string, number>> {
   return counts;
 }
 
+/**
+ * Move a row to a new status. Closing stamps closed_at (the archive nudge's
+ * clock); reopening clears it; archiving keeps it. Any change also clears a
+ * snoozed nudge, so the next question starts from a clean slate.
+ */
 export async function updateWriteUpStatus(id: string, status: WriteUpStatus): Promise<boolean> {
+  const supabase = getSupabase();
+  if (!supabase) return false;
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = { status, updated_at: now, nudge_snoozed_until: null };
+  if (status === "closed") patch.closed_at = now;
+  else if (status !== "archived") patch.closed_at = null;
+  const { error } = await supabase.from("field_work_orders").update(patch).eq("id", id);
+  if (!error) invalidateWriteUpsCache();
+  return !error;
+}
+
+/** "Not yet" to an archive/close nudge: keep the question quiet until `until`. */
+export async function snoozeWriteUpNudge(id: string, until: string): Promise<boolean> {
   const supabase = getSupabase();
   if (!supabase) return false;
   const { error } = await supabase
     .from("field_work_orders")
-    .update({ status, updated_at: new Date().toISOString() })
+    .update({ nudge_snoozed_until: until })
     .eq("id", id);
   if (!error) invalidateWriteUpsCache();
   return !error;

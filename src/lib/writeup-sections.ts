@@ -72,6 +72,12 @@ export interface WriteUpSection {
   updatedAt: string;
   updatedByName: string;
   status: WriteUpStatus;
+  /** Latest updated_at across the rows, edited or not (the nudge fallback clock). */
+  lastTouchedAt: string;
+  /** Latest closed_at across the rows, or null if none was ever closed. */
+  closedAt: string | null;
+  /** Latest nudge snooze across the rows, or null. */
+  nudgeSnoozedUntil: string | null;
   outstanding: NumberedWorkItem[];
   completed: NumberedWorkItem[];
   specChanges: SpecChange[];
@@ -186,6 +192,8 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
     const creator = rows.find((r) => r.createdAt === createdAt) || rows[0];
     const editedRows = rows.filter((r) => r.updatedBy && Math.abs(+new Date(r.updatedAt) - +new Date(r.createdAt)) > 60000);
     const lastEdited = editedRows.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0];
+    const latest = (vals: (string | null | undefined)[]): string | null =>
+      vals.filter((v): v is string => !!v).sort().pop() || null;
 
     sections.push({
       key,
@@ -195,6 +203,9 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
       updatedAt: lastEdited?.updatedAt || "",
       updatedByName: lastEdited ? lastEdited.updatedByName || lastEdited.updatedBy || "" : "",
       status: statusOf(rows),
+      lastTouchedAt: latest(rows.map((r) => r.updatedAt)) || createdAt,
+      closedAt: latest(rows.map((r) => r.closedAt)),
+      nudgeSnoozedUntil: latest(rows.map((r) => r.nudgeSnoozedUntil)),
       outstanding: numbered.filter((n) => !n.completed),
       completed: numbered.filter((n) => n.completed),
       specChanges,
