@@ -1246,8 +1246,35 @@ async function resolveEntryPhotos(orderNumber: string, unitLabel: string | null,
   return out;
 }
 
-/** Copy reviewed / installed state from old items onto new ones by matching label. */
-function carryItemState(newItems: WriteUpLineItem[], oldItems: WriteUpLineItem[]): WriteUpLineItem[] {
+/**
+ * A write-up that already got past review and is being sent back for another
+ * look. Its old review stamps have to go: otherwise every item still reads
+ * "reviewed", so the office has nothing left to approve and the submission
+ * sits in In Review with no way forward.
+ */
+function sentBackForReview(next: WriteUpStatus, prev?: WriteUpStatus | null): boolean {
+  return next === "in_review" && !!prev && prev !== "in_review" && prev !== "draft";
+}
+
+/** Drop the reviewer stamps so the office re-checks the edited work. */
+function clearReviewStamps(items: WriteUpLineItem[]): WriteUpLineItem[] {
+  return items.map((li) => ({
+    ...li,
+    reviewed: false,
+    reviewedBy: undefined,
+    reviewedByName: undefined,
+    reviewedAt: undefined,
+  }));
+}
+
+/** Copy reviewed / installed state from old items onto new ones by matching label.
+ *  `carryReview` false keeps the field's completed state but drops the review
+ *  stamps — used when an edit sends the write-up back for review. */
+function carryItemState(
+  newItems: WriteUpLineItem[],
+  oldItems: WriteUpLineItem[],
+  carryReview = true
+): WriteUpLineItem[] {
   const used = new Set<number>();
   return newItems.map((ni) => {
     const key = ni.label.trim().toLowerCase();
@@ -1257,10 +1284,10 @@ function carryItemState(newItems: WriteUpLineItem[], oldItems: WriteUpLineItem[]
     const old = oldItems[idx];
     return {
       ...ni,
-      reviewed: old.reviewed,
-      reviewedBy: old.reviewedBy,
-      reviewedByName: old.reviewedByName,
-      reviewedAt: old.reviewedAt,
+      reviewed: carryReview ? old.reviewed : false,
+      reviewedBy: carryReview ? old.reviewedBy : undefined,
+      reviewedByName: carryReview ? old.reviewedByName : undefined,
+      reviewedAt: carryReview ? old.reviewedAt : undefined,
       completed: old.completed,
     };
   });
@@ -1363,6 +1390,9 @@ export async function saveWriteUpBatchEdit(
   const now = new Date().toISOString();
   // Prefer the status the editor picked; else keep the submission's current one.
   const status: WriteUpStatus = ctx.status || oldRows[0]?.status || "in_review";
+  // Sent back for another review → old stamps are void, so the office's
+  // "Mark all reviewed" has something to do and the write-up can move on.
+  const carryReview = !sentBackForReview(status, oldRows[0]?.status);
   const norm = (l: string | null) => (l || "").trim().toLowerCase();
   const usedOld = new Set<string>();
   let done = 0;
@@ -1370,7 +1400,7 @@ export async function saveWriteUpBatchEdit(
   for (const e of entries) {
     const photos = await resolveEntryPhotos(ctx.orderNumber, e.unitLabel, e.photos);
     const match = oldRows.find((r) => !usedOld.has(r.id) && norm(r.unitLabel) === norm(e.unitLabel));
-    const lineItems = carryItemState(e.lineItems, match?.lineItems || []);
+    const lineItems = carryItemState(e.lineItems, match?.lineItems || [], carryReview);
     const shared = {
       unit_label: e.unitLabel,
       line_items: lineItems,
@@ -1445,6 +1475,9 @@ export interface UpdateWriteUpInput {
   newProduct?: WriteUpNewProduct | null;
   notes: string;
   status: WriteUpStatus;
+  /** The status this row had before the edit. Used to spot a write-up being
+   *  sent back for review, which voids its old review stamps. */
+  previousStatus?: WriteUpStatus | null;
   /** Existing photos to keep (already uploaded — have a storage path). */
   keepPhotos: WriteUpPhoto[];
   /** New photo blobs to upload and append. */
@@ -1471,11 +1504,16 @@ export async function updateWriteUp(
     if (path) photos.push({ path, name: `${input.unitLabel || "Whole job"} photo ${photos.length + 1}` });
   }
 
+  // Sent back for another review → the old stamps don't apply to edited work.
+  const lineItems = sentBackForReview(input.status, input.previousStatus)
+    ? clearReviewStamps(input.lineItems)
+    : input.lineItems;
+
   const { error } = await supabase
     .from("field_work_orders")
     .update({
       unit_label: input.unitLabel,
-      line_items: input.lineItems,
+      line_items: lineItems,
       spec_changes: input.specChanges,
       material_items: input.materialItems,
       photos,

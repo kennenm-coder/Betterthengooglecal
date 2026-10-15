@@ -1244,6 +1244,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       newProduct: editWriteUp.newProduct,
       notes: editNote.trim(),
       status,
+      previousStatus: editWriteUp.status,
       keepPhotos,
       newPhotoFiles,
       updatedBy: user?.email || "",

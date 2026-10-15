@@ -1294,15 +1294,30 @@ function ReviewSection({
             Submit for review
           </button>
         )}
+        {/* In Review always offers a way forward. Normally that's reviewing the
+            items (which auto-advances to Open); when there's nothing left to
+            review — no numbered work items, or every item already stamped from
+            an earlier pass — it's a straight approve instead, so an edited
+            write-up can't get stranded in In Review. */}
         {section.status === "in_review" && canReview && (
-          <button
-            onClick={() => onReviewItems(allWork.filter((i) => !i.reviewed), true)}
-            disabled={allReviewed || allWork.length === 0}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-blue-500/10 text-blue-600 border border-blue-500/30 disabled:opacity-40"
-          >
-            <Eye className="w-3.5 h-3.5" />
-            Mark all reviewed
-          </button>
+          allWork.length === 0 || allReviewed ? (
+            <button
+              onClick={() => onStatus("open")}
+              title="Approve this write-up and open it for the field"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-blue-500/10 text-blue-600 border border-blue-500/30"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              Approve &amp; open
+            </button>
+          ) : (
+            <button
+              onClick={() => onReviewItems(allWork.filter((i) => !i.reviewed), true)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-blue-500/10 text-blue-600 border border-blue-500/30"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              Mark all reviewed
+            </button>
+          )
         )}
         {section.status === "open" && canComplete && (
           <button
