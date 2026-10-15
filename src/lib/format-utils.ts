@@ -127,31 +127,3 @@ export function extractCity(address: string): string {
   if (parts.length >= 2) return parts[1].trim();
   return "";
 }
-
-/**
- * Every crew name on these jobs, deduped and sorted — the per-day scheduling
- * crews plus all three raw rForce fields, so a helper crew or a service rep
- * who only ever appears in one of them still makes the list. Used wherever a
- * field manager picks from "everyone who shows up on the calendar" (the
- * write-up crew picker): the scheduling roster itself is not readable by
- * field logins, but the jobs they already have cached are.
- *
- * "Keith Morris" and "keith morris" are one person, so names fold on case and
- * whitespace; the first spelling seen is the one kept.
- */
-export function allCrewNames(orders: WorkOrder[]): string[] {
-  const seen = new Map<string, string>();
-  const add = (raw: string | null | undefined) => {
-    const name = (raw || "").trim();
-    if (!name) return;
-    const key = name.toLowerCase().replace(/\s+/g, " ");
-    if (!seen.has(key)) seen.set(key, name);
-  };
-  for (const o of orders) {
-    for (const n of crewsForDate(o)) add(n);
-    add(o.primaryResource);
-    add(o.installer);
-    add(o.serviceRep);
-  }
-  return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
-}

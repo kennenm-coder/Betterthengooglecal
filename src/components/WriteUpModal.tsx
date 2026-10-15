@@ -63,7 +63,7 @@ import {
 } from "@/lib/writeup-responsibility";
 import { getWriteUpEmails } from "@/lib/action-settings";
 import { dedupeRecipients } from "@/lib/email-recipients";
-import { CrewAssignmentField } from "./CrewPicker";
+import { crewsToText, textToCrews } from "@/lib/writeup-crews";
 import {
   X,
   Plus,
@@ -373,9 +373,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const [defectCode, setDefectCode] = useState("");
   // Crews that could do the work. Whole-job level; tile only — never the PDF
   // or the email, so a crew left off the list never sees that it was.
-  const [suggestedCrews, setSuggestedCrews] = useState<string[]>([]);
-  // With 2+ crews: do they all go together (true) or will any one do (false)?
-  const [suggestedCrewsAll, setSuggestedCrewsAll] = useState(false);
+  // Free text: names, "either one", time frames — whatever the office needs.
+  const [crewNote, setCrewNote] = useState("");
   const [wuUnits, setWuUnits] = useState<WuUnit[]>([]);
   const [issues, setIssues] = useState<WuIssue[]>([]);
   const [showSummary, setShowSummary] = useState(false);
@@ -537,8 +536,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     setResponsibility((respRow?.responsibility as WriteUpResponsibility) || "");
     setDefectCode(respRow?.defectCode || "");
     const crewRow = editBatch.find((r) => r.suggestedCrews.length);
-    setSuggestedCrews(crewRow?.suggestedCrews || []);
-    setSuggestedCrewsAll(!!crewRow?.suggestedCrewsAll);
+    setCrewNote(crewsToText(crewRow?.suggestedCrews, crewRow?.suggestedCrewsAll));
 
     // Units = rows with a unit label (the whole-job row, null, isn't a unit).
     const unitRows = editBatch.filter((r) => r.unitLabel);
@@ -914,7 +912,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     financingNotes.trim().length > 0 ||
     paintStainNotes.trim().length > 0 ||
     responsibility.length > 0 ||
-    suggestedCrews.length > 0;
+    crewNote.trim().length > 0;
   const editorHasContent = isEditing ? editHasContent : createHasContent;
 
   /** Fan out to one row per affected unit, plus a whole-job row that carries
@@ -933,14 +931,13 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       responsibility: string;
       defectCode: string;
       suggestedCrews: string[];
-      suggestedCrewsAll: boolean;
     }
     const byKey = new Map<string, Agg>();
     const WHOLE = "__whole__";
     const whole = (): Agg => {
       let a = byKey.get(WHOLE);
       if (!a) {
-        a = { unitLabel: null, isNewProduct: false, unitType: "", tasks: [], specs: [], materials: [], photos: [], notes: "", responsibility: "", defectCode: "", suggestedCrews: [], suggestedCrewsAll: false };
+        a = { unitLabel: null, isNewProduct: false, unitType: "", tasks: [], specs: [], materials: [], photos: [], notes: "", responsibility: "", defectCode: "", suggestedCrews: [] };
         byKey.set(WHOLE, a);
       }
       return a;
@@ -960,7 +957,6 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         responsibility: "",
         defectCode: "",
         suggestedCrews: [],
-        suggestedCrewsAll: false,
       });
     }
     // Issues → tasks (+ their own materials/photos) onto their affected units,
@@ -1029,10 +1025,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       whole().responsibility = responsibility;
       whole().defectCode = responsibility === "retail" ? defectCode : "";
     }
-    if (suggestedCrews.length) {
-      whole().suggestedCrews = suggestedCrews;
-      whole().suggestedCrewsAll = suggestedCrews.length >= 2 && suggestedCrewsAll;
-    }
+    // The crew note rides on the whole-job row, stored as a one-line list.
+    if (crewNote.trim()) whole().suggestedCrews = textToCrews(crewNote);
     return [...byKey.values()]
       .filter(
         (a) =>
@@ -1054,7 +1048,6 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         responsibility: a.responsibility,
         defectCode: a.defectCode,
         suggestedCrews: a.suggestedCrews,
-        suggestedCrewsAll: a.suggestedCrewsAll,
         photos: a.photos.map((p) => ({ blob: p.path ? undefined : p.blob, path: p.path, name: p.name })),
       }));
   }
@@ -1075,8 +1068,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     setPaintStainNotes(pendingDraft.paintStainNotes || "");
     setResponsibility((pendingDraft.responsibility as WriteUpResponsibility) || "");
     setDefectCode(pendingDraft.defectCode || "");
-    setSuggestedCrews(pendingDraft.suggestedCrews || []);
-    setSuggestedCrewsAll(!!pendingDraft.suggestedCrewsAll);
+    setCrewNote(crewsToText(pendingDraft.suggestedCrews, pendingDraft.suggestedCrewsAll));
     setWuUnits(
       (pendingDraft.units || []).map((u) => ({
         key: u.key,
@@ -1123,8 +1115,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     setPaintStainNotes("");
     setResponsibility("");
     setDefectCode("");
-    setSuggestedCrews([]);
-    setSuggestedCrewsAll(false);
+    setCrewNote("");
     setWuUnits([]);
     setIssues([makeIssue()]);
     setDraftReady(true);
@@ -1139,8 +1130,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       paintStainNotes,
       responsibility,
       defectCode,
-      suggestedCrews,
-      suggestedCrewsAll,
+      suggestedCrews: textToCrews(crewNote),
       units: wuUnits.map((u) => ({
         key: u.key,
         isNewProduct: u.isNewProduct,
@@ -1216,7 +1206,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftReady, issues, wuUnits, background, financingNotes, paintStainNotes, responsibility, defectCode, suggestedCrews, suggestedCrewsAll]);
+  }, [draftReady, issues, wuUnits, background, financingNotes, paintStainNotes, responsibility, defectCode, crewNote]);
 
   // ── Close guard ──
   const dirty = editorHasContent;
@@ -1868,15 +1858,16 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 )}
                 <div>
                   <label className="text-xs text-muted block mb-1">Who could do this work?</label>
-                  <CrewAssignmentField
-                    value={{ crews: suggestedCrews, allNeeded: suggestedCrewsAll }}
-                    onChange={(next) => {
-                      setSuggestedCrews(next.crews);
-                      setSuggestedCrewsAll(next.allNeeded);
-                    }}
+                  <textarea
+                    value={crewNote}
+                    onChange={(e) => setCrewNote(e.target.value)}
+                    rows={2}
+                    placeholder="e.g. Tim or Jose — any day after the 20th"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
                   />
                   <p className="text-[11px] text-muted mt-1">
-                    Office only — shows on the Write-Ups page, never on the PDF or in the email.
+                    Names, either/or, time frames — whatever helps. Office only: shows on the Write-Ups page, never on
+                    the PDF or in the email.
                   </p>
                 </div>
                 <div>

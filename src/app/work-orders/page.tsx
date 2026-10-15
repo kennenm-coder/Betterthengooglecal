@@ -27,7 +27,7 @@ import { groupWriteUpSections, padSeq, splitMaterialLines, type WriteUpSection, 
 import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibility";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
-import { CrewAssignmentField, type CrewAssignment } from "@/components/CrewPicker";
+import { crewsToText, textToCrews } from "@/lib/writeup-crews";
 import {
   nudgeFor,
   needsCrew,
@@ -245,16 +245,16 @@ export default function WorkOrdersPage() {
   /** Save the crews that could do a submission's work. They live on the
    *  whole-job row; a submission with only unit rows keeps them on its first
    *  row, and whichever row held them before is cleared so there is one list. */
-  async function setSectionCrews(section: WriteUpSection, a: CrewAssignment): Promise<boolean> {
+  async function setSectionCrews(section: WriteUpSection, text: string): Promise<boolean> {
     const target =
       section.rows.find((r) => r.unitLabel === null) ||
       section.rows.find((r) => r.suggestedCrews.length) ||
       section.rows[0];
     if (!target) return false;
-    const allNeeded = a.crews.length >= 2 && a.allNeeded;
+    const crews = textToCrews(text);
     const stale = section.rows.filter((r) => r.id !== target.id && r.suggestedCrews.length);
     const results = await Promise.all([
-      updateWriteUpSuggestedCrews(target.id, a.crews, allNeeded),
+      updateWriteUpSuggestedCrews(target.id, crews, false),
       ...stale.map((r) => updateWriteUpSuggestedCrews(r.id, [], false)),
     ]);
     if (!results.every(Boolean)) return false;
@@ -262,7 +262,7 @@ export default function WorkOrdersPage() {
     setWriteUps((prev) =>
       prev.map((w) =>
         w.id === target.id
-          ? { ...w, suggestedCrews: a.crews, suggestedCrewsAll: allNeeded }
+          ? { ...w, suggestedCrews: crews, suggestedCrewsAll: false }
           : cleared.has(w.id)
             ? { ...w, suggestedCrews: [], suggestedCrewsAll: false }
             : w
@@ -808,7 +808,7 @@ function ReviewSection({
   onReviewItems: (items: NumberedWorkItem[], reviewed: boolean) => void;
   onToggleCompleted: (items: NumberedWorkItem[], completed: boolean) => void;
   onStatus: (status: WriteUpStatus) => void | Promise<void>;
-  onSaveCrews: (a: CrewAssignment) => Promise<boolean>;
+  onSaveCrews: (text: string) => Promise<boolean>;
   /** The question this write-up is asking right now, if any. */
   nudge: Nudge | null;
   /** "Not yet" — hush the question for a while. */
@@ -822,14 +822,13 @@ function ReviewSection({
   // place so the office can tag crews after the fact without reopening the
   // whole write-up.
   const crewRow = section.rows.find((r) => r.suggestedCrews.length);
-  const suggestedCrews = crewRow?.suggestedCrews || [];
-  const suggestedCrewsAll = suggestedCrews.length >= 2 && !!crewRow?.suggestedCrewsAll;
+  const crewText = crewsToText(crewRow?.suggestedCrews, crewRow?.suggestedCrewsAll);
   const [editingCrews, setEditingCrews] = useState(false);
-  const [crewDraft, setCrewDraft] = useState<CrewAssignment>({ crews: [], allNeeded: false });
+  const [crewDraft, setCrewDraft] = useState("");
   const [savingCrews, setSavingCrews] = useState(false);
   const [crewError, setCrewError] = useState(false);
   function startCrewEdit() {
-    setCrewDraft({ crews: suggestedCrews, allNeeded: suggestedCrewsAll });
+    setCrewDraft(crewText);
     setCrewError(false);
     setEditingCrews(true);
   }
@@ -1007,12 +1006,19 @@ function ReviewSection({
       )}
 
       {/* Crews who could do the work — never printed */}
-      {(suggestedCrews.length > 0 || canEdit) && (
+      {(crewText.length > 0 || canEdit) && (
         <div className="no-print">
           {editingCrews ? (
             <div className="space-y-2">
               <span className="text-[10px] font-bold uppercase tracking-wide text-muted">Who could do this work?</span>
-              <CrewAssignmentField value={crewDraft} onChange={setCrewDraft} autoFocus />
+              <textarea
+                value={crewDraft}
+                onChange={(e) => setCrewDraft(e.target.value)}
+                rows={2}
+                autoFocus
+                placeholder="e.g. Tim or Jose — any day after the 20th"
+                className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+              />
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -1035,27 +1041,20 @@ function ReviewSection({
               </div>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wide text-muted">Who could do this</span>
-              {suggestedCrews.length >= 2 && (
-                <span className="text-xs text-muted">{suggestedCrewsAll ? "All of them together:" : "Any one of:"}</span>
+            <div className="flex flex-wrap items-start gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-muted pt-0.5">Who could do this</span>
+              {crewText ? (
+                <span className="text-sm whitespace-pre-wrap text-amber-700 dark:text-amber-400 font-medium">{crewText}</span>
+              ) : (
+                <span className="text-xs text-muted">Nothing written yet</span>
               )}
-              {suggestedCrews.map((name, i) => (
-                <span key={name} className="inline-flex items-center gap-1.5">
-                  {i > 0 && suggestedCrewsAll && <span className="text-xs text-muted">+</span>}
-                  <span className="inline-flex items-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 px-2.5 py-0.5 text-xs font-semibold">
-                    {name}
-                  </span>
-                </span>
-              ))}
-              {suggestedCrews.length === 0 && <span className="text-xs text-muted">Nobody picked yet</span>}
               {canEdit && (
                 <button
                   type="button"
                   onClick={startCrewEdit}
                   className="p-1 rounded-lg text-muted hover:text-amber-600"
-                  title={suggestedCrews.length ? "Change crews" : "Add crews"}
-                  aria-label={suggestedCrews.length ? "Change crews" : "Add crews"}
+                  title={crewText ? "Change" : "Add"}
+                  aria-label={crewText ? "Change who could do this" : "Add who could do this"}
                 >
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
