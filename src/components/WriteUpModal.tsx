@@ -44,6 +44,7 @@ import {
   fetchMaterialCatalog,
 } from "@/lib/work-order-store";
 import type { MaterialCatalog } from "@/lib/nwo-builder";
+import { familyMatcher, isUniversalType } from "@/lib/product-family";
 import { autoVendorFor, isInHouse, isOrderable } from "@/lib/trim-vendor";
 import { sendTrimToOrdering, newlyAddedTrim, TrimOrderResult } from "@/lib/trim-order-handoff";
 import {
@@ -2835,8 +2836,18 @@ function newPartRow(
   };
 }
 
+/** The grey model tag on a search hit that belongs to a different model. */
+function OffUnitTag({ type }: { type: string }) {
+  return (
+    <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted bg-surface border border-border rounded-full px-1.5 py-0.5 max-w-[7.5rem] truncate">
+      {type}
+    </span>
+  );
+}
+
 /* ── Parts needed picker — type-ahead over the parts catalog, grouped by
- *    product type, with custom entries and per-part quantity. ── */
+ *    product type and narrowed to the units being written up (see
+ *    lib/product-family.ts), with custom entries and per-part quantity. ── */
 function PartsPicker({
   parts,
   catalog,
@@ -2857,10 +2868,28 @@ function PartsPicker({
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  // Set by the "Show all product types" row at the bottom of the dropdown.
+  // Off by default: the dropdown opens on the units being written up.
+  const [showAll, setShowAll] = useState(false);
   // How many of each bundle to add. Stepped with buttons rather than a text
   // input so the search box never loses focus and close the dropdown.
   const [bundleCounts, setBundleCounts] = useState<Record<string, number>>({});
   const q = query.trim().toLowerCase();
+
+  // What the affected units are, reduced to product families — "Double
+  // Casement" and "Casement Picture" both come out casement, so casement parts
+  // follow a casement job. See lib/product-family.ts.
+  const matcher = useMemo(() => familyMatcher(affectedUnits.map((u) => u.unitType)), [affectedUnits]);
+
+  /**
+   * The product type to stamp on a custom part typed here. Only when the
+   * affected units agree on one: with a mixed set there is no honest answer, and
+   * a wrong stamp would file the part where the next person won't find it.
+   */
+  const customProductType = useMemo(() => {
+    const types = [...new Set(affectedUnits.map((u) => u.unitType.trim()).filter(Boolean))];
+    return types.length === 1 ? types[0] : undefined;
+  }, [affectedUnits]);
 
   // Register a flush so a typed-but-not-added custom part is committed on Submit
   // instead of being dropped. Re-registered every render to close over the latest
@@ -2871,16 +2900,20 @@ function PartsPicker({
       if (!name) return null;
       setQuery("");
       setOpen(false);
-      return { key: crypto.randomUUID(), name, productType: undefined, qty: 1, custom: true, unitKeys: [] };
+      return { key: crypto.randomUUID(), name, productType: customProductType, qty: 1, custom: true, unitKeys: [] };
     });
     return () => onRegisterFlush?.(null);
   });
 
-  // Product types on the affected units — used to surface the most likely
-  // parts first (a double-hung write-up leads with double-hung parts).
-  const relevantTypes = useMemo(
-    () => new Set(affectedUnits.map((u) => u.unitType.trim().toLowerCase()).filter(Boolean)),
-    [affectedUnits]
+  /**
+   * Does this part belong to the units being written up? "Custom" is always
+   * yes: it's what the catalog stamps on a part someone added from the field,
+   * so filtering it out would bury real inventory.
+   */
+  const onUnit = useCallback(
+    (type: string | null | undefined, category?: string | null) =>
+      (category || "").trim().toLowerCase() === "custom" || matcher.matches(type),
+    [matcher]
   );
 
   const label = (c: PartsCatalogItem) =>
@@ -2901,18 +2934,35 @@ function PartsPicker({
 
   const partsById = useMemo(() => new Map(catalog.map((c) => [c.id, c])), [catalog]);
 
-  const shownBundles = useMemo(() => {
-    if (!q) return bundles;
-    return bundles.filter(
-      (b) =>
-        b.name.toLowerCase().includes(q) ||
-        b.productType.toLowerCase().includes(q) ||
-        b.nicknames.some((n) => n.toLowerCase().includes(q))
-    );
-  }, [bundles, q]);
+  // Narrowing applies to the browse list only. A search covers the whole
+  // catalog, as it always has — someone who types a part name is asking for
+  // that part, wherever it is filed.
+  const narrowed = !q && !showAll && !matcher.empty;
 
-  const groups = useMemo(() => {
-    const filtered = catalog.filter((c) => {
+  const { shownBundles, hiddenBundles } = useMemo(() => {
+    const searched = q
+      ? bundles.filter(
+          (b) =>
+            b.name.toLowerCase().includes(q) ||
+            b.productType.toLowerCase().includes(q) ||
+            b.nicknames.some((n) => n.toLowerCase().includes(q))
+        )
+      : bundles;
+    if (!narrowed) {
+      // On-unit bundles first, so a search still leads with the likely ones.
+      const sorted = [...searched].sort(
+        (a, b) => Number(onUnit(b.productType)) - Number(onUnit(a.productType)) || a.name.localeCompare(b.name)
+      );
+      return { shownBundles: sorted, hiddenBundles: [] as PartsBundle[] };
+    }
+    return {
+      shownBundles: searched.filter((b) => onUnit(b.productType)),
+      hiddenBundles: searched.filter((b) => !onUnit(b.productType)),
+    };
+  }, [bundles, q, narrowed, onUnit]);
+
+  const { groups, hiddenTypeCount } = useMemo(() => {
+    const searched = catalog.filter((c) => {
       if (!q) return true;
       return (
         c.productType.toLowerCase().includes(q) ||
@@ -2922,18 +2972,29 @@ function PartsPicker({
         (c.nicknames || []).some((n) => n.toLowerCase().includes(q))
       );
     });
+    const visible = narrowed ? searched.filter((c) => onUnit(c.productType, c.category)) : searched;
+
     const byType = new Map<string, PartsCatalogItem[]>();
-    for (const c of filtered) {
+    for (const c of visible) {
       const arr = byType.get(c.productType) || [];
       arr.push(c);
       byType.set(c.productType, arr);
     }
-    return [...byType.entries()].sort((a, b) => {
-      const ar = relevantTypes.has(a[0].toLowerCase()) ? 0 : 1;
-      const br = relevantTypes.has(b[0].toLowerCase()) ? 0 : 1;
+    const sorted = [...byType.entries()].sort((a, b) => {
+      const ar = onUnit(a[0]) ? 0 : 1;
+      const br = onUnit(b[0]) ? 0 : 1;
       return ar - br || a[0].localeCompare(b[0]);
     });
-  }, [catalog, q, relevantTypes]);
+
+    // What "Show all product types (N more)" is offering: the types held back,
+    // counted as types rather than parts, since that is what the row reveals.
+    const heldBack = new Set<string>();
+    if (narrowed) {
+      for (const c of searched) if (!onUnit(c.productType, c.category)) heldBack.add(c.productType);
+      for (const b of hiddenBundles) heldBack.add(b.productType);
+    }
+    return { groups: sorted, hiddenTypeCount: heldBack.size };
+  }, [catalog, q, narrowed, onUnit, hiddenBundles]);
 
   function addPart(name: string, productType?: string, custom?: boolean, item?: PartsCatalogItem) {
     onChange([...parts, newPartRow(name, productType, custom, item)]);
@@ -2989,6 +3050,24 @@ function PartsPicker({
     onChange(parts.filter((p) => p.key !== key));
   }
 
+  /**
+   * A part whose model doesn't match the unit it is pinned to gets a note, not
+   * a block. The field hits real edge cases — a part filed under one model that
+   * fits several, a part being ordered for a neighbouring unit — and the
+   * write-up still has to submit.
+   */
+  const unitMismatch = useCallback(
+    (p: PartItem): string | null => {
+      if (!p.productType || isUniversalType(p.productType)) return null;
+      const pinned = p.unitKeys.length ? affectedUnits.filter((u) => p.unitKeys.includes(u.key)) : affectedUnits;
+      if (pinned.length === 0) return null;
+      const m = familyMatcher(pinned.map((u) => u.unitType));
+      if (m.empty || m.matches(p.productType)) return null;
+      return p.unitKeys.length ? pinned.map(unitTitle).join(", ") : "these units";
+    },
+    [affectedUnits, unitTitle]
+  );
+
   return (
     <div>
       <span className="text-xs font-bold text-muted uppercase tracking-wide">Parts needed</span>
@@ -3006,6 +3085,7 @@ function PartsPicker({
             // Only worth asking when the part has more than one variant — with
             // one there's a single possible part number and it's already set.
             const asksVariant = !!part && part.variants.length > 1 && (colors.length > 0 || sizes.length > 0);
+            const mismatch = unitMismatch(p);
             return (
             <div key={p.key} className="rounded-lg border border-border bg-background px-2.5 py-2 space-y-2">
               <div className="flex items-center gap-2">
@@ -3086,6 +3166,14 @@ function PartsPicker({
                   )}
                 </div>
               )}
+              {mismatch && (
+                <div className="text-[11px] text-amber-600 flex items-start gap-1">
+                  <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                  <span>
+                    A {p.productType} part on {mismatch} — worth a second look, but it will still submit.
+                  </span>
+                </div>
+              )}
               {p.partNumber ? (
                 <div className="text-[11px] text-muted">
                   Part #<span className="font-mono font-semibold text-foreground">{p.partNumber}</span>
@@ -3127,7 +3215,7 @@ function PartsPicker({
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => setOpen(true)}
+          onFocus={() => { setOpen(true); setShowAll(false); }}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           placeholder={catalog.length ? "Search parts, or type a custom part…" : "Type a part…"}
           className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
@@ -3139,7 +3227,9 @@ function PartsPicker({
                 type="button"
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  addPart(query.trim(), undefined, true);
+                  // Stamped with the unit's product type, so the catalog files
+                  // it where the next write-up on this model will find it.
+                  addPart(query.trim(), customProductType, true);
                 }}
                 className="w-full text-left px-3 py-2.5 text-sm font-medium text-amber-600 border-b border-border flex items-center gap-1.5"
               >
@@ -3178,6 +3268,7 @@ function PartsPicker({
                           ].filter(Boolean).join(" · ")}
                         </div>
                       </button>
+                      {!onUnit(b.productType) && b.productType && <OffUnitTag type={b.productType} />}
                       {/* preventDefault keeps focus in the search box, so the
                           dropdown's blur-to-close doesn't fire mid-adjustment. */}
                       <div className="flex items-center gap-1 shrink-0">
@@ -3212,6 +3303,9 @@ function PartsPicker({
                 {items.map((c) => {
                   const nick = nicknameReason(c);
                   const price = partPrice(c);
+                  // Searching reaches the whole catalog, so say when a hit
+                  // belongs to a different model than the units in hand.
+                  const offUnit = !onUnit(c.productType, c.category);
                   return (
                     <button
                       key={c.id}
@@ -3226,6 +3320,7 @@ function PartsPicker({
                         {label(c)}
                         {nick && <span className="text-muted"> ({nick})</span>}
                       </span>
+                      {offUnit && c.productType && <OffUnitTag type={c.productType} />}
                       {price != null && (
                         <span className="shrink-0 text-xs text-muted tabular-nums">{fmtPrice(price)}</span>
                       )}
@@ -3235,7 +3330,21 @@ function PartsPicker({
               </div>
             ))}
             {groups.length === 0 && shownBundles.length === 0 && !q && (
-              <div className="px-3 py-3 text-sm text-muted">No parts catalog loaded — type a custom part above.</div>
+              <div className="px-3 py-3 text-sm text-muted">
+                {catalog.length === 0
+                  ? "No parts catalog loaded — type a custom part above."
+                  : "Nothing in the catalog is filed under these units — search, or show all product types below."}
+              </div>
+            )}
+            {/* Reaching outside the units is a deliberate tap, not a scroll. */}
+            {narrowed && hiddenTypeCount > 0 && (
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); setShowAll(true); }}
+                className="w-full text-left px-3 py-2.5 text-sm text-muted border-t border-border hover:bg-surface"
+              >
+                Show all product types ({hiddenTypeCount} more)
+              </button>
             )}
           </div>
         )}
