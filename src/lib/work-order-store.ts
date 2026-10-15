@@ -348,6 +348,9 @@ export interface PartsCatalogItem {
   /** Each, before any variant override. null = no price recorded (show a dash,
    *  never a confident $0.00). Shown while picking; never saved on a write-up. */
   price: number | null;
+  /** Path in the catalog-photos bucket. Shown on the catalog screen ONLY —
+   *  never on a write-up, a PDF, an email or an install doc. */
+  photoPath: string | null;
   createdBy: string | null;
   updatedBy: string | null;
   updatedAt: string | null;
@@ -355,7 +358,7 @@ export interface PartsCatalogItem {
 
 const PART_SELECT =
   "id, product_type, category, part_name, position, colors, sizes, variants, " +
-  "verified, nicknames, price, created_by, updated_by, updated_at";
+  "verified, nicknames, price, photo_path, created_by, updated_by, updated_at";
 
 /** Everything that existed before migration 031 — the fallback select. */
 const PART_SELECT_LEGACY =
@@ -385,6 +388,7 @@ function rowToPart(r: Record<string, unknown>): PartsCatalogItem {
     verified: r.verified !== false,
     nicknames: strList(r.nicknames),
     price: num(r.price),
+    photoPath: (r.photo_path as string) || null,
     createdBy: (r.created_by as string) || null,
     updatedBy: (r.updated_by as string) || null,
     updatedAt: (r.updated_at as string) || null,
@@ -515,6 +519,7 @@ export interface PartInput {
   verified?: boolean;
   nicknames?: string[];
   price?: number | null;
+  photoPath?: string | null;
 }
 
 export async function upsertPart(input: PartInput): Promise<{ ok: boolean; error: string | null }> {
@@ -536,6 +541,7 @@ export async function upsertPart(input: PartInput): Promise<{ ok: boolean; error
     ...legacy,
     nicknames: strList(input.nicknames),
     price: num(input.price),
+    photo_path: input.photoPath || null,
     updated_by: who,
     updated_at: new Date().toISOString(),
   };
@@ -546,8 +552,8 @@ export async function upsertPart(input: PartInput): Promise<{ ok: boolean; error
 
   let { error } = await send(row);
   // Before migration 031 those columns don't exist. Save what we can rather
-  // than refusing the edit outright — nicknames and price are then dropped,
-  // which the editor shows plainly, instead of silent corruption.
+  // than refusing the edit outright — nicknames, price and the photo are then
+  // dropped, which the editor shows plainly, instead of silent corruption.
   if (error && isMissingColumn(error)) {
     ({ error } = await send(legacy));
   }
@@ -608,8 +614,12 @@ export async function addCustomPart(partName: string, productType?: string): Pro
 // ─── Parts bundles ──────────────────────────────────────────────────────────
 // A named set of parts and quantities — "Triple Casement Brick Mould" is these
 // five parts. The write-up picker offers them alongside individual parts; one
-// tap adds every member. Built and maintained in the NWO material-list app's
-// Material Catalog; this app only reads them.
+// tap adds every member.
+//
+// The same rows are edited in the NWO material-list app's Material Catalog and
+// in this app's Settings → Manage Catalogs, so keep the column and jsonb shapes
+// identical on both sides: members stay [{ partId, qty }], and a schema change
+// belongs in a migration here (031 created the table).
 
 export interface BundleMember {
   partId: string;
@@ -624,31 +634,27 @@ export interface PartsBundle {
   members: BundleMember[];
   /** Set only when the bundle is quoted as a kit; otherwise sum the members. */
   priceOverride: number | null;
+  /** Catalog-screen photo only — see lib/catalog-photo.ts. */
+  photoPath: string | null;
+  /** false keeps it out of the write-up picker. Nothing in either app sets it
+   *  false today — the material-list app's bundle form doesn't carry the field,
+   *  so a switch here would be undone by a save there. Still read and honoured
+   *  in case a row is held back directly in the database. */
+  verified: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  updatedAt: string | null;
 }
 
-const BUNDLE_SELECT = "id, name, product_type, nicknames, members, price_override";
+const BUNDLE_SELECT =
+  "id, name, product_type, nicknames, members, price_override, photo_path, " +
+  "verified, created_by, updated_by, updated_at";
 
-let _bundlesCache: PartsBundle[] | null = null;
-export function invalidateBundlesCache() {
-  _bundlesCache = null;
-}
+/** An earlier copy of 031 created the table without the photo/audit columns. */
+const BUNDLE_SELECT_LEGACY = "id, name, product_type, nicknames, members, price_override";
 
-/**
- * Active bundles. Returns [] on any error — including a database without
- * migration 031, where the table simply doesn't exist yet — so the picker
- * degrades to parts-only rather than breaking.
- */
-export async function fetchPartsBundles(): Promise<PartsBundle[]> {
-  if (_bundlesCache) return _bundlesCache;
-  const supabase = getSupabase();
-  if (!supabase) return [];
-  const { data, error } = await supabase
-    .from("parts_bundles")
-    .select(BUNDLE_SELECT)
-    .eq("active", true)
-    .order("name", { ascending: true });
-  if (error || !data) return [];
-  const mapped = (data as Record<string, unknown>[]).map((r) => ({
+function rowToBundle(r: Record<string, unknown>): PartsBundle {
+  return {
     id: String(r.id),
     name: String(r.name || ""),
     productType: String(r.product_type || ""),
@@ -657,10 +663,180 @@ export async function fetchPartsBundles(): Promise<PartsBundle[]> {
       .filter((m) => m && m.partId)
       .map((m) => ({ partId: String(m.partId), qty: Math.max(1, Number(m.qty) || 1) })),
     priceOverride: num(r.price_override),
-  }));
+    photoPath: (r.photo_path as string) || null,
+    verified: r.verified !== false,
+    createdBy: (r.created_by as string) || null,
+    updatedBy: (r.updated_by as string) || null,
+    updatedAt: (r.updated_at as string) || null,
+  };
+}
+
+let _bundlesCache: PartsBundle[] | null = null;
+export function invalidateBundlesCache() {
+  _bundlesCache = null;
+}
+
+/**
+ * Reads the bundles table, newest column set first. Returns null — not [] — when
+ * the table or the whole rich/legacy pair is unreachable, so callers can tell
+ * "no bundles yet" from "this database has no bundles table".
+ */
+async function readBundles(): Promise<PartsBundle[] | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  const rich = await supabase
+    .from("parts_bundles")
+    .select(BUNDLE_SELECT)
+    .eq("active", true)
+    .order("product_type", { ascending: true })
+    .order("name", { ascending: true });
+  let rows = rich.data as Record<string, unknown>[] | null;
+  if (rich.error) {
+    const legacy = await supabase
+      .from("parts_bundles")
+      .select(BUNDLE_SELECT_LEGACY)
+      .eq("active", true)
+      .order("name", { ascending: true });
+    if (legacy.error) return null;
+    rows = legacy.data as Record<string, unknown>[] | null;
+  }
+  return (rows || []).map(rowToBundle);
+}
+
+/**
+ * Bundles for the write-up picker: verified ones only. Returns [] on any error —
+ * including a database without migration 031, where the table doesn't exist yet
+ * — so the picker degrades to parts-only rather than breaking.
+ */
+export async function fetchPartsBundles(): Promise<PartsBundle[]> {
+  if (_bundlesCache) return _bundlesCache;
+  const all = await readBundles();
+  if (!all) return [];
+  // Filtered here rather than in the query: on a database created by an early
+  // copy of 031 the column may not exist, and rowToBundle already defaults a
+  // missing value to verified.
+  const mapped = all.filter((b) => b.verified);
   // Don't cache an empty read — RLS returns 0 rows before auth resolves.
   if (mapped.length > 0) _bundlesCache = mapped;
   return mapped;
+}
+
+/** Every active bundle, verified or not — for the settings catalog editor. */
+export async function fetchAllBundles(): Promise<PartsBundle[]> {
+  return (await readBundles()) || [];
+}
+
+export interface BundleInput {
+  id?: string;
+  name: string;
+  productType?: string;
+  nicknames?: string[];
+  members: BundleMember[];
+  priceOverride?: number | null;
+  photoPath?: string | null;
+  verified?: boolean;
+}
+
+/**
+ * Save a bundle. Same { ok, error } contract as upsertPart — a user without
+ * admin or field-manager must see "you can't save this", not a silent no-op.
+ */
+export async function upsertBundle(input: BundleInput): Promise<{ ok: boolean; error: string | null }> {
+  const supabase = getSupabase();
+  if (!supabase) return { ok: false, error: "Not signed in." };
+  const members = (Array.isArray(input.members) ? input.members : [])
+    .filter((m) => m && m.partId)
+    .map((m) => ({ partId: m.partId, qty: Math.max(1, Number(m.qty) || 1) }));
+  const name = (input.name || "").trim();
+  if (!name) return { ok: false, error: "A bundle name is required." };
+  if (!members.length) return { ok: false, error: "A bundle needs at least one part." };
+
+  const base = {
+    name,
+    product_type: (input.productType || "").trim() || null,
+    nicknames: dedupeNicknames(input.nicknames),
+    members,
+    price_override: num(input.priceOverride),
+    active: true,
+  };
+  const who = await actor();
+  const row: Record<string, unknown> = {
+    ...base,
+    photo_path: input.photoPath || null,
+    verified: input.verified !== false,
+    updated_by: who,
+    updated_at: new Date().toISOString(),
+  };
+  const send = (r: Record<string, unknown>) =>
+    input.id
+      ? supabase.from("parts_bundles").update(r).eq("id", input.id)
+      : supabase.from("parts_bundles").insert({ ...r, created_by: who });
+
+  let { error } = await send(row);
+  // Same reasoning as upsertPart: on a database whose parts_bundles pre-dates
+  // the photo/audit columns, save the rest instead of refusing the edit.
+  if (error && isMissingColumn(error)) {
+    ({ error } = await send(base));
+  }
+  if (error) {
+    console.error("upsertBundle failed:", error);
+    return { ok: false, error: writeError(error) };
+  }
+  invalidateBundlesCache();
+  return { ok: true, error: null };
+}
+
+export async function deleteBundle(id: string): Promise<{ ok: boolean; error: string | null }> {
+  const supabase = getSupabase();
+  if (!supabase) return { ok: false, error: "Not signed in." };
+  const { error } = await supabase.from("parts_bundles").delete().eq("id", id);
+  if (error) return { ok: false, error: writeError(error) };
+  invalidateBundlesCache();
+  return { ok: true, error: null };
+}
+
+export interface ResolvedMember extends BundleMember {
+  part: PartsCatalogItem | null;
+  /** The part has been deleted since the bundle named it. */
+  missing: boolean;
+}
+
+/**
+ * Join a bundle to the parts it names. A member whose part has since been
+ * deleted comes back with `missing: true` and is SHOWN as such — hiding it
+ * would make a bundle quietly add fewer parts than it says it does.
+ */
+export function resolveBundle(members: BundleMember[], parts: PartsCatalogItem[]): ResolvedMember[] {
+  const byId = new Map(parts.map((p) => [p.id, p]));
+  return (members || []).map((m) => {
+    const part = byId.get(m.partId) || null;
+    return { ...m, part, missing: !part };
+  });
+}
+
+/** Trim, drop blanks, de-duplicate case-insensitively, keep the first spelling. */
+function dedupeNicknames(list: string[] | undefined): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of strList(list)) {
+    const key = raw.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(raw);
+  }
+  return out;
+}
+
+/** A save that RLS refused, said in a sentence the person can act on. */
+function writeError(error: { message?: string } | null): string {
+  const msg = error?.message || "";
+  if (/row-level security|not authorized|permission denied/i.test(msg)) {
+    return "This account can't change the parts catalog.";
+  }
+  if (/does not exist|schema cache/i.test(msg)) {
+    return "The bundles table isn't there yet — migration 031 hasn't been run on this database.";
+  }
+  return msg || "Couldn't save that.";
 }
 
 /**
@@ -669,7 +845,9 @@ export async function fetchPartsBundles(): Promise<PartsBundle[]> {
  * the total is a floor — show "$42.00+" rather than passing off an undercount.
  */
 export function bundlePrice(
-  bundle: PartsBundle,
+  // Only these two fields matter, so the bundle editor can price the members it
+  // is holding in state without inventing a whole row first.
+  bundle: Pick<PartsBundle, "members" | "priceOverride">,
   partsById: Map<string, PartsCatalogItem>
 ): { total: number | null; partial: boolean } {
   if (bundle.priceOverride != null) return { total: bundle.priceOverride, partial: false };
