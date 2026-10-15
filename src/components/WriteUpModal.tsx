@@ -46,7 +46,10 @@ import {
 import type { MaterialCatalog } from "@/lib/nwo-builder";
 import { familyMatcher, isUniversalType } from "@/lib/product-family";
 import { autoVendorFor, isInHouse, isOrderable } from "@/lib/trim-vendor";
-import { sendTrimToOrdering, newlyAddedTrim, TrimOrderResult } from "@/lib/trim-order-handoff";
+import {
+  sendTrimToOrdering, newlyAddedTrim, handoffFailed,
+  TrimHandoff,
+} from "@/lib/trim-order-handoff";
 import {
   WriteUpDraft,
   saveDraft,
@@ -327,7 +330,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   // from its profile + colour + species, which the flat pick list can't do.
   const [materialCatalog, setMaterialCatalog] = useState<MaterialCatalog | null>(null);
   // Set when a submitted write-up opened a trim order in the ordering queue.
-  const [trimOrder, setTrimOrder] = useState<TrimOrderResult | null>(null);
+  const [trimOrder, setTrimOrder] = useState<TrimHandoff | null>(null);
   // The trim already on this write-up when it was opened for editing. Saving an
   // edit hands over only what's been ADDED since: re-sending the whole list
   // would open an order duplicating the first one. Empty on the create flow.
@@ -341,7 +344,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
    *  Same rules as a first submit, and equally unable to fail the save. */
   async function handOffEditedTrim(
     nextMaterials: WriteUpMaterialItem[]
-  ): Promise<TrimOrderResult | null> {
+  ): Promise<TrimHandoff | null> {
     const added = newlyAddedTrim(materialsBeforeEdit, nextMaterials);
     if (!added.length) return null;
     const handoff = await sendTrimToOrdering({
@@ -354,12 +357,13 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   }
 
   /** Close now, or hold the confirmation open when there's a trim order to
-   *  read. A repeat order on the job is the one that must not flash past. */
-  function finishAfterEdit(handoff: TrimOrderResult | null) {
+   *  read. A repeat order on the job is one that must not flash past; a handoff
+   *  that FAILED is the other — that trim still needs ordering by hand. */
+  function finishAfterEdit(handoff: TrimHandoff | null) {
     onSaved?.();
     if (!handoff) return onClose();
     setSentOk("updated");
-    if (handoff.sequence === 1) setTimeout(() => onClose(), 1500);
+    if (!handoffFailed(handoff) && handoff.sequence === 1) setTimeout(() => onClose(), 1500);
   }
 
   // CREATE (flat model): background + notes, units, per-unit specs live on the
@@ -1381,7 +1385,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     // saved, and deliberately unable to fail the submit: the write-up is the
     // record that matters, and the handoff resolves null on any problem.
     // Drafts don't hand anything over — nothing has been submitted yet.
-    let handoff: TrimOrderResult | null = null;
+    let handoff: TrimHandoff | null = null;
     if (startStatus !== "draft") {
       handoff = await sendTrimToOrdering({
         orderNumber: order.orderNumber,
@@ -1415,9 +1419,11 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     // Flash a short success confirmation, then close — so the field manager sees
     // the notification went out (not just that the modal vanished).
     setSentOk(sendEmail ? "emailed" : "saved");
-    // A repeat trim order on this job is something to read, not a 1.5s flash —
-    // that dialog waits to be dismissed instead of closing itself.
-    if (!(handoff && handoff.sequence > 1)) setTimeout(() => onClose(), 1500);
+    // A repeat trim order on this job — or trim that failed to go over at all —
+    // is something to read, not a 1.5s flash: that dialog waits to be dismissed
+    // instead of closing itself.
+    const holdOpen = !!handoff && (handoffFailed(handoff) || handoff.sequence > 1);
+    if (!holdOpen) setTimeout(() => onClose(), 1500);
   }
 
   // LINKED FEATURE: this write-up email send is mirrored by the "field notes"
@@ -1601,7 +1607,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             {/* The trim handoff. A second order on the same job is called out
                 here, with what the earlier one already covers, so it can be
                 checked for overlap before anyone orders twice. */}
-            {trimOrder && (
+            {trimOrder && !handoffFailed(trimOrder) && (
               <div className="mt-3 pt-3 border-t border-border text-left">
                 <p className="text-xs">
                   <strong>{trimOrder.lineCount}</strong> trim line
@@ -1642,10 +1648,32 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
               </div>
             )}
 
-            {trimOrder && trimOrder.sequence > 1 && (
+            {/* The handoff was refused. The write-up is safe, but this trim is
+                NOT on anyone's queue — say so plainly instead of letting it
+                disappear into a console warning. */}
+            {trimOrder && handoffFailed(trimOrder) && (
+              <div className="mt-3 pt-3 border-t border-border text-left">
+                <div className="rounded-lg bg-red-500/10 border border-red-500/40 p-2.5">
+                  <p className="text-xs font-semibold text-red-700 dark:text-red-400 flex items-start gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    Trim order NOT opened
+                  </p>
+                  <p className="text-[11px] text-muted mt-1">
+                    Your write-up saved, but {trimOrder.lineCount} trim line
+                    {trimOrder.lineCount === 1 ? "" : "s"} could not be sent to trim
+                    ordering — {trimOrder.reason}. Tell the office so this trim still
+                    gets ordered.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {trimOrder && (handoffFailed(trimOrder) || trimOrder.sequence > 1) && (
               <button
                 onClick={onClose}
-                className="w-full mt-4 py-3 rounded-xl bg-amber-500 text-white text-sm font-semibold"
+                className={`w-full mt-4 py-3 rounded-xl text-white text-sm font-semibold ${
+                  handoffFailed(trimOrder) ? "bg-red-600" : "bg-amber-500"
+                }`}
               >
                 Got it
               </button>

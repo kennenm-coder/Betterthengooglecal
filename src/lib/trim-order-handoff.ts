@@ -47,6 +47,26 @@ export interface PriorTrimOrder {
   profiles: string[];
 }
 
+/** A handoff that could NOT be written. The trim still needs ordering, so this
+ *  is shown on the write-up's confirmation rather than swallowed — a silently
+ *  dropped order is how this went unnoticed from 2026-10-12 to 2026-10-15,
+ *  when every field manager's insert was being refused by RLS. */
+export interface TrimOrderFailure {
+  failed: true;
+  /** How many trim lines did not make it over. */
+  lineCount: number;
+  /** Short, field-readable reason. */
+  reason: string;
+}
+
+export type TrimHandoff = TrimOrderResult | TrimOrderFailure;
+
+/** True when the handoff failed, as opposed to succeeding or having nothing
+ *  to send (null). */
+export function handoffFailed(h: TrimHandoff | null): h is TrimOrderFailure {
+  return !!h && (h as TrimOrderFailure).failed === true;
+}
+
 export interface TrimOrderResult {
   po: string;
   /** 1 for the first write-up trim order on this job, 2 for the next, … */
@@ -208,7 +228,9 @@ export function buildOrderNote(
  * Open a standalone trim order for a submitted write-up's trim.
  *
  * Returns null when there is nothing to order — no trim, or every line is
- * in-house stock — and on any failure, so a write-up never fails over this.
+ * in-house stock. On a failure it returns a TrimOrderFailure instead: still
+ * never throws, so a write-up never fails over this, but the caller can SAY
+ * the trim didn't go rather than leaving it to a console warning.
  *
  * An earlier order on the same job is never touched, ordered or not: this
  * always opens a new one, numbered so it is obvious it is the second.
@@ -217,13 +239,15 @@ export async function sendTrimToOrdering(args: {
   orderNumber: string;
   customerName: string;
   materials: WriteUpMaterialItem[];
-}): Promise<TrimOrderResult | null> {
+}): Promise<TrimHandoff | null> {
   const { orderNumber, customerName, materials } = args;
   const lines = orderableTrimLines(materials);
   if (!lines.length) return null;
 
   const supabase = getSupabase();
-  if (!supabase) return null;
+  if (!supabase) {
+    return { failed: true, lineCount: lines.length, reason: "no connection to the database" };
+  }
 
   try {
     const priorOrders = await fetchPriorTrimOrders(orderNumber);
@@ -266,8 +290,18 @@ export async function sendTrimToOrdering(args: {
     throw new Error("could not find a free PO number after 5 tries");
   } catch (e) {
     console.warn("sendTrimToOrdering failed:", e);
-    return null;
+    return { failed: true, lineCount: lines.length, reason: failureReason(e) };
   }
+}
+
+/** Why the write didn't land, in words a field manager can repeat to the
+ *  office. 42501 is Postgres's "row-level security refused this" — the exact
+ *  failure this handoff hit for its first three days. */
+function failureReason(e: unknown): string {
+  const code = (e as { code?: string } | null)?.code;
+  if (code === "42501") return "this account isn't allowed to open trim orders";
+  const msg = (e as { message?: string } | null)?.message;
+  return msg ? String(msg) : "unknown error";
 }
 
 /** True when a write failed only because a column isn't in the schema yet —
