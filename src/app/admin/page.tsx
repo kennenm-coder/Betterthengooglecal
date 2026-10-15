@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import { createAuthClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { ROLE_OPTIONS, ROLE_STYLES, isAdmin } from "@/lib/roles";
+import { ROLE_OPTIONS, ROLE_STYLES, isAdmin, installerRoleConflict } from "@/lib/roles";
 import { getWriteUpPresets, setWriteUpPresets } from "@/lib/work-order-store";
 import { format, parseISO } from "date-fns";
 
@@ -149,7 +149,22 @@ interface AllowedEmail {
   role: string;
   roles: string[] | null;
   auto_cc: string[] | null;
+  /** Which RBANWO-Scheduling resource this login is. Installers only. */
+  sched_crew_id: string | null;
   created_at: string;
+}
+
+/**
+ * A resource from the scheduling app's roster (sched_crews), as far as this
+ * page cares. `primary_crew_id` is the install lead a second rides with —
+ * shown so an admin can confirm they picked the right person.
+ */
+interface SchedCrew {
+  id: string;
+  name: string;
+  crew_type: string;
+  is_active: boolean;
+  primary_crew_id: string | null;
 }
 
 interface AccessRequest {
@@ -163,7 +178,10 @@ interface AccessRequest {
 // multiple roles we still store one primary `role` (highest calendar role
 // present), and the full set in `roles`. Scheduling-only accounts fall back
 // to "member" so they can still view the calendar app.
-const CALENDAR_ROLE_PRIORITY = ["admin", "payroll-admin", "member"] as const;
+// `installer` sits last: it is exclusive, so it only ever wins when it is the
+// only role held — but it must win then, so the stored `role` describes the
+// account rather than reading as a plain member.
+const CALENDAR_ROLE_PRIORITY = ["admin", "payroll-admin", "member", "installer"] as const;
 function primaryRole(roles: string[]): string {
   for (const r of CALENDAR_ROLE_PRIORITY) if (roles.includes(r)) return r;
   return "member";
@@ -215,6 +233,57 @@ function RoleCheckboxes({
   );
 }
 
+/**
+ * Which scheduling resource an installer login is.
+ *
+ * The calendar knows an email; the scheduling app knows a name. Nothing joins
+ * them, and matching on the name text is not an option — that is what
+ * sched_crews.aliases exists to work around. So an admin picks explicitly, and
+ * we store the id (not the name) so renaming a crew cannot orphan the login.
+ *
+ * Seconds are labelled with the lead they ride with, since that is whose jobs
+ * they will see.
+ */
+function ResourcePicker({
+  crews,
+  value,
+  onChange,
+}: {
+  crews: SchedCrew[];
+  value: string | null;
+  onChange: (next: string | null) => void;
+}) {
+  const nameById = new Map(crews.map((c) => [c.id, c.name]));
+  return (
+    <div>
+      <label className="text-[11px] font-medium text-muted mb-1 block">
+        Scheduling resource <span className="text-danger">*</span>
+      </label>
+      <select
+        value={value || ""}
+        onChange={(e) => onChange(e.target.value || null)}
+        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+      >
+        <option value="">— pick who this is —</option>
+        {crews.map((c) => {
+          const lead = c.primary_crew_id ? nameById.get(c.primary_crew_id) : null;
+          return (
+            <option key={c.id} value={c.id}>
+              {c.name}
+              {lead ? ` — second to ${lead}` : ""}
+            </option>
+          );
+        })}
+      </select>
+      <p className="text-[10px] text-muted mt-0.5">
+        From the scheduling app&apos;s Resources screen. They will see this
+        person&apos;s jobs — or their install lead&apos;s, if they are a second.
+        Add them there first if they are not listed.
+      </p>
+    </div>
+  );
+}
+
 function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boolean; isPayrollAdmin?: boolean }) {
   const [emails, setEmails] = useState<AllowedEmail[]>([]);
   const [requests, setRequests] = useState<AccessRequest[]>([]);
@@ -229,11 +298,45 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
   const [editEmail, setEditEmail] = useState("");
   const [editRoles, setEditRoles] = useState<string[]>([]);
   const [editAutoCc, setEditAutoCc] = useState("");
+  const [crews, setCrews] = useState<SchedCrew[]>([]);
+  const [newCrewId, setNewCrewId] = useState<string | null>(null);
+  const [editCrewId, setEditCrewId] = useState<string | null>(null);
 
-  // Payroll admins can only assign member or payroll-admin roles (not admin)
+  // Payroll admins can only assign member or payroll-admin roles — not admin,
+  // and not installer: it is a restricted role whose setup also needs a
+  // scheduling resource, so it stays with admins alongside every other role
+  // change (migration 014).
   const availableRoles = isPayrollAdmin
-    ? ROLE_OPTIONS.filter((r) => r.value !== "admin")
+    ? ROLE_OPTIONS.filter((r) => r.value !== "admin" && r.value !== "installer")
     : ROLE_OPTIONS;
+
+  /**
+   * Whose jobs an installer login actually sees — their lead's, when they are
+   * a second. Spelling it out on the row is the only way an admin can tell a
+   * mis-pick from a correct one at a glance.
+   */
+  function crewLabel(crewId: string): string {
+    const crew = crews.find((c) => c.id === crewId);
+    if (!crew) return "resource no longer in the scheduling app";
+    const lead = crew.primary_crew_id
+      ? crews.find((c) => c.id === crew.primary_crew_id)
+      : null;
+    return lead ? `${lead.name}'s jobs (${crew.name} is their second)` : `${crew.name}'s jobs`;
+  }
+
+  /**
+   * Shared validation for both the add and edit forms.
+   * Returns an error message, or null when the pair is valid.
+   */
+  function roleSetupError(roles: string[], crewId: string | null): string | null {
+    if (installerRoleConflict(roles)) {
+      return "Installer restricts access rather than granting it, so it cannot be combined with another role. Untick the others, or untick Installer.";
+    }
+    if (roles.includes("installer") && !crewId) {
+      return "Pick which scheduling resource this installer is — without it they would see nothing at all.";
+    }
+    return null;
+  }
 
   useEffect(() => {
     loadData();
@@ -254,6 +357,17 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
     ]);
     setEmails(emailsRes.data || []);
     setRequests(requestsRes.data || []);
+
+    // The scheduling roster, for the installer picker. 019 limits sched_crews
+    // to admin + the scheduling roles, so this comes back empty for a payroll
+    // admin — who cannot assign the installer role anyway.
+    const { data: crewRows } = await supabase
+      .from("sched_crews")
+      .select("id, name, crew_type, is_active, primary_crew_id")
+      .eq("is_active", true)
+      .order("name", { ascending: true });
+    setCrews(crewRows || []);
+
     setLoading(false);
   }
 
@@ -285,10 +399,23 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
     setError("");
 
     const roles = newRoles.length ? newRoles : ["member"];
+    const setupError = roleSetupError(roles, newCrewId);
+    if (setupError) {
+      setError(setupError);
+      setAdding(false);
+      return;
+    }
+
     const supabase = createAuthClient();
     const { error: insertError } = await supabase
       .from("allowed_emails")
-      .insert({ email: trimmedEmail, name: trimmedName || null, role: primaryRole(roles), roles });
+      .insert({
+        email: trimmedEmail,
+        name: trimmedName || null,
+        role: primaryRole(roles),
+        roles,
+        sched_crew_id: roles.includes("installer") ? newCrewId : null,
+      });
 
     if (insertError) {
       if (insertError.code === "23505") {
@@ -300,6 +427,7 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
       setNewEmail("");
       setNewName("");
       setNewRoles(["member"]);
+      setNewCrewId(null);
       await loadData();
     }
     setAdding(false);
@@ -314,6 +442,7 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
     setEditEmail(entry.email);
     setEditRoles(rowRoles(entry));
     setEditAutoCc((entry.auto_cc || []).join(", "));
+    setEditCrewId(entry.sched_crew_id);
   }
 
   function cancelEdit() {
@@ -335,6 +464,12 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
     setError("");
     const roles = editRoles.length ? editRoles : ["member"];
 
+    const setupError = roleSetupError(roles, editCrewId);
+    if (setupError) {
+      setError(setupError);
+      return;
+    }
+
     // Prevent demoting the last admin
     const original = emails.find((e) => e.id === id);
     if (original && rowRoles(original).includes("admin") && !roles.includes("admin")) {
@@ -350,6 +485,9 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
       .filter((s) => s.includes("@"));
 
     const role = primaryRole(roles);
+    // Dropping the installer role clears the resource too, so a later
+    // re-tick cannot silently reuse a stale crew.
+    const schedCrewId = roles.includes("installer") ? editCrewId : null;
     const supabase = createAuthClient();
     const { data: updated, error: updateError } = await supabase
       .from("allowed_emails")
@@ -359,6 +497,7 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
         role,
         roles,
         auto_cc: parsedAutoCc,
+        sched_crew_id: schedCrewId,
       })
       .eq("id", id)
       .select();
@@ -375,7 +514,15 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
       setEmails((prev) =>
         prev.map((e) =>
           e.id === id
-            ? { ...e, email: trimmedEmail, name: trimmedName || null, role, roles, auto_cc: parsedAutoCc }
+            ? {
+                ...e,
+                email: trimmedEmail,
+                name: trimmedName || null,
+                role,
+                roles,
+                auto_cc: parsedAutoCc,
+                sched_crew_id: schedCrewId,
+              }
             : e
         )
       );
@@ -501,6 +648,13 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                     options={availableRoles}
                   />
                 </div>
+                {editRoles.includes("installer") && (
+                  <ResourcePicker
+                    crews={crews}
+                    value={editCrewId}
+                    onChange={setEditCrewId}
+                  />
+                )}
                 <div>
                   <label className="text-[11px] font-medium text-muted mb-1 block">
                     Auto CC on Field Notes
@@ -573,6 +727,17 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                   {entry.auto_cc && entry.auto_cc.length > 0 && (
                     <span className="text-[10px] text-muted mt-0.5 block truncate">
                       CC: {entry.auto_cc.join(", ")}
+                    </span>
+                  )}
+                  {rowRoles(entry).includes("installer") && (
+                    <span
+                      className={`text-[10px] mt-0.5 block truncate ${
+                        entry.sched_crew_id ? "text-muted" : "text-danger"
+                      }`}
+                    >
+                      {entry.sched_crew_id
+                        ? `Sees: ${crewLabel(entry.sched_crew_id)}`
+                        : "No scheduling resource — this account sees nothing"}
                     </span>
                   )}
                 </div>
@@ -650,6 +815,9 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                 options={availableRoles}
               />
             </div>
+          )}
+          {!isPayrollAdmin && newRoles.includes("installer") && (
+            <ResourcePicker crews={crews} value={newCrewId} onChange={setNewCrewId} />
           )}
           {error && (
             <p className="text-xs text-danger flex items-center gap-1">

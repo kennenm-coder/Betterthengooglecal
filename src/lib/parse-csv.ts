@@ -153,6 +153,9 @@ export function parseCsv(csvText: string): WorkOrder[] {
 
     orders.push({
       id: woNum,
+      // Parsed from an upload on its way INTO the database; the installer
+      // trim only ever applies on the way out.
+      isMine: true,
       status: val(row, COL.RECORD_STATUS),
       orderNumber: val(row, COL.ORDER_NUMBER),
       workOrderNumber: woNum,

@@ -102,6 +102,9 @@ export function parseXlsHtml(html: string): WorkOrder[] {
 
     return {
       id: `${cell(row, "Work Order Number") || idx}`,
+      // Parsed from an upload on its way INTO the database; the installer
+      // trim only ever applies on the way out.
+      isMine: true,
       status: cell(row, "Status"),
       orderNumber: cell(row, "Order Number"),
       workOrderNumber: cell(row, "Work Order Number"),

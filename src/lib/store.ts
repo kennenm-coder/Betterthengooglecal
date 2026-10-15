@@ -8,6 +8,20 @@ const STORAGE_TMP_KEY = "rba-field-cal-data-tmp";
 const TIMESTAMP_KEY = "rba-field-cal-updated";
 const CACHE_META_KEY = "rba-field-cal-meta";
 const VISIBLE_TYPES = ["Install", "Service", "Job Site Visit"];
+
+/**
+ * Where job reads come from.
+ *
+ * `work_orders_visible` (migration 035) is work_orders with the customer's
+ * phone, the money and the product/install text blanked on jobs that do not
+ * belong to the calling installer. For every other role it passes every column
+ * through untouched, so everyone reads the same view and there is only one code
+ * path to get wrong — no "works for me, broken for installers" divergence.
+ *
+ * Writes still go to the table: the view is read-only, and the roles that write
+ * here (admin, scheduling) are not restricted in the first place.
+ */
+const WORK_ORDERS_READ = "work_orders_visible";
 const PAGE_SIZE = 1000;
 const WINDOW_DAYS = 90;
 
@@ -77,6 +91,8 @@ interface WorkOrderRow {
   longitude: number | null;
   uploaded_at: string;
   updated_at: string;
+  /** Only present on work_orders_visible (035); absent on the raw table. */
+  is_mine?: boolean;
 }
 
 function stripUtcSuffix(iso: string | null): string | null {
@@ -119,6 +135,9 @@ function rowToWorkOrder(row: WorkOrderRow): WorkOrder {
     accountName: row.account_name || "",
     latitude: row.latitude ?? null,
     longitude: row.longitude ?? null,
+    // Absent means unrestricted: a cached row written before 035, or a read
+    // that did not come through the view. Only an explicit false trims.
+    isMine: row.is_mine !== false,
   };
 }
 
@@ -192,7 +211,14 @@ export function loadBoundedCache(): WorkOrder[] {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return [];
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw) as WorkOrder[];
+    if (!Array.isArray(parsed)) return [];
+    // Every cache written before `isMine` existed is missing the field, and the
+    // screens read it as "not your job" — so without this the first load after
+    // the installer release puts a "Not one of your jobs" banner on every job,
+    // for everybody, until the cache is replaced. Same rule as rowToWorkOrder:
+    // absent means unrestricted, only an explicit false trims.
+    return parsed.map((o) => (o && o.isMine === undefined ? { ...o, isMine: true } : o));
   } catch {
     return [];
   }
@@ -240,7 +266,7 @@ export async function loadInitialWindow(signal?: AbortSignal): Promise<WorkOrder
   const rows = await paginatedQuery(
     () =>
       supabase
-        .from("work_orders")
+        .from(WORK_ORDERS_READ)
         .select("*")
         .gte("scheduled_start", start)
         .lte("scheduled_start", end)
@@ -261,7 +287,7 @@ export async function loadUnscheduled(signal?: AbortSignal): Promise<WorkOrder[]
   const rows = await paginatedQuery(
     () =>
       supabase
-        .from("work_orders")
+        .from(WORK_ORDERS_READ)
         .select("*")
         .is("scheduled_start", null)
         .in("work_order_type", VISIBLE_TYPES)
@@ -287,7 +313,7 @@ export async function loadFutureExtended(
     await yieldToMain();
     if (signal?.aborted) return;
     const { data, error } = await supabase
-      .from("work_orders")
+      .from(WORK_ORDERS_READ)
       .select("*")
       .gt("scheduled_start", end)
       .in("work_order_type", VISIBLE_TYPES)
@@ -318,7 +344,7 @@ export async function loadHistorical(
     await yieldToMain();
     if (signal?.aborted) return;
     const { data, error } = await supabase
-      .from("work_orders")
+      .from(WORK_ORDERS_READ)
       .select("*")
       .lt("scheduled_start", start)
       .in("work_order_type", VISIBLE_TYPES)
@@ -352,7 +378,7 @@ export async function loadMonth(
   const rows = await paginatedQuery(
     () =>
       supabase
-        .from("work_orders")
+        .from(WORK_ORDERS_READ)
         .select("*")
         .gte("scheduled_start", start)
         .lt("scheduled_start", end)
@@ -533,7 +559,7 @@ export async function searchWorkOrders(query: string, limit = 40): Promise<WorkO
   // whole result list with addresses and buried the actual jobs. Asking for
   // jobs in their own query means they can never be crowded out.
   const run = async (jobsOnly: boolean): Promise<WorkOrderRow[]> => {
-    let qb = supabase.from("work_orders").select("*");
+    let qb = supabase.from(WORK_ORDERS_READ).select("*");
     for (const t of terms.slice(0, 5)) {
       qb = qb.or(JOB_SEARCH_COLUMNS.map((c) => `${c}.ilike.%${t}%`).join(","));
     }

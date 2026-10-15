@@ -8,7 +8,7 @@ import { buildNwoRows, buildBoardSummaryByUnit, fetchCatalogAndOffsets, fetchPOs
 import { fetchInstallDoc, dash } from "@/lib/install-doc";
 import { fetchWriteUpsForOrder, applySpecChangesToUnits } from "@/lib/work-order-store";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork } from "@/lib/roles";
+import { canDoFieldWork, isInstaller } from "@/lib/roles";
 import WriteUpModal from "@/components/WriteUpModal";
 import { ArrowLeft, Loader2, AlertTriangle, Package, CheckCircle2, Clock, AlertCircle, Printer, Hammer } from "lucide-react";
 
@@ -237,9 +237,26 @@ export default function InstallInstructionsPage() {
   }
 
   if (!job) {
+    // For a restricted installer the usual reason is not that the job is
+    // missing but that it belongs to another crew: 036 filters both the
+    // install document and the raw job out of their reads, so the page sees
+    // nothing either way. Saying "not found" would send them hunting for a
+    // problem that isn't there.
     return (
-      <div className="flex flex-col items-center justify-center h-screen gap-4">
-        <p className="text-muted">Job not found</p>
+      <div className="flex flex-col items-center justify-center h-screen gap-4 px-6 text-center">
+        {isInstaller(roles) ? (
+          <>
+            <p className="text-muted">
+              Install paperwork is only available for your own crew&apos;s jobs.
+            </p>
+            <p className="text-xs text-muted">
+              If you have been sent to this one, ask the office to send you the
+              details.
+            </p>
+          </>
+        ) : (
+          <p className="text-muted">Job not found</p>
+        )}
         <button onClick={() => router.back()} className="text-primary underline text-sm">
           Go back
         </button>

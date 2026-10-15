@@ -192,6 +192,14 @@ function SearchOrderTile({
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <span className="text-xs text-muted">{order.workOrderType}</span>
             <span className="text-xs text-muted">#{order.workOrderNumber}</span>
+            {/* Another crew's job, seen by an installer: the phone number and
+                the product detail never left the database. Say so, or the
+                blanks read as missing data. */}
+            {!order.isMine && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-600 dark:text-slate-300 font-semibold">
+                Not your job
+              </span>
+            )}
             {order.materialJob && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#6DB344]/15 text-[#6DB344] font-semibold">
                 Linked

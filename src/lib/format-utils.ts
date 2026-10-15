@@ -56,6 +56,50 @@ export function shortDay(iso: string): string {
   });
 }
 
+/**
+ * Crew names compare case- and whitespace-insensitively for ownership.
+ *
+ * rForce's resource fields are free text and the scheduling roster is typed by
+ * hand, so the same person reaches us as "Keith Morris" and "keith morris".
+ * Two different people never collide under this, so folding only ever reunites
+ * a crew with their own job.
+ */
+function normalizeCrew(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Is this job one of these crews'? The installer scope.
+ *
+ * Checks every name the job carries, not just the one a tile happens to show:
+ * the scheduling app's per-day crews AND all three raw rForce fields. The
+ * fallback in crewsForDate() picks only the first rForce field that is set, so
+ * on a job where `installer` and `primary_resource` disagree, going through it
+ * alone would hide the job from one of the two crews actually on it.
+ *
+ * An empty name list owns nothing — an installer whose login has no scheduling
+ * resource assigned sees an empty calendar, not everyone's.
+ *
+ * Mirrors public.wo_is_mine() in migration 035. This one decides what to draw;
+ * that one decides what leaves the database.
+ */
+export function ownsOrder(order: WorkOrder, crewNames: string[]): boolean {
+  if (crewNames.length === 0) return false;
+  const mine = new Set(crewNames.map(normalizeCrew));
+  for (const n of crewsForDate(order)) {
+    if (n && mine.has(normalizeCrew(n))) return true;
+  }
+  for (const n of [order.primaryResource, order.installer, order.serviceRep]) {
+    if (n && mine.has(normalizeCrew(n))) return true;
+  }
+  return false;
+}
+
+/** Narrow a list of jobs to the ones belonging to these crews. */
+export function ordersForCrews(orders: WorkOrder[], crewNames: string[]): WorkOrder[] {
+  return orders.filter((o) => ownsOrder(o, crewNames));
+}
+
 /** Is this crew on the job — on the given date, or on any day of it? */
 export function hasCrew(
   order: WorkOrder,

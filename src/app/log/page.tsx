@@ -32,8 +32,11 @@ import {
   ArrowRight,
   Search,
   X,
+  ShieldX,
 } from "lucide-react";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
+import { useAuth } from "@/hooks/useAuth";
+import { isInstaller } from "@/lib/roles";
 
 type ViewMode = "jobs" | "uploads";
 
@@ -72,6 +75,7 @@ function groupByDay<T>(
 
 export default function LogPage() {
   const { orders } = useData();
+  const { roles } = useAuth();
   const [entries, setEntries] = useState<ImportLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>("jobs");
@@ -145,6 +149,24 @@ export default function LogPage() {
     setOpeningKey(null);
     if (exact) setSelectedOrder(exact);
     else setNotFoundKeys((prev) => [...prev, job.key]);
+  }
+
+  // Installers don't get this screen: it lists every job that moved, on every
+  // crew, with customer names. The tab is hidden from them and the route
+  // behind it refuses them — this is for anyone who arrives by URL.
+  if (isInstaller(roles)) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
+          <ShieldX className="w-12 h-12 text-muted" />
+          <p className="text-muted text-sm">
+            The Changes list covers every crew&apos;s jobs, so it isn&apos;t
+            part of your access.
+          </p>
+        </div>
+        <BottomNav />
+      </div>
+    );
   }
 
   return (

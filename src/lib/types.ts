@@ -45,6 +45,16 @@ export interface WorkOrder {
   /** Legacy install-instructions URL (Google Drive), shown only when there is
    *  no paired materialJob. See legacy_install_links table / migration 015. */
   legacyInstallUrl?: string | null;
+  /**
+   * False only for a restricted installer looking at another crew's job: the
+   * row arrived with the phone, the money and the product/install text blanked
+   * by work_orders_visible (migration 035). True for everyone else, always.
+   *
+   * The data is already gone by the time it reaches here — this is not what
+   * hides it. It exists so a screen can say "limited info — not your job"
+   * rather than showing blanks with no explanation.
+   */
+  isMine: boolean;
 }
 
 export interface PhoneEntry {

@@ -26,7 +26,12 @@ export type UserRole =
   // Cut-list role for standalone (QO-) trim orders only — no job access there.
   | "standalone-trim"
   // Job-Auditor-app role (no calendar capabilities; member-level in calendar).
-  | "inventory-specialist";
+  | "inventory-specialist"
+  // Field installer. The one SUBTRACTIVE role: it restricts rather than grants,
+  // so unlike every other role here it does not stack. Sees their own crew's
+  // jobs in full and every other job trimmed. Requires sched_crew_id to be set
+  // — see supabase/migrations/033_installer_role.sql.
+  | "installer";
 
 interface AuthState {
   user: User | null;
@@ -36,6 +41,13 @@ interface AuthState {
   roles: string[];
   /** Extra emails to auto-CC on field notes for this user */
   autoCc: string[];
+  /**
+   * For installers: the crew names whose jobs are theirs — their own resource
+   * and their install lead, aliases included. Empty for everyone else, and
+   * empty for an installer whose login has no resource assigned yet, which is
+   * what makes that case fail closed instead of showing the whole board.
+   */
+  crewNames: string[];
   loading: boolean;
 }
 
@@ -53,6 +65,7 @@ export function useAuth(): AuthState {
       role: "member",
       roles: [],
       autoCc: [],
+      crewNames: [],
       loading: true,
     }
   );
@@ -79,15 +92,32 @@ export function useAuth(): AuthState {
             ? [data.role as string]
             : [];
 
+        // Only installers need their crew names, and only they pay for the
+        // extra round trip. my_crew_names() resolves the login through
+        // sched_crews, which they cannot read directly (019).
+        let crewNames: string[] = [];
+        if (roles.includes("installer")) {
+          const { data: names } = await supabase.rpc("my_crew_names");
+          crewNames = Array.isArray(names) ? names : [];
+        }
+
         next = {
           user,
           role: (data?.role as UserRole) || "member",
           roles,
           autoCc: Array.isArray(data?.auto_cc) ? data.auto_cc : [],
+          crewNames,
           loading: false,
         };
       } else {
-        next = { user, role: "member", roles: [], autoCc: [], loading: false };
+        next = {
+          user,
+          role: "member",
+          roles: [],
+          autoCc: [],
+          crewNames: [],
+          loading: false,
+        };
       }
 
       cachedState = next;

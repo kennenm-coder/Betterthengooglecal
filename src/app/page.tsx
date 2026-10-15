@@ -13,7 +13,14 @@ import TimeOffBanner from "@/components/TimeOffBanner";
 import StaleTabTag from "@/components/StaleTabBanner";
 import { useStaleTab } from "@/hooks/useStaleTab";
 import { useAuth } from "@/hooks/useAuth";
-import { canManageTimeOff as canManageTimeOffRole, canSeeFloaters, isAdmin } from "@/lib/roles";
+import {
+  canManageTimeOff as canManageTimeOffRole,
+  canSeeFloaters,
+  isAdmin,
+  isInstaller,
+  installerNeedsSetup,
+} from "@/lib/roles";
+import { ordersForCrews } from "@/lib/format-utils";
 import FloatersBanner from "@/components/FloatersBanner";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
@@ -36,7 +43,7 @@ function CalendarPage() {
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
-  const { roles } = useAuth();
+  const { roles, crewNames } = useAuth();
   const canManageTimeOff = canManageTimeOffRole(roles);
   const { isStale, staleAfter, nextUpdate, isDesktop, dismiss, resetBlock } = useStaleTab();
 
@@ -122,7 +129,18 @@ function CalendarPage() {
     }
   }, [view, currentDate]);
 
-  const filteredOrders = useMemo(() => applyFilters(orders, filters), [orders, filters]);
+  // Installers see their own crew's jobs here and nothing else. Search stays
+  // unscoped on purpose — it is how they look up a job they were sent to that
+  // is not on their board — so this narrows the calendar, not `orders`.
+  const scopedOrders = useMemo(
+    () => (isInstaller(roles) ? ordersForCrews(orders, crewNames) : orders),
+    [orders, roles, crewNames]
+  );
+
+  const filteredOrders = useMemo(
+    () => applyFilters(scopedOrders, filters),
+    [scopedOrders, filters]
+  );
 
   const goToday = () => setCurrentDate(new Date());
   const goPrev = useCallback(() => {
@@ -239,7 +257,7 @@ function CalendarPage() {
             <RefreshCw className={`w-4.5 h-4.5 ${refreshing ? "animate-spin" : ""}`} />
           </button>
 
-          <FilterPanel orders={orders} filters={filters} onChange={setFilters} />
+          <FilterPanel orders={scopedOrders} filters={filters} onChange={setFilters} />
 
           {isAdmin(roles) && (
             <button
@@ -287,10 +305,23 @@ function CalendarPage() {
         </div>
       )}
 
+      {/* An installer with no scheduling resource matches no job, so every
+          view comes back empty. That is the intended fail-closed behaviour,
+          but an empty calendar with no explanation reads as a broken app. */}
+      {installerNeedsSetup(roles, crewNames) && (
+        <div className="bg-warning/10 border-b border-warning/30 px-4 py-3 text-sm">
+          <p className="font-medium text-warning">Your account isn&apos;t finished yet</p>
+          <p className="text-xs text-muted mt-0.5">
+            Nobody has linked your login to a crew, so there are no jobs to
+            show you. Ask an admin to finish setting up your account.
+          </p>
+        </div>
+      )}
+
       <div className="flex-1 flex flex-col min-h-0">
         {view === "list" ? (
           <UnscheduledJobs
-            orders={orders}
+            orders={scopedOrders}
             onSelectOrder={setSelectedOrder}
           />
         ) : view === "day" ? (

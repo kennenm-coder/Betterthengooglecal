@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth, getAdminClient } from "@/lib/auth";
 import { TTL_DAYS } from "@/lib/import-log";
+import { isInstaller } from "@/lib/roles";
 
 // Import history for the /log page. These rows carry customer names, work
 // order numbers and before/after values, and this route both reads them and
@@ -8,8 +9,16 @@ import { TTL_DAYS } from "@/lib/import-log";
 // anonymous caller. Any allowlisted user may read it; the /log page is the
 // only caller.
 export async function GET() {
-  const { error: authError } = await requireAuth();
+  const { user, error: authError } = await requireAuth();
   if (authError) return authError;
+
+  // Not installers. This route answers with the service-role key, so RLS —
+  // including the installer restrictions in 035 / 036 — does not touch it, and
+  // the rows name customers on every crew's jobs. The /log tab is hidden from
+  // them too; this is the half that actually holds.
+  if (isInstaller(user?.roles)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   // Service role: pruning deletes rows no signed-in role is granted to delete.
   // getAdminClient() throws when the key is missing rather than silently

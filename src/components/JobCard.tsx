@@ -232,6 +232,21 @@ export default function JobCard({
 
   return (
     <div className="rounded-lg border border-border overflow-hidden shadow-sm">
+      {/* Another crew's job, opened by a restricted installer. The phone
+          number, the pricing and the product and install detail were stripped
+          before this row left the database (migration 035) — without this the
+          gaps look like a job someone forgot to fill in. */}
+      {!order.isMine && (
+        <div className="px-3 py-2 bg-slate-500/10 border-b border-border">
+          <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+            Not one of your jobs
+          </p>
+          <p className="text-[11px] text-muted mt-0.5">
+            You can see where it is and who is on it. Contact details, pricing
+            and the install paperwork stay with that crew.
+          </p>
+        </div>
+      )}
       <div className="flex items-stretch">
         <div className={`w-2 ${typeBg} shrink-0`} />
         <div className="flex-1 p-3 min-w-0">

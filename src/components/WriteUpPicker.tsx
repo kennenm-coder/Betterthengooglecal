@@ -29,6 +29,9 @@ function matchMaterialJobs(jobs: Map<string, MaterialJobData>, query: string, li
     if (!terms.every((t) => hay.includes(t))) continue;
     out.push({
       id: `mat-${po || mat.id || out.length}`,
+      // Built here from a material job, not read from the DB — nothing was
+      // trimmed, so it is always fully visible.
+      isMine: true,
       orderNumber: po,
       workOrderNumber: "",
       customerName: customer,

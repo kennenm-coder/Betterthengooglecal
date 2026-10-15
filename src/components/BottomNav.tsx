@@ -4,13 +4,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Calendar, Search, ScrollText, Wrench } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { canSeeWriteUps } from "@/lib/roles";
+import { canSeeWriteUps, isInstaller } from "@/lib/roles";
 
 // Settings lives in the top-right of the calendar header, not the bottom nav.
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: Calendar },
   { href: "/search", label: "Search", icon: Search },
-  { href: "/log", label: "Changes", icon: ScrollText },
+  // Changes lists every job that moved, on every crew, with customer names —
+  // and it is served with the service-role key, so none of the installer
+  // restrictions reach it. Hidden here; the route refuses them outright.
+  { href: "/log", label: "Changes", icon: ScrollText, notInstaller: true },
   // Write-Ups is gated below (admin + field-manager only for now).
   { href: "/work-orders", label: "Write-Ups", icon: Wrench, writeUps: true },
 ];
@@ -19,7 +22,11 @@ export default function BottomNav() {
   const pathname = usePathname();
   const { roles } = useAuth();
   // Hide the Write-Ups tab from regular members during the soft rollout.
-  const items = NAV_ITEMS.filter((i) => !i.writeUps || canSeeWriteUps(roles));
+  const items = NAV_ITEMS.filter(
+    (i) =>
+      (!i.writeUps || canSeeWriteUps(roles)) &&
+      (!i.notInstaller || !isInstaller(roles))
+  );
 
   return (
     <nav

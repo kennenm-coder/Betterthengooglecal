@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
 
 const REPO = "kennenm-coder/Betterthengooglecal";
 const FILE_PATH = "data/orders.json";
@@ -7,8 +7,18 @@ const BRANCH = "Main";
 
 export async function GET() {
   try {
-    // Require any authenticated user
-    const { error: authError } = await requireAuth();
+    // Admin only.
+    //
+    // This hands back data/orders.json — every order, ~550 KB — fetched with
+    // the repo's own token. It never passes through Postgres, so none of the
+    // row and column restrictions on work_orders apply to it: left open to any
+    // allowlisted account it would undo the installer role in a single fetch
+    // (migrations 035 / 036).
+    //
+    // Nothing in the app calls this route; it reads as a leftover from before
+    // the move to Supabase. Narrowing it is the conservative fix — deleting it
+    // outright is probably the right one.
+    const { error: authError } = await requireRole("admin");
     if (authError) return authError;
 
     const token = process.env.GITHUB_TOKEN;

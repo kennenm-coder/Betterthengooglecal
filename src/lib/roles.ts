@@ -34,6 +34,51 @@ export function isAdmin(roles: RoleInput): boolean {
   return toList(roles).includes("admin");
 }
 
+/**
+ * Is this a restricted field installer?
+ *
+ * `installer` is the one SUBTRACTIVE role in this app. Every other gate above
+ * and below grants on the union of what the held roles allow; this one takes
+ * away, so it cannot follow that rule — `installer` + `member` would otherwise
+ * read as plain member and quietly undo the whole restriction. Holding it
+ * restricts you, full stop.
+ *
+ * Admin is the one exception, so an admin who tags themselves as a crew to
+ * test the role can never lock themselves out.
+ *
+ * Mirrors public.is_installer() in migration 033 — the DB enforces this; the
+ * checks here only decide what to draw.
+ */
+export function isInstaller(roles: RoleInput): boolean {
+  if (isAdmin(roles)) return false;
+  return toList(roles).includes("installer");
+}
+
+/**
+ * Roles that cannot be held alongside `installer`.
+ *
+ * Because the role subtracts, pairing it with anything else is always a
+ * mistake — either the other role is pointless or it signals an intent the
+ * restriction will ignore. The Team page refuses to save such a pair rather
+ * than letting an admin create an account whose access does not match what
+ * the checkboxes appear to say.
+ */
+export function installerRoleConflict(roles: string[]): boolean {
+  return roles.includes("installer") && roles.length > 1;
+}
+
+/**
+ * Does this installer's login know which crew they are?
+ *
+ * An installer with no resource assigned matches no job, so every screen
+ * comes back empty. That is deliberate — failing closed — but an empty
+ * calendar with no explanation reads as a broken app, so callers use this to
+ * show "ask an admin to finish setting up your account" instead.
+ */
+export function installerNeedsSetup(roles: RoleInput, crewNames: string[]): boolean {
+  return isInstaller(roles) && crewNames.length === 0;
+}
+
 /** Roles allowed to create field write-ups and send field notes. */
 export const FIELD_WORK_ROLES: UserRole[] = ["admin", "field-manager"];
 
@@ -118,6 +163,10 @@ export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   // Job-Auditor-app role: audits, site runs, returns and attention items there.
   // No calendar capabilities on its own; calendar access is plain member-level.
   { value: "inventory-specialist", label: "Inventory Specialist (Job Auditor)" },
+  // Field installer — RESTRICTS rather than grants, and cannot be combined
+  // with any other role (see installerRoleConflict). Needs a scheduling
+  // resource assigned alongside it.
+  { value: "installer", label: "Installer (restricted)" },
 ];
 
 export const ROLE_LABELS: Record<string, string> = Object.fromEntries(
@@ -138,4 +187,5 @@ export const ROLE_STYLES: Record<string, string> = {
   "configuring-editing": "bg-purple-500/15 text-purple-600 dark:text-purple-400",
   "standalone-trim": "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
   "inventory-specialist": "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  installer: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
 };
