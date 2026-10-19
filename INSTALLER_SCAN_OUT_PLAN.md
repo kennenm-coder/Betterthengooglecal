@@ -452,14 +452,20 @@ names someone.
 | `src/components/StagingSection.tsx` | the Staging section; `StagingView` is the presentation on its own |
 | `src/app/dev-staging/page.tsx` | dev-only harness — sample rows, no database, no Orca |
 | `scripts/orca-backfill.mjs` | the one-time load, from a CSV export (not Excel: `csv-parse` is already a dependency) |
+| `supabase/migrations/040_orca_link_corrections.sql` | makes a link correctable: 039's trigger only filled blanks, so a corrected link left the old order number on the rows and a deleted one could not be undone |
+| `src/app/orca-links/page.tsx` | Warehouse Links — the admin screen that fills `orca_job_links`, reached from Settings |
+| `src/lib/orca-links.ts` | grouping the unmatched rows, saving and removing links, the name-based suggestions |
+| `src/components/OrcaLinksView.tsx` | its presentation, on its own |
+| `src/app/dev-orca-links/page.tsx` | dev-only harness for that screen |
 
-**Seeing it before any of that.** `npm run dev`, then `/dev-staging`. Made-up
-rows, both states, the cross-check failing on purpose. Nothing it does can
+**Seeing it before any of that.** `npm run dev`, then `/dev-staging` for the
+installer's screen and `/dev-orca-links` for the office's. Made-up rows,
+every state, the cross-check failing on purpose. Nothing either one does can
 reach a database, let alone Orca.
 
 **Switching it on, in this order.**
 
-1. Apply migration 039 in the SQL editor. The install page stops saying "the
+1. Apply migrations 039 and 040 in the SQL editor. The install page stops saying "the
    warehouse list isn't available" and starts saying "nothing matched to this
    job yet", which is the honest answer until there are rows.
 2. Set `ORCA_WEBHOOK_SECRET` in Vercel and the same Secret on both sheets in
@@ -480,7 +486,10 @@ reach a database, let alone Orca.
 
 **Still open, and not guessed at in the code.** The join (A/B/C) — until it is
 settled, only rows whose Customer PO already holds our order number, plus the
-cut-list app's trim rows, resolve to a job. The echo. Whether `Installer` is a
+cut-list app's trim rows, resolve to a job. Option C now has a screen behind
+it (Settings → Warehouse Links), so the office can close the gap by hand while
+A is chased; A and B still beat it, because neither needs anyone to keep
+typing. The echo. Whether `Installer` is a
 select column, and what a member or admin ticking on someone's behalf should
 be called in it: today they are stamped with their own account name, which
 will be dropped if the column is a guarded select.

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createAuthClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork, canEditLegacyLink } from "@/lib/roles";
+import { canDoFieldWork, canEditLegacyLink, isAdmin } from "@/lib/roles";
 import BottomNav from "@/components/BottomNav";
 import LoadingScheduleModal from "@/components/LoadingScheduleModal";
 import CatalogModal from "@/components/CatalogModal";
@@ -49,6 +49,7 @@ export default function SettingsPage() {
   const { roles } = useAuth();
   const fieldManager = canDoFieldWork(roles);
   const canManageLegacyLinks = canEditLegacyLink(roles);
+  const admin = isAdmin(roles);
 
   useEffect(() => {
     const supabase = createAuthClient();
@@ -182,6 +183,23 @@ export default function SettingsPage() {
               <div className="flex items-center gap-3">
                 <Link2 className="w-4 h-4 text-amber-600" />
                 <span>Legacy Links Needed</span>
+              </div>
+              <ChevronRight className="w-4 h-4 text-muted" />
+            </Link>
+          </section>
+        )}
+
+        {/* Warehouse Links — admin only. Ties Orca's factory job numbers to
+            our order numbers so warehouse rows reach the right job. */}
+        {admin && (
+          <section>
+            <Link
+              href="/orca-links"
+              className="w-full flex items-center justify-between px-3 py-3 rounded-lg border border-border bg-surface text-sm font-medium hover:bg-muted/10 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <Link2 className="w-4 h-4 text-amber-600" />
+                <span>Warehouse Links</span>
               </div>
               <ChevronRight className="w-4 h-4 text-muted" />
             </Link>
