@@ -297,7 +297,7 @@ export default function JobCard({
                 </button>
               )}
               <button
-                onClick={() => openSalesforce(order.workOrderNumber, order.orderNumber)}
+                onClick={() => openSalesforce(order.orderNumber)}
                 className="p-1 rounded hover:bg-surface"
                 title="Open in Salesforce"
               >

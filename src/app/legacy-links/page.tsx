@@ -242,7 +242,7 @@ export default function LegacyLinksPage() {
                     {order.scheduledStart ? format(parseISO(order.scheduledStart), "EEE MMM d") : "—"}
                   </span>
                   <button
-                    onClick={() => openSalesforce(order.workOrderNumber, order.orderNumber)}
+                    onClick={() => openSalesforce(order.orderNumber)}
                     className="p-1 rounded hover:bg-muted/10"
                     title="Open in Salesforce"
                   >
