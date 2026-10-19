@@ -168,9 +168,25 @@ a habit forever after, and one missed row is one invisible item.
 **C. Mapping table maintained by the office.** `orca_job_links(job_order_number
 → order_number)`, filled by hand per job. Works, scales badly.
 
+**D. Harvest the links the data already holds.** Added 2026-10-19, after
+looking at the profile again. Some rows carry BOTH our 8-digit order number in
+`Customer PO` *and* the factory's `Job Order Number` — and a link places every
+row sharing that job number, so one such row can place the fifteen siblings
+that carry only one of them. That costs nobody anything and needs no decision.
+`supabase/orca_join_probe.sql` measures exactly what it is worth on the real
+rows; migration 041's `orca_harvest_links()` does it, skipping any job number
+with two competing answers and never overwriting a hand-made link.
+
+**And one to test before paying for A, B or C:** the factory rows' `Name`
+looks like `-,04794151/097`. That 8-digit number is our order-number shape. If
+it really is our order number, about 1,300 rows resolve themselves with no
+process change at all. The resolver already tries it as a last resort, and
+section 3 of the probe counts how many of those guesses are real orders in
+`work_orders`. Worth running before asking anyone to retype anything.
+
 Whichever wins, the schema below carries an `order_number` column on the
 mirror, filled by a resolver that tries each source in turn. That keeps the
-code the same across A, B and C — only the resolver's input changes.
+code the same across A, B, C and D — only the resolver's input changes.
 
 **The Trim Inventory sheet has no such problem**: the cut-list app writes the
 8-digit PO into the barcode and the Name, so its rows resolve directly.
@@ -549,7 +565,9 @@ will be dropped if the column is a guarded select.
 
 ## Open questions for Kennen
 
-1. **Join source — A, B or C?** Everything downstream waits on this.
+1. **Join source — A, B, C or D?** Run `supabase/orca_join_probe.sql` first:
+   D (harvest what the data already holds) and the `Name` test are both free,
+   and between them they may leave little enough that A never needs chasing.
 2. ~~`Loading Status` is the column, and what value?~~ **Settled 2026-10-19:**
    the column is `Loading Status` and the value is **`Loaded`**, which Kennen
    believes is already on the option list — he is confirming. Not `Status`,
