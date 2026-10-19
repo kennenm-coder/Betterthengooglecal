@@ -1,10 +1,27 @@
 -- ============================================================
 -- Orca join probe — "how would you match it?", answered with numbers
 --
--- Read-only. Nothing here writes. Run it in the Supabase SQL editor
--- after migration 039 and the backfill, and it tells you which of the
--- matching strategies actually works on the real 1,700 rows instead
--- of on a guess.
+-- ⚠ THIS DOES NOT WORK YET, AND IT NEVER TOUCHES ORCA.
+--
+-- Orca Scan is a separate system. No SQL of ours can query it. What
+-- this file reads is `public.orca_rows` — a COPY of Orca's data kept
+-- inside Supabase, fed by the webhook. That table:
+--
+--     * does not exist until migration 039 is applied
+--     * is empty until scripts/orca-backfill.mjs has loaded an export
+--
+-- Run it before both of those and you get, correctly:
+--     ERROR: relation "public.orca_rows" does not exist
+--
+-- ➜ TO ANSWER THE JOIN QUESTION TODAY, use the other probe. It reads
+--   the Orca CSV export straight off disk and needs no migration:
+--
+--       node scripts/orca-join-probe.mjs "C:/path/to/export.csv"
+--
+-- This SQL version is for later — once the mirror is live, it is the
+-- quicker way to re-check the same things as the data changes.
+--
+-- Read-only. Nothing here writes.
 --
 -- The question it settles: Orca labels rows with the factory's 7-digit
 -- Job Order Number, we label everything with an 8-digit order number,
