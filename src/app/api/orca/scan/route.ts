@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireAuth, getAdminClient } from "@/lib/auth";
 import { canScanOut, isInstaller } from "@/lib/roles";
 import {
-  LOADING_SCANNED,
+  LOADING_LOADED,
   LOADING_STAGED,
   canWriteToOrca,
   orcaToday,
@@ -50,7 +50,7 @@ interface ScanBody {
 /**
  * Tick one inventory row off as loaded, or put it back.
  *
- * `Loading Status` becomes `Scanned` and `Installer` becomes whoever ticked it;
+ * `Loading Status` becomes `Loaded` and `Installer` becomes whoever ticked it;
  * unticking returns it to `Staged`. The write goes to Orca first and the mirror
  * second, so the screen never claims something Orca refused.
  *
@@ -164,17 +164,17 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          current === LOADING_SCANNED
-            ? "Already scanned out."
+          current === LOADING_LOADED
+            ? "Already loaded."
             : "The warehouse hasn't staged this one yet.",
         loadingStatus: current,
       },
       { status: 409 }
     );
   }
-  if (!checked && current !== LOADING_SCANNED) {
+  if (!checked && current !== LOADING_LOADED) {
     return NextResponse.json(
-      { error: "That one isn't scanned out.", loadingStatus: current },
+      { error: "That one isn't marked loaded.", loadingStatus: current },
       { status: 409 }
     );
   }
@@ -213,7 +213,7 @@ export async function POST(request: Request) {
   const payload: Record<string, string> = {
     ___orca_action: "update",
     Barcode: barcode,
-    "Loading Status": checked ? LOADING_SCANNED : LOADING_STAGED,
+    "Loading Status": checked ? LOADING_LOADED : LOADING_STAGED,
     Installer: checked ? who : "",
   };
   if (checked) {
@@ -269,12 +269,12 @@ export async function POST(request: Request) {
 
   // Mirror it optimistically. The WebHook Out echo overwrites this moments
   // later with whatever Orca ACTUALLY stored — which is how a silently-dropped
-  // `Scanned` shows up, as a row that ticks and then unticks itself.
+  // `Loaded` shows up, as a row that ticks and then unticks itself.
   //
-  // `Scanned` has to exist on the Loading Status option list in Orca, or every
+  // `Loaded` has to exist on the Loading Status option list in Orca, or every
   // tick looks like it worked and nothing changes.
   const mirrored = {
-    loading_status: checked ? LOADING_SCANNED : LOADING_STAGED,
+    loading_status: checked ? LOADING_LOADED : LOADING_STAGED,
     installer: checked ? who : "",
     staged_out: payload["Staged out"] !== undefined ? payload["Staged out"] : row.staged_out,
     updated_at: new Date().toISOString(),

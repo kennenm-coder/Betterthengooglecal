@@ -19,7 +19,7 @@ corrections are folded in below and called out where they land.
 An installer opens a job's install paperwork, sees every Orca inventory row
 that belongs to that job — windows, doors, hardware, trim bundles — and ticks a
 box per row as they load it. Each tick writes back to Orca: the row's
-`Loading Status` becomes `Scanned` and `Installer` becomes the person who ticked
+`Loading Status` becomes `Loaded` and `Installer` becomes the person who ticked
 it. Unticking puts it back to `Staged`. The warehouse and the office can then see,
 per job, that everything is in and gone out the door.
 
@@ -102,7 +102,14 @@ request carrying a `rows` array. **Retry and timeout behaviour is undocumented**
 — the receiver must be idempotent and answer fast.
 
 **One thing here is NOT established, and the plan leans on it:** whether Orca
-fires WebHook Out for a change *we* made through WebHook In. Everything in
+fires WebHook Out for a change *we* made through WebHook In. Kennen's read
+(2026-10-19) is that this is fine — the material-list app already gets
+confirmation back when it writes trim bundles — and the plan is to test it
+rather than design around it. Worth keeping the two apart while testing,
+though: WebHook In answering **200** only says Orca accepted the request, and
+it answers 200 for a dropped select value too. The echo is a *separate*
+message arriving at `/api/orca/events` afterwards. If only the 200 comes back,
+the silent-drop detection is gone even though the write itself works. Everything in
 Phase 3 that catches a silently-dropped value, and everything that keeps two
 phones on one job in step, depends on that echo coming back. Plenty of systems
 suppress the events they caused themselves. Prove it in Phase 0 against the
@@ -120,7 +127,7 @@ to read the row back itself and the "ticks, then unticks itself" tell is gone.
    mirror.
 2. **Select columns fail silently.** `Loading Status`, `Status`, `Location` are
    guarded selects. A value not on the option list returns HTTP 200 and leaves
-   the cell blank or defaulted. `Scanned` does not exist on any column today.
+   the cell blank or defaulted. `Loaded` does not exist on any column today.
    Nothing works until it is added, and nothing will tell you it hasn't been.
 
 **The REST API** (`api.orcascan.com/v1/…`) needs a Business subscription and
@@ -181,7 +188,7 @@ Orca (both sheets) ──WebHook Out──► POST /api/orca/events ──► or
 The mirror is the only thing the UI reads. It stays honest when the warehouse
 edits Orca directly, because that edit comes back through WebHook Out too. A
 tick writes the mirror optimistically on Orca's 200 and the echo overwrites it
-with whatever Orca actually stored — which is how a silently-dropped `Scanned`
+with whatever Orca actually stored — which is how a silently-dropped `Loaded`
 would show up as a row that ticks and then unticks itself. That echo is an
 assumption until Phase 0 proves it (see above); the rest of the diagram holds
 either way.
@@ -310,10 +317,10 @@ deleted), grouped **Units & parts** (Inventory sheet) and **Trim** (Trim sheet):
 | description, SO line item | the row |
 | location | `location` |
 | staged by / scanned by | `stager`, `installer` |
-| state pill: Not Staged / Staged / Scanned | `loading_status` |
+| state pill: Not Staged / Staged / Loaded | `loading_status` |
 
 Header chip: **"9 of 12 scanned out"**. Rows whose `loading_status` is not
-`Staged` or `Scanned` are shown but never tickable — a `Not Staged` item is not
+`Staged` or `Loaded` are shown but never tickable — a `Not Staged` item is not
 ready to leave, and that is the stager's call, not the installer's.
 
 **Cross-reference panel**, from the install doc already loaded on this page:
@@ -346,7 +353,7 @@ is fixed — say so plainly on the panel rather than showing an empty list.
    ownership check on the session-aware client from `requireAuth()`, or add an
    email-taking variant and call that with the service role.
 4. State machine: `checked` requires `loading_status = 'Staged'`; `!checked`
-   requires `'Scanned'`. Anything else → 409 with the current state, and the UI
+   requires `'Loaded'`. Anything else → 409 with the current state, and the UI
    reloads the row.
 5. Who: the installer's **own** resource name — and `my_crew_names()` will not
    give it. Postgres arrays start at 1, so `[0]` is empty; worse, the array
@@ -358,7 +365,7 @@ is fixed — say so plainly on the panel rather than showing an empty list.
    aliases. For a member/admin, the login's display name. Must match the
    spelling already in the `Installer` column (see Watch out for).
 6. WebHook In to the row's sheet:
-   `{ ___orca_action: 'update', Barcode, 'Loading Status': 'Scanned' | 'Staged',
+   `{ ___orca_action: 'update', Barcode, 'Loading Status': 'Loaded' | 'Staged',
    Installer: name | '', 'Staged out': today | '' }` with `orca-secret`.
    **An untick must not blank a field we never filled.** `Staged out` is the
    stager's date on plenty of rows today; clearing it on untick destroys
@@ -391,7 +398,7 @@ ORCA_TRIM_WEBHOOK_IN_URL          https://api.orcascan.com/sheets/LBewDR8Om02X3z
 ## Build order
 
 **Phase 0 — decide the join, configure Orca (no code).**
-Pick A, B or C above. Add `Scanned` to the `Loading Status` option list.
+Pick A, B or C above. Add `Loaded` to the `Loading Status` option list.
 Confirm whether `Installer` is a free-text or a select column; if select, every
 crew name an installer login can carry must be an option, spelled as
 `sched_crews.name` spells it. Set a Secret on both sheets (and in the cut-list
@@ -401,10 +408,13 @@ app, same sitting). Delete the stray test row `RBA-00000000-WC-1610261436`
 Three checks belong here too — minutes each, and each can change what gets
 built:
 
-- **Does the echo exist?** This is the one write the rule at the top allows:
-  the `ZZ DEMO` row, by hand, after Kennen says go. Write to it through WebHook
-  In and watch for a WebHook Out event coming back. If none arrives, Phase 3
-  loses its safety net and the scan route has to read the row back instead.
+- **Does the echo exist?** Expected to, and being tested rather than designed
+  around. This is the one write the rule at the top allows: the `ZZ DEMO` row,
+  by hand, after Kennen says go. Write to it through WebHook In, then look for
+  a NEW row in `orca_events` — not just a 200 on the request, which proves
+  only that Orca accepted it. If no event arrives, the write still works but
+  the silent-drop detection is gone and the scan route has to read the row
+  back itself.
 - **Are the barcodes clean?** In each sheet's Excel export, count rows against
   distinct barcodes and count the blanks. The mirror's primary key assumes one
   barcode per row, never empty.
@@ -427,7 +437,7 @@ Staging section and cross-reference on the install page. Ship it. This is where
 **Phase 3 — the tick.**
 Scan route, checkboxes, state machine. First real write goes to a `ZZ DEMO` row
 Kennen makes by hand, with him watching the sheet. Confirm `Loading Status`
-actually reads `Scanned` afterwards — a silent drop looks like success from our
+actually reads `Loaded` afterwards — a silent drop looks like success from our
 side until the echo arrives.
 
 **Phase 4 — edges.**
@@ -481,7 +491,7 @@ reach a database, let alone Orca.
 5. Leave `ORCA_SCAN_TEST_EMAILS` empty and the whole thing is view-only for
    everyone. Put one email in it and only that account gets checkboxes — which
    is how to try the first write without the field reaching live inventory.
-6. Before that first tick: add `Scanned` to the `Loading Status` option list
+6. Before that first tick: add `Loaded` to the `Loading Status` option list
    in Orca, or every tick will look like it worked and change nothing.
 
 **Still open, and not guessed at in the code.** The join (A/B/C) — until it is
@@ -540,8 +550,10 @@ will be dropped if the column is a guarded select.
 ## Open questions for Kennen
 
 1. **Join source — A, B or C?** Everything downstream waits on this.
-2. `Loading Status` is the column, and `Scanned` the value? (Not `Status`,
-   which is supply-chain state.)
+2. ~~`Loading Status` is the column, and what value?~~ **Settled 2026-10-19:**
+   the column is `Loading Status` and the value is **`Loaded`**, which Kennen
+   believes is already on the option list — he is confirming. Not `Status`,
+   which is supply-chain state.
 3. Should a tick also stamp `Staged out` with today's date, and an untick
    clear it?
 4. Who can tick — installers only, or members and admins too? Either way

@@ -17,7 +17,7 @@ import type { InstallDocRow } from "./install-doc";
 
 export const LOADING_NOT_STAGED = "Not Staged";
 export const LOADING_STAGED = "Staged";
-export const LOADING_SCANNED = "Scanned";
+export const LOADING_LOADED = "Loaded";
 
 export interface StagingRow {
   sheetId: string;
@@ -38,17 +38,17 @@ export interface StagingData {
   units: StagingRow[];
   /** Rows from the Trim sheet — the bundles the cut-list app wrote. */
   trim: StagingRow[];
-  scannedCount: number;
+  loadedCount: number;
   totalCount: number;
 }
 
 /** A row is tickable only once the stager has said it is ready to leave. */
 export function isTickable(row: StagingRow): boolean {
-  return row.loadingStatus === LOADING_STAGED || row.loadingStatus === LOADING_SCANNED;
+  return row.loadingStatus === LOADING_STAGED || row.loadingStatus === LOADING_LOADED;
 }
 
-export function isScanned(row: StagingRow): boolean {
-  return row.loadingStatus === LOADING_SCANNED;
+export function isLoaded(row: StagingRow): boolean {
+  return row.loadingStatus === LOADING_LOADED;
 }
 
 /**
@@ -57,7 +57,7 @@ export function isScanned(row: StagingRow): boolean {
  * said either way, so it reads as "not staged yet" and is never tickable.
  */
 export function stateLabel(row: StagingRow): string {
-  if (row.loadingStatus === LOADING_SCANNED) return "Scanned out";
+  if (row.loadingStatus === LOADING_LOADED) return "Loaded";
   if (row.loadingStatus === LOADING_STAGED) return "Staged";
   if (row.loadingStatus === LOADING_NOT_STAGED) return "Not staged";
   return "Not staged yet";
@@ -114,7 +114,7 @@ export async function fetchStagingForOrder(
   const supabase = getSupabase();
   if (!supabase) return { kind: "unavailable", detail: "Not signed in." };
   if (!orderNumber) {
-    return { kind: "ok", data: { units: [], trim: [], scannedCount: 0, totalCount: 0 } };
+    return { kind: "ok", data: { units: [], trim: [], loadedCount: 0, totalCount: 0 } };
   }
 
   const { data, error } = await supabase
@@ -135,7 +135,7 @@ export async function fetchStagingForOrder(
     data: {
       units,
       trim,
-      scannedCount: rows.filter(isScanned).length,
+      loadedCount: rows.filter(isLoaded).length,
       totalCount: rows.length,
     },
   };
@@ -229,7 +229,7 @@ export function applyLocal(
 ): StagingData {
   const patch = (r: StagingRow): StagingRow =>
     r.sheetId === row.sheetId && r.barcode === row.barcode
-      ? { ...r, loadingStatus: next ? LOADING_SCANNED : LOADING_STAGED }
+      ? { ...r, loadingStatus: next ? LOADING_LOADED : LOADING_STAGED }
       : r;
 
   const units = data.units.map(patch);
@@ -237,7 +237,7 @@ export function applyLocal(
   return {
     units,
     trim,
-    scannedCount: [...units, ...trim].filter(isScanned).length,
+    loadedCount: [...units, ...trim].filter(isLoaded).length,
     totalCount: data.totalCount,
   };
 }

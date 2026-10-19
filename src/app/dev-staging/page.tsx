@@ -17,7 +17,7 @@ import {
   StagingRow,
   applyLocal,
   LOADING_NOT_STAGED,
-  LOADING_SCANNED,
+  LOADING_LOADED,
   LOADING_STAGED,
 } from "@/lib/orca-staging";
 import type { MaterialUnit } from "@/lib/types";
@@ -52,14 +52,14 @@ function row(
 // one the warehouse hasn't released and one that hasn't even arrived.
 const SAMPLE: StagingData = {
   units: [
-    row("98124444.001", "DH 24 1/2 x 48 White/Pine Stain", LOADING_SCANNED, {
+    row("98124444.001", "DH 24 1/2 x 48 White/Pine Stain", LOADING_LOADED, {
       soLineItem: "1",
       location: "Rack B2",
       stager: "Jake",
       installer: "Josh Maas",
       stagedOut: "2026-10-19",
     }),
-    row("98124444.002", "DH 24 1/2 x 48 White/Pine Stain", LOADING_SCANNED, {
+    row("98124444.002", "DH 24 1/2 x 48 White/Pine Stain", LOADING_LOADED, {
       soLineItem: "2",
       location: "Rack B2",
       stager: "Jake",
@@ -98,7 +98,7 @@ const SAMPLE: StagingData = {
       status: "Stock",
     }),
   ],
-  scannedCount: 2,
+  loadedCount: 2,
   totalCount: 8,
 };
 

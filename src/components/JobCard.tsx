@@ -25,13 +25,15 @@ import {
   BadgeDollarSign,
   Link2,
   Users,
+  Truck,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import ActionModal from "./ActionModal";
 import WriteUpModal from "./WriteUpModal";
+import StagingModal from "./StagingModal";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork, canEditLegacyLink } from "@/lib/roles";
+import { canDoFieldWork, canEditLegacyLink, isAdmin } from "@/lib/roles";
 import { upsertLegacyLink, deleteLegacyLink } from "@/lib/store";
 import { useData } from "./DataProvider";
 import { parseISO, isSameDay } from "date-fns";
@@ -119,9 +121,14 @@ export default function JobCard({
   const [expanded, setExpanded] = useState(false);
   const [showAction, setShowAction] = useState(false);
   const [showWriteUp, setShowWriteUp] = useState(false);
+  const [showStaging, setShowStaging] = useState(false);
   const { user, roles } = useAuth();
   const { applyLegacyLink } = useData();
   const fieldWorker = canDoFieldWork(roles);
+  // Warehouse staging is admin-only for now. It reads live inventory and, for
+  // whoever is on the scan-out test list, writes to it — not something to put
+  // in front of the field while it is still being tried out.
+  const admin = isAdmin(roles);
   const canEditLegacy = canEditLegacyLink(roles);
   const router = useRouter();
   const typeBg = typeColor(order.workOrderType);
@@ -285,6 +292,15 @@ export default function JobCard({
                   title="Write-Up"
                 >
                   <Hammer className="w-5 h-5 text-amber-600" />
+                </button>
+              )}
+              {admin && (
+                <button
+                  onClick={() => setShowStaging(true)}
+                  className="p-1.5 rounded-lg border border-border bg-surface hover:bg-muted/10 transition-colors"
+                  title="In the warehouse"
+                >
+                  <Truck className="w-5 h-5 text-muted" />
                 </button>
               )}
               {fieldWorker && (
@@ -604,6 +620,15 @@ export default function JobCard({
           order={order}
           units={mat?.units || []}
           onClose={() => setShowWriteUp(false)}
+        />
+      )}
+
+      {showStaging && (
+        <StagingModal
+          order={order}
+          materialJobId={mat?.id ?? null}
+          units={mat?.units || []}
+          onClose={() => setShowStaging(false)}
         />
       )}
     </div>

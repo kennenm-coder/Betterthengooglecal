@@ -10,10 +10,10 @@ import {
   StagingRow,
   buildCrossReference,
   fetchStagingForOrder,
-  isScanned,
+  isLoaded,
   isTickable,
   stateLabel,
-  LOADING_SCANNED,
+  LOADING_LOADED,
   LOADING_STAGED,
 } from "@/lib/orca-staging";
 
@@ -207,7 +207,7 @@ export function StagingView({
           Staging
         </span>
         <span className="font-mono text-[10px] tracking-normal">
-          {staging.scannedCount} of {staging.totalCount} scanned out
+          {staging.loadedCount} of {staging.totalCount} loaded
         </span>
       </div>
 
@@ -340,7 +340,7 @@ function RowGroup({
       </div>
       <div className="divide-y divide-border">
         {rows.map((row) => {
-          const scanned = isScanned(row);
+          const loaded = isLoaded(row);
           const tickable = isTickable(row);
           const working = busy === row.barcode;
 
@@ -358,12 +358,12 @@ function RowGroup({
                 ) : canWrite && tickable ? (
                   <input
                     type="checkbox"
-                    checked={scanned}
+                    checked={loaded}
                     onChange={(e) => onToggle(row, e.target.checked)}
                     className="w-4 h-4 accent-[#6DB344] cursor-pointer"
-                    aria-label={`Scan out ${row.description || row.barcode}`}
+                    aria-label={`Mark ${row.description || row.barcode} loaded`}
                   />
-                ) : scanned ? (
+                ) : loaded ? (
                   <CheckCircle2 className="w-4 h-4 text-[#6DB344]" />
                 ) : (
                   // A circle, not a square: this one is a state marker, not a
@@ -382,7 +382,7 @@ function RowGroup({
                   {row.location && <span>{row.location}</span>}
                   {row.status && <span>{row.status}</span>}
                   {row.stager && <span>Staged by {row.stager}</span>}
-                  {scanned && row.installer && <span>Out with {row.installer}</span>}
+                  {loaded && row.installer && <span>Out with {row.installer}</span>}
                 </div>
               </div>
 
@@ -397,7 +397,7 @@ function RowGroup({
 
 function StatePill({ row }: { row: StagingRow }) {
   const style =
-    row.loadingStatus === LOADING_SCANNED
+    row.loadingStatus === LOADING_LOADED
       ? "bg-[#6DB344]/15 text-[#4a7d2c]"
       : row.loadingStatus === LOADING_STAGED
         ? "bg-blue-500/15 text-blue-700"

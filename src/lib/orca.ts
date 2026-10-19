@@ -38,10 +38,10 @@ export interface OrcaRow {
 /** The three states the loading workflow actually uses. */
 export const LOADING_NOT_STAGED = "Not Staged";
 export const LOADING_STAGED = "Staged";
-export const LOADING_SCANNED = "Scanned";
+export const LOADING_LOADED = "Loaded";
 
 /**
- * `Scanned` has to exist on the `Loading Status` option list in Orca before
+ * `Loaded` has to exist on the `Loading Status` option list in Orca before
  * any of this works. It is a guarded select column: a value that isn't an
  * option is dropped silently, HTTP 200 and all, leaving the cell blank. The
  * WebHook Out echo is the only way to see that happen.
@@ -49,7 +49,7 @@ export const LOADING_SCANNED = "Scanned";
 export type LoadingState =
   | typeof LOADING_NOT_STAGED
   | typeof LOADING_STAGED
-  | typeof LOADING_SCANNED;
+  | typeof LOADING_LOADED;
 
 /** Which of the two sheets a row came from. */
 export type OrcaSheet = "inventory" | "trim";
