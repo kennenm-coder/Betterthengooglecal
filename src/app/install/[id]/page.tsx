@@ -10,6 +10,7 @@ import { fetchWriteUpsForOrder, applySpecChangesToUnits } from "@/lib/work-order
 import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork, isInstaller } from "@/lib/roles";
 import WriteUpModal from "@/components/WriteUpModal";
+import StagingSection from "@/components/StagingSection";
 import { ArrowLeft, Loader2, AlertTriangle, Package, CheckCircle2, Clock, AlertCircle, Printer, Hammer } from "lucide-react";
 
 function fracToString(frac: number): string {
@@ -536,6 +537,15 @@ export default function InstallInstructionsPage() {
             ))}
           </div>
         )}
+
+        {/* Staging — what the warehouse has for this job, and whether it
+            matches the paperwork below. Above the Unit Summary because the
+            question it answers (is everything here?) comes first. */}
+        <StagingSection
+          orderNumber={(job.job.poNumber || "").trim()}
+          units={displayUnits}
+          nwoRows={nwoRows}
+        />
 
         {/* Unit Summary Table */}
         {(summaryRows.length > 0 || miscUnits.length > 0) && (

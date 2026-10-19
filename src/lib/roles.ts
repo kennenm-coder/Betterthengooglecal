@@ -120,6 +120,22 @@ export function canSeeWriteUps(roles: RoleInput): boolean {
   return hasAny(roles, ["admin", "field-manager", "scheduling", "scheduling_manager"]);
 }
 
+/**
+ * Who can tick an inventory row off as loaded (scan-out).
+ *
+ * The installer is the point of the feature, so unlike canDoFieldWork() this
+ * includes them. Field managers and admins are here because they are on the
+ * same jobs and get asked to do it.
+ *
+ * This decides what the SCREEN offers. The real guard on touching live
+ * warehouse inventory is server-side and narrower: /api/orca/scan refuses
+ * anyone not named in ORCA_SCAN_TEST_EMAILS, and refuses everyone while that
+ * variable is empty.
+ */
+export function canScanOut(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "field-manager", "installer"]);
+}
+
 /** Who can open/manage the Time Off screen. */
 export function canManageTimeOff(roles: RoleInput): boolean {
   return hasAny(roles, ["admin", "payroll-admin", "field-manager"]);
