@@ -24,7 +24,7 @@ import {
 import { fetchMaterialJobs } from "@/lib/store";
 import { getWriteUpEmails } from "@/lib/action-settings";
 import { dedupeRecipients } from "@/lib/email-recipients";
-import { groupWriteUpSections, padSeq, splitMaterialLines, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
+import { groupWriteUpSections, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
 import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibility";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
@@ -803,6 +803,30 @@ function StatusPill({ status }: { status: WriteUpStatus }) {
  * "reviewed" toggles + attribution, plus the lifecycle buttons that move the whole
  * submission Draft → In Review → Open → Closed.
  */
+/** Separates what the office still has to buy from what the field has already
+ *  installed. The installed lines stay on the page — the office still wants to
+ *  see what was bought for this job — they just stop being counted. */
+function InstalledDivider({ cols }: { cols: number }) {
+  return (
+    <tr className="bg-background">
+      <td colSpan={cols} className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-muted border-b border-border">
+        ✓ Already installed — no longer needed
+      </td>
+    </tr>
+  );
+}
+
+/** The work items an installed line was bought for, numbered as in the list
+ *  above. A merged line can name more than one. */
+function InstalledFor({ line }: { line: SectionMaterialLine }) {
+  if (!line.installed || line.workNumbers.length === 0) return null;
+  return (
+    <span className="ml-1.5 text-[10px] font-normal text-muted no-underline">
+      ({line.workNumbers.map(padSeq).join(", ")})
+    </span>
+  );
+}
+
 function ReviewSection({
   section,
   total,
@@ -863,8 +887,12 @@ function ReviewSection({
   // Trim and parts are two different orders to two different suppliers, so they
   // get a table each instead of one blended list the office has to sort by eye.
   const { trim: sectionTrim, parts: sectionParts } = splitMaterialLines(section.materials);
-  const trimPcs = sectionTrim.reduce((sum, m) => sum + (m.qty || 0), 0);
-  const partsPcs = sectionParts.reduce((sum, m) => sum + (m.qty || 0), 0);
+  // Work that's already installed isn't something to buy, so it drops out of
+  // the QTY total and sits struck through under its own divider instead.
+  const trimGroups = splitInstalled(sectionTrim);
+  const partsGroups = splitInstalled(sectionParts);
+  const trimPcs = pcsOf(trimGroups.needed);
+  const partsPcs = pcsOf(partsGroups.needed);
   // The job can only be closed once every work item is checked off installed.
   const allCompleted = allWork.length > 0 && allWork.every((i) => i.completed);
   const [confirmPhotos, setConfirmPhotos] = useState(false);
@@ -1199,19 +1227,28 @@ function ReviewSection({
               </tr>
             </thead>
             <tbody>
-              {sectionTrim.map((m, i) => (
-                <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-surface"}>
-                  <td className="px-2 py-1 text-xs border-b border-border font-bold whitespace-nowrap">
-                    {m.qty} {m.unit}
-                  </td>
-                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.unitLabel || "—"}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border font-semibold">{m.item}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.color || "—"}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.species || "—"}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border text-muted font-mono">{m.lengths || "—"}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border font-bold text-[#6DB344]">{m.vendor || "—"}</td>
-                </tr>
-              ))}
+              {sectionTrim.flatMap((m, i) => {
+                const strike = m.installed ? " line-through text-muted" : "";
+                return [
+                  ...(i === trimGroups.needed.length && trimGroups.installed.length > 0
+                    ? [<InstalledDivider key="installed" cols={7} />]
+                    : []),
+                  <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-surface"}>
+                    <td className={`px-2 py-1 text-xs border-b border-border font-bold whitespace-nowrap${strike}`}>
+                      {m.qty} {m.unit}
+                    </td>
+                    <td className={`px-2 py-1 text-xs border-b border-border text-muted${strike}`}>{m.unitLabel || "—"}</td>
+                    <td className={`px-2 py-1 text-xs border-b border-border font-semibold${strike}`}>
+                      {m.item}
+                      <InstalledFor line={m} />
+                    </td>
+                    <td className={`px-2 py-1 text-xs border-b border-border text-muted${strike}`}>{m.color || "—"}</td>
+                    <td className={`px-2 py-1 text-xs border-b border-border text-muted${strike}`}>{m.species || "—"}</td>
+                    <td className={`px-2 py-1 text-xs border-b border-border text-muted font-mono${strike}`}>{m.lengths || "—"}</td>
+                    <td className={`px-2 py-1 text-xs border-b border-border font-bold text-[#6DB344]${strike}`}>{m.vendor || "—"}</td>
+                  </tr>,
+                ];
+              })}
             </tbody>
           </table>
         </div>
@@ -1234,18 +1271,27 @@ function ReviewSection({
               </tr>
             </thead>
             <tbody>
-              {sectionParts.map((m, i) => (
-                <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-surface"}>
-                  <td className="px-2 py-1 text-xs border-b border-border font-bold whitespace-nowrap">
-                    {m.qty} {m.unit}
-                  </td>
-                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.unitLabel || "—"}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border font-semibold">{m.item}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.color || "—"}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border text-muted">{m.size || "—"}</td>
-                  <td className="px-2 py-1 text-xs border-b border-border font-mono font-bold">{m.partNumber || "—"}</td>
-                </tr>
-              ))}
+              {sectionParts.flatMap((m, i) => {
+                const strike = m.installed ? " line-through text-muted" : "";
+                return [
+                  ...(i === partsGroups.needed.length && partsGroups.installed.length > 0
+                    ? [<InstalledDivider key="installed" cols={6} />]
+                    : []),
+                  <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-surface"}>
+                    <td className={`px-2 py-1 text-xs border-b border-border font-bold whitespace-nowrap${strike}`}>
+                      {m.qty} {m.unit}
+                    </td>
+                    <td className={`px-2 py-1 text-xs border-b border-border text-muted${strike}`}>{m.unitLabel || "—"}</td>
+                    <td className={`px-2 py-1 text-xs border-b border-border font-semibold${strike}`}>
+                      {m.item}
+                      <InstalledFor line={m} />
+                    </td>
+                    <td className={`px-2 py-1 text-xs border-b border-border text-muted${strike}`}>{m.color || "—"}</td>
+                    <td className={`px-2 py-1 text-xs border-b border-border text-muted${strike}`}>{m.size || "—"}</td>
+                    <td className={`px-2 py-1 text-xs border-b border-border font-mono font-bold${strike}`}>{m.partNumber || "—"}</td>
+                  </tr>,
+                ];
+              })}
             </tbody>
           </table>
         </div>

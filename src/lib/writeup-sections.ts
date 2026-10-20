@@ -2,6 +2,11 @@
 // and PDF, so two write-ups on the same job read as two separate, numbered
 // blocks — each with its own work-to-complete list and its own material total.
 //
+// The material total is what the office buys from, so it merges identical lines
+// and counts only the work that isn't installed yet. Each work item owns its own
+// material list on the create screen; those lines carry the item's seq, which is
+// what lets the total drop them once the item is checked off.
+//
 // Grouping key: batch_id when present (migration 013), else the created time to
 // the minute (legacy rows share a near-identical timestamp per submission).
 //
@@ -11,6 +16,7 @@
 // item never renumbers the others — completed items just move to their own list
 // keeping the number they already had.
 
+import { mergeLengths } from "./lengths";
 import {
   FieldWorkOrder,
   SpecChange,
@@ -40,7 +46,15 @@ export interface NumberedWorkItem {
 }
 
 export interface SectionMaterialLine extends WriteUpMaterialItem {
+  /** The units this line covers — several once identical lines are merged. */
   unitLabel: string | null;
+  /** True when every work item this line was ordered for is installed, so the
+   *  line is no longer something the office needs to buy. False for a line
+   *  with no work item behind it (a write-up saved before materials were
+   *  linked, or a line added in the flat edit form). */
+  installed: boolean;
+  /** Display numbers of the work items this line was ordered for. */
+  workNumbers: number[];
 }
 
 /**
@@ -61,6 +75,74 @@ export function splitMaterialLines<T extends WriteUpMaterialItem>(
   const parts: T[] = [];
   for (const m of lines) (m.kind === "part" ? parts : trim).push(m);
   return { trim, parts };
+}
+
+/**
+ * Split a compiled list into what the office still has to buy and what the
+ * field has already installed, so a table can total the first group and show
+ * the second struck through underneath instead of counting it twice.
+ */
+export function splitInstalled<T extends { installed: boolean }>(
+  lines: T[]
+): { needed: T[]; installed: T[] } {
+  return {
+    needed: lines.filter((m) => !m.installed),
+    installed: lines.filter((m) => m.installed),
+  };
+}
+
+/** Pieces across a set of lines — the number in a table's QTY header. */
+export function pcsOf(lines: { qty?: number }[]): number {
+  return lines.reduce((sum, m) => sum + (m.qty || 0), 0);
+}
+
+/**
+ * Collapse identical lines into one row, adding the quantities and combining
+ * the lengths — the same thing the material-list maker does to the install
+ * PDF's rows. Four work items that each need the same caulk are one line to
+ * buy, not four, and the office was reading the unmerged list by eye.
+ *
+ * Installed state is part of the key, so finished work never merges into what's
+ * still needed; the two groups stay separately countable.
+ */
+export function mergeMaterialLines(lines: SectionMaterialLine[]): SectionMaterialLine[] {
+  const byKey = new Map<string, SectionMaterialLine>();
+  const units = new Map<string, string[]>();
+  const order: string[] = [];
+  for (const m of lines) {
+    // Unit of measure and vendor join the maker's item/color/species key: "2
+    // Tubes" plus "2 PCS" is not 4 of anything, and two vendors are two orders.
+    const key = [
+      m.installed ? "done" : "need",
+      m.kind === "part" ? "part" : "trim",
+      m.profileId || "",
+      (m.item || "").trim().toLowerCase(),
+      (m.color || "").trim().toLowerCase(),
+      (m.species || "").trim().toLowerCase(),
+      (m.unit || "").trim().toLowerCase(),
+      (m.vendor || "").trim().toLowerCase(),
+      (m.size || "").trim().toLowerCase(),
+      (m.partNumber || "").trim().toLowerCase(),
+    ].join("|");
+    const seen = byKey.get(key);
+    if (!seen) {
+      byKey.set(key, { ...m, workNumbers: [...m.workNumbers] });
+      units.set(key, m.unitLabel ? [m.unitLabel] : []);
+      order.push(key);
+      continue;
+    }
+    seen.qty = (seen.qty || 0) + (m.qty || 0);
+    seen.lengths = mergeLengths(seen.lengths, m.lengths);
+    for (const n of m.workNumbers) if (!seen.workNumbers.includes(n)) seen.workNumbers.push(n);
+    const u = units.get(key)!;
+    if (m.unitLabel && !u.includes(m.unitLabel)) u.push(m.unitLabel);
+  }
+  return order.map((key) => {
+    const row = byKey.get(key)!;
+    const u = units.get(key)!;
+    row.workNumbers.sort((a, b) => a - b);
+    return { ...row, unitLabel: u.length ? u.join(", ") : null };
+  });
 }
 
 export interface WriteUpSection {
@@ -84,8 +166,12 @@ export interface WriteUpSection {
   notes: { unitLabel: string | null; text: string }[];
   newProducts: { unitLabel: string | null; product: WriteUpNewProduct }[];
   photos: WriteUpPhoto[];
+  /** Merged, still-needed lines first, then the installed ones. */
   materials: SectionMaterialLine[];
-  totalPcs: number;
+  /** Pieces the office still has to buy — installed work excluded. */
+  outstandingPcs: number;
+  /** Pieces on the lines whose work is already installed. */
+  installedPcs: number;
   rows: FieldWorkOrder[];
 }
 
@@ -179,14 +265,33 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
     const newProducts: { unitLabel: string | null; product: WriteUpNewProduct }[] = [];
     const photos: WriteUpPhoto[] = [];
     const materials: SectionMaterialLine[] = [];
+    // A material line points at the work item it was ordered for by that item's
+    // STORED seq. The display numbers are reassigned over the full canonical
+    // order above, so they can differ — map one to the other rather than
+    // assuming they match.
+    const workByStoredSeq = new Map<number, { workNumber: number; completed: boolean }>();
+    ordered.forEach((g, i) => {
+      if (g.seq != null) workByStoredSeq.set(g.seq, { workNumber: i + 1, completed: numbered[i].completed });
+    });
     for (const row of rows) {
       for (const c of row.specChanges || []) specChanges.push(c);
       if (row.notes && row.notes.trim()) notes.push({ unitLabel: row.unitLabel, text: row.notes });
       if (row.newProduct) newProducts.push({ unitLabel: row.unitLabel, product: row.newProduct });
       for (const p of row.photos || []) photos.push(p);
-      for (const m of row.materialItems || []) materials.push({ ...m, unitLabel: row.unitLabel });
+      for (const m of row.materialItems || []) {
+        const work = m.workSeq != null ? workByStoredSeq.get(m.workSeq) : undefined;
+        materials.push({
+          ...m,
+          unitLabel: row.unitLabel,
+          installed: !!work?.completed,
+          workNumbers: work ? [work.workNumber] : [],
+        });
+      }
     }
-    const totalPcs = materials.reduce((s, m) => s + (m.qty || 0), 0);
+    // Merge identical lines, then still-needed first so every reader gets the
+    // two groups in order without sorting again.
+    const mergedMaterials = mergeMaterialLines(materials);
+    const { needed: neededMaterials, installed: installedMaterials } = splitInstalled(mergedMaterials);
 
     const createdAt = rows.map((r) => r.createdAt).sort()[0] || "";
     const creator = rows.find((r) => r.createdAt === createdAt) || rows[0];
@@ -212,8 +317,9 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
       notes,
       newProducts,
       photos,
-      materials,
-      totalPcs,
+      materials: [...neededMaterials, ...installedMaterials],
+      outstandingPcs: pcsOf(neededMaterials),
+      installedPcs: pcsOf(installedMaterials),
       rows,
     });
   }

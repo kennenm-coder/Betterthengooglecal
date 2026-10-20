@@ -3,7 +3,7 @@
 // are dynamically imported so they only load when the user hits Download.
 
 import type { FieldWorkOrder } from "./types";
-import { groupWriteUpSections, padSeq, splitMaterialLines, type SectionMaterialLine } from "./writeup-sections";
+import { groupWriteUpSections, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine } from "./writeup-sections";
 
 export interface WriteUpExportInput {
   orderNumber: string;
@@ -127,16 +127,17 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
   doc.line(M, y, M + contentW, y);
   y += 16;
 
-  // Draws one material table (its own QTY total) for a write-up section.
+  // Draws one material table for a write-up section.
   // `kind` picks the columns: trim is ordered from a lumber vendor by the piece
   // in lengths, a part from Andersen by its part number — so the two orders need
   // different details on the page, and a shared set of columns left half of
   // every row reading "—".
-  function materialTable(
-    materials: SectionMaterialLine[],
-    totalPcs: number,
-    kind: "trim" | "part" = "trim"
-  ) {
+  // The QTY total counts only what's still to buy; lines whose work is already
+  // installed follow under their own band, struck through, so the office can
+  // still see what was bought without it being counted again.
+  function materialTable(lines: SectionMaterialLine[], kind: "trim" | "part" = "trim") {
+    const { needed, installed } = splitInstalled(lines);
+    const totalPcs = pcsOf(needed);
     ensure(30);
     const cols =
       kind === "part"
@@ -170,17 +171,25 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     y += 16;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
-    for (const m of materials) {
+    const row = (m: SectionMaterialLine, done: boolean) => {
       ensure(14);
+      const bought = done && m.workNumbers.length > 0 ? `  (${m.workNumbers.map(padSeq).join(", ")})` : "";
       const cells =
         kind === "part"
-          ? [`${m.qty} ${m.unit}`, m.unitLabel || "—", m.item || "—", m.color || "—", m.size || "—", m.partNumber || "—"]
-          : [`${m.qty} ${m.unit}`, m.unitLabel || "—", m.item || "—", m.color || "—", m.species || "—", m.lengths || "—", m.vendor || "—"];
+          ? [`${m.qty} ${m.unit}`, m.unitLabel || "—", `${m.item || "—"}${bought}`, m.color || "—", m.size || "—", m.partNumber || "—"]
+          : [`${m.qty} ${m.unit}`, m.unitLabel || "—", `${m.item || "—"}${bought}`, m.color || "—", m.species || "—", m.lengths || "—", m.vendor || "—"];
       x = M + 4;
       for (let i = 0; i < cols.length; i++) {
-        setColor(i === 0 ? BLACK : MUTED);
+        setColor(done ? MUTED : i === 0 ? BLACK : MUTED);
         const clipped = doc.splitTextToSize(String(cells[i]), cols[i].w - 4)[0] as string;
         doc.text(clipped, x, y + 9);
+        if (done) {
+          // Struck through, same as the completed work items above.
+          const w = doc.getTextWidth(clipped);
+          doc.setDrawColor(MUTED[0], MUTED[1], MUTED[2]);
+          doc.setLineWidth(0.5);
+          doc.line(x, y + 6, x + w, y + 6);
+        }
         x += cols[i].w;
       }
       y += 13;
@@ -188,6 +197,20 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
       doc.setLineWidth(0.5);
       doc.line(M, y, M + contentW, y);
       y += 2;
+    };
+    for (const m of needed) row(m, false);
+    if (installed.length > 0) {
+      ensure(18);
+      setFill([240, 240, 240]);
+      doc.rect(M, y, contentW, 13, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      setColor(MUTED);
+      doc.text("ALREADY INSTALLED - NO LONGER NEEDED", M + 4, y + 9);
+      y += 15;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      for (const m of installed) row(m, true);
     }
   }
 
@@ -323,16 +346,15 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
 
     // 4. Trim / material and parts — one table each, then 5. photos.
     const { trim: secTrim, parts: secParts } = splitMaterialLines(sec.materials);
-    const pcsOf = (rows: SectionMaterialLine[]) => rows.reduce((t, m) => t + (m.qty || 0), 0);
     if (secTrim.length > 0) {
       y += 4;
       line("TRIM / MATERIAL", M, { size: 8, bold: true, color: MUTED, gap: 12 });
-      materialTable(secTrim, pcsOf(secTrim), "trim");
+      materialTable(secTrim, "trim");
     }
     if (secParts.length > 0) {
       y += 4;
       line("PARTS", M, { size: 8, bold: true, color: MUTED, gap: 12 });
-      materialTable(secParts, pcsOf(secParts), "part");
+      materialTable(secParts, "part");
     }
     photoGrid(sec.photos);
     y += 12;

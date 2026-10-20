@@ -368,7 +368,7 @@ export default function WorkOrderDocPage() {
                   <thead>
                     <tr style={{ background: "#1a1a1a" }}>
                       <th className={thStyle} style={{ width: 55 }}>
-                        QTY: {sec.totalPcs}
+                        QTY: {sec.outstandingPcs}
                       </th>
                       <th className={thStyle} style={{ width: 55 }}>
                         Unit
@@ -385,21 +385,40 @@ export default function WorkOrderDocPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sec.materials.map((m, i) => (
-                      <tr key={i} className={i % 2 === 0 ? "bg-surface" : "bg-background"}>
-                        <td className={`${tdStyle} font-bold`}>
-                          {m.qty} {m.unit}
-                        </td>
-                        <td className={`${tdStyle} text-muted`}>{m.unitLabel || "—"}</td>
-                        <td className={`${tdStyle} font-semibold`}>{m.item || "—"}</td>
-                        <td className={`${tdStyle} text-muted`}>{m.color || "—"}</td>
-                        <td className={`${tdStyle} text-muted`}>{m.species || "—"}</td>
-                        <td className={`${tdStyle} text-muted font-mono text-[11px]`}>{m.lengths || "—"}</td>
-                        <td className={`${tdStyle} font-bold text-[11px]`} style={{ color: ACCENT_TEXT }}>
-                          {m.vendor || "—"}
-                        </td>
-                      </tr>
-                    ))}
+                    {sec.materials.flatMap((m, i) => {
+                      const strike = m.installed ? " line-through text-muted" : "";
+                      return [
+                        ...(m.installed && (i === 0 || !sec.materials[i - 1].installed)
+                          ? [
+                              <tr key="installed" className="bg-background">
+                                <td colSpan={7} className={`${tdStyle} text-[9px] font-bold uppercase tracking-wider text-muted`}>
+                                  ✓ Already installed — no longer needed
+                                </td>
+                              </tr>,
+                            ]
+                          : []),
+                        <tr key={i} className={i % 2 === 0 ? "bg-surface" : "bg-background"}>
+                          <td className={`${tdStyle} font-bold${strike}`}>
+                            {m.qty} {m.unit}
+                          </td>
+                          <td className={`${tdStyle} text-muted${strike}`}>{m.unitLabel || "—"}</td>
+                          <td className={`${tdStyle} font-semibold${strike}`}>
+                            {m.item || "—"}
+                            {m.installed && m.workNumbers.length > 0 && (
+                              <span className="ml-1.5 text-[10px] font-normal text-muted no-underline">
+                                ({m.workNumbers.map(padSeq).join(", ")})
+                              </span>
+                            )}
+                          </td>
+                          <td className={`${tdStyle} text-muted${strike}`}>{m.color || "—"}</td>
+                          <td className={`${tdStyle} text-muted${strike}`}>{m.species || "—"}</td>
+                          <td className={`${tdStyle} text-muted font-mono text-[11px]${strike}`}>{m.lengths || "—"}</td>
+                          <td className={`${tdStyle} font-bold text-[11px]${strike}`} style={{ color: ACCENT_TEXT }}>
+                            {m.vendor || "—"}
+                          </td>
+                        </tr>,
+                      ];
+                    })}
                   </tbody>
                 </table>
                 <div className="border-b-2" style={{ borderColor: ACCENT }} />
