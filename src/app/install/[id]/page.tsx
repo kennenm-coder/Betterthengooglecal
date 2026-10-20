@@ -6,7 +6,7 @@ import { MaterialJobData, MaterialUnit, FieldWorkOrder } from "@/lib/types";
 import { getSupabase } from "@/lib/supabase";
 import { buildNwoRows, buildBoardSummaryByUnit, fetchCatalogAndOffsets, fetchPOsForJob, NwoRow, BoardSummaryEntry, PurchaseOrder } from "@/lib/nwo-builder";
 import { fetchInstallDoc, dash } from "@/lib/install-doc";
-import { fetchWriteUpsForOrder, applySpecChangesToUnits } from "@/lib/work-order-store";
+import { fetchWriteUpsForOrder, applySpecChangesToUnits, unitAbbrevOf } from "@/lib/work-order-store";
 import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork, isInstaller } from "@/lib/roles";
 import WriteUpModal from "@/components/WriteUpModal";
@@ -30,24 +30,7 @@ function formatSize(u: MaterialUnit): string {
   return `${w}" x ${h}"`;
 }
 
-function getAbbrev(u: MaterialUnit): string {
-  if (u.abbrev) return u.abbrev;
-  if (u.summaryAbbrev) return u.summaryAbbrev;
-  const t = u.type || "";
-  return t
-    .replace(/Double Hung/i, "DH")
-    .replace(/Casement/i, "CAS")
-    .replace(/Patio Door/i, "PTD")
-    .replace(/Picture/i, "PIC")
-    .replace(/Sliding/i, "SLD")
-    .replace(/Bay/i, "BAY")
-    .replace(/Bow/i, "BOW")
-    .replace(/Awning/i, "AWN")
-    .replace(/Entry Door/i, "ED")
-    .replace(/Gliding/i, "GLD")
-    .replace(/Screen/i, "SN")
-    .replace(/Specialty/i, "SPW");
-}
+const getAbbrev = unitAbbrevOf;
 
 function getExterior(u: MaterialUnit): string {
   return u.exteriorColor || u.summaryExterior || u.extColor || "";

@@ -120,6 +120,29 @@ export function unitLabelOf(u: MaterialUnit): string {
   return String(u.label || u.location || u.description || "").trim();
 }
 
+/** The short product-type code on a unit ("DG", "PW", "PT"…): the material
+ *  job's own abbreviation when it has one, else one made from the type name.
+ *  Shared by the install doc and the write-up form so a unit reads the same
+ *  everywhere. */
+export function unitAbbrevOf(u: Partial<Pick<MaterialUnit, "abbrev" | "summaryAbbrev" | "type" | "unitType">>): string {
+  if (u.abbrev) return String(u.abbrev);
+  if (u.summaryAbbrev) return String(u.summaryAbbrev);
+  const t = String(u.type || u.unitType || "");
+  return t
+    .replace(/Double Hung/i, "DH")
+    .replace(/Casement/i, "CAS")
+    .replace(/Patio Door/i, "PTD")
+    .replace(/Picture/i, "PIC")
+    .replace(/Sliding/i, "SLD")
+    .replace(/Bay/i, "BAY")
+    .replace(/Bow/i, "BOW")
+    .replace(/Awning/i, "AWN")
+    .replace(/Entry Door/i, "ED")
+    .replace(/Gliding/i, "GLD")
+    .replace(/Screen/i, "SN")
+    .replace(/Specialty/i, "SPW");
+}
+
 // ─── Unit option catalog (data-driven from submitted jobs) ──────────────────
 // So field managers adding a product to an old job pick from the same product
 // types / colors / finishes that really appear in submitted material jobs.

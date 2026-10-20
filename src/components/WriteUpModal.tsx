@@ -33,6 +33,7 @@ import {
   lengthsToQty,
   SPEC_FIELDS,
   unitLabelOf,
+  unitAbbrevOf,
   submitWriteUpBatch,
   saveWriteUpBatchEdit,
   buildWriteUpEmailContent,
@@ -783,8 +784,22 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     if (u.isNewProduct || !u.unitLabel) return null;
     return unitOptions.find((o) => o.label === u.unitLabel)?.unit || null;
   }
+  // "101 · DG": the unit number plus its product-type code, so a unit reads
+  // the same here as on the install doc. The code comes from the job's unit
+  // when it's loaded, else from the product type the write-up carries.
+  const unitAbbrev = (u: WuUnit): string => {
+    const mu = unitObjFor(u);
+    return (mu ? unitAbbrevOf(mu) : unitAbbrevOf({ type: u.unitType })).trim();
+  };
+  const withAbbrev = (label: string, abbrev: string) => (abbrev ? `${label} · ${abbrev}` : label);
   const unitTitle = (u: WuUnit) =>
-    u.isNewProduct ? (u.unitLabel.trim() ? `Unit ${u.unitLabel.trim()}` : "New product") : u.unitLabel || "Whole job";
+    u.isNewProduct
+      ? u.unitLabel.trim()
+        ? withAbbrev(`Unit ${u.unitLabel.trim()}`, unitAbbrev(u))
+        : "New product"
+      : u.unitLabel
+        ? withAbbrev(u.unitLabel, unitAbbrev(u))
+        : "Whole job";
 
   // ── Work to complete (create): issues that reference affected units ──
   function makeIssue(): WuIssue {
@@ -1981,7 +1996,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                     <UnitChip
                       key={o.label}
                       active={wuUnits.some((u) => !u.isNewProduct && u.unitLabel === o.label)}
-                      label={o.label}
+                      label={withAbbrev(o.label, unitAbbrevOf(o.unit).trim())}
                       onClick={() => toggleUnit(o.label)}
                     />
                   ))}
