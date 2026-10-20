@@ -7,6 +7,7 @@ import type { User } from "@supabase/supabase-js";
 export type UserRole =
   | "admin"
   | "payroll-admin"
+  | "payroll-approver"
   | "field-manager"
   | "scheduling"
   | "scheduling_manager"

@@ -12,6 +12,7 @@ import FilterPanel, { Filters, EMPTY_FILTERS, applyFilters } from "@/components/
 import TimeOffBanner from "@/components/TimeOffBanner";
 import StaleTabTag from "@/components/StaleTabBanner";
 import { useStaleTab } from "@/hooks/useStaleTab";
+import TimeOffBell from "@/components/TimeOffBell";
 import { useAuth } from "@/hooks/useAuth";
 import {
   canManageTimeOff as canManageTimeOffRole,
@@ -206,6 +207,8 @@ function CalendarPage() {
               <span className="hidden sm:inline">Time Off</span>
             </button>
           )}
+
+          <TimeOffBell />
 
           <Link
             href="/settings"

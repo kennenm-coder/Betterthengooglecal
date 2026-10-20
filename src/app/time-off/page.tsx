@@ -101,6 +101,37 @@ function TimeOffRowBadges({ request }: { request: TimeOffRequest }) {
   );
 }
 
+/**
+ * Who decided this, and when.
+ *
+ * Only rows that went through an approval have one. A row typed straight into
+ * this screen was never approved by anybody, so it shows a dash rather than
+ * implying somebody signed off on it.
+ */
+function ApprovedBy({
+  request,
+  inline,
+}: {
+  request: TimeOffRequest;
+  inline?: boolean;
+}) {
+  const status = timeOffStatus(request);
+  const name = request.reviewed_by_name || request.reviewed_by;
+
+  if (!name) {
+    return <span className="text-muted">{inline ? "" : "—"}</span>;
+  }
+
+  return (
+    <span className={inline ? "text-muted" : "text-muted truncate"}>
+      <span className={status === "denied" ? "text-danger" : "text-rba-green"}>
+        {status === "denied" ? "Denied" : "Approved"}
+      </span>{" "}
+      by {name}
+    </span>
+  );
+}
+
 function TimeOffContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -454,7 +485,6 @@ function TimeOffContent() {
             {/* Kiosk requests waiting on a payroll decision */}
             <PendingTimeOffSection
               requests={pendingRequests}
-              reviewerName={user?.email || "payroll"}
               formatDateDisplay={formatDateDisplay}
               onDecided={(updated) =>
                 setRequests((prev) =>
@@ -693,18 +723,19 @@ function TimeOffContent() {
             )}
 
             {/* Desktop table header */}
-            <div className="hidden sm:grid grid-cols-[1fr_140px_150px_150px_40px] bg-surface border-b border-border text-xs font-semibold text-muted px-4 py-2 sticky top-0 z-10">
+            <div className="hidden sm:grid grid-cols-[1fr_120px_130px_130px_130px_40px] bg-surface border-b border-border text-xs font-semibold text-muted px-4 py-2 sticky top-0 z-10">
               <span>Employee</span>
               <span>Department</span>
               <span>Start</span>
               <span>End</span>
+              <span>Approved by</span>
               <span />
             </div>
 
             {/* Rows */}
             {filteredRequests.map((r) => (
               <div key={r.id} className="border-b border-border/50 hover:bg-surface/50">
-                <div className="hidden sm:grid grid-cols-[1fr_140px_150px_150px_40px] px-4 py-2.5 text-sm items-center">
+                <div className="hidden sm:grid grid-cols-[1fr_120px_130px_130px_130px_40px] px-4 py-2.5 text-sm items-center">
                   <span className="font-medium flex items-center gap-2 min-w-0">
                     <span className="truncate">{r.employee_name}</span>
                     <TimeOffRowBadges request={r} />
@@ -726,6 +757,7 @@ function TimeOffContent() {
                       </div>
                     )}
                   </div>
+                  <ApprovedBy request={r} />
                   <button
                     onClick={() => handleDelete(r.id)}
                     className="p-1 rounded-full hover:bg-danger/10 text-muted hover:text-danger transition-colors"
@@ -741,6 +773,7 @@ function TimeOffContent() {
                       <TimeOffRowBadges request={r} />
                     </div>
                     <div className="text-xs text-muted mt-0.5">{r.department}</div>
+                    <div className="text-xs mt-0.5"><ApprovedBy request={r} inline /></div>
                     <div className="flex items-center gap-1.5 mt-1 text-xs">
                       <Calendar className="w-3 h-3 text-muted" />
                       <span>{formatDateDisplay(r.start_date)}</span>

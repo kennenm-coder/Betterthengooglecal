@@ -120,9 +120,30 @@ export function canSeeWriteUps(roles: RoleInput): boolean {
   return hasAny(roles, ["admin", "field-manager", "scheduling", "scheduling_manager"]);
 }
 
-/** Who can open/manage the Time Off screen. */
+/**
+ * Who can APPROVE or deny a time-off request.
+ *
+ * Payroll approvers are managers given a say over time off and nothing else:
+ * the role grants no other calendar capability, so handing it out is cheap.
+ * Every approver sees every pending request -- there is no team or department
+ * scoping, by decision.
+ */
+export function canApproveTimeOff(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "payroll-admin", "payroll-approver"]);
+}
+
+/**
+ * Who can open the Time Off screen.
+ *
+ * Wider than approving: field managers add and remove time off without
+ * deciding kiosk requests, and approvers need to get to the screen to decide
+ * them.
+ */
 export function canManageTimeOff(roles: RoleInput): boolean {
-  return hasAny(roles, ["admin", "payroll-admin", "field-manager"]);
+  return (
+    hasAny(roles, ["admin", "payroll-admin", "field-manager"]) ||
+    canApproveTimeOff(roles)
+  );
 }
 
 /** Roles allowed to set/edit/clear the legacy install-instructions link. */
@@ -143,6 +164,9 @@ export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: "member", label: "Member" },
   { value: "field-manager", label: "Field Manager" },
   { value: "payroll-admin", label: "Payroll Admin" },
+  // Managers who approve time off and nothing else. No other calendar
+  // capability comes with it, so it is safe to hand out widely.
+  { value: "payroll-approver", label: "Payroll Approver (time off)" },
   { value: "scheduling", label: "Scheduling" },
   { value: "scheduling_manager", label: "Scheduling Manager" },
   { value: "admin", label: "Admin" },
@@ -176,6 +200,7 @@ export const ROLE_LABELS: Record<string, string> = Object.fromEntries(
 export const ROLE_STYLES: Record<string, string> = {
   admin: "bg-primary/15 text-primary",
   "payroll-admin": "bg-rba-green/15 text-rba-green",
+  "payroll-approver": "bg-lime-500/15 text-lime-700 dark:text-lime-400",
   "field-manager": "bg-amber-500/15 text-amber-600",
   scheduling: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
   scheduling_manager: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",

@@ -333,7 +333,11 @@ export interface TimeOffRequest {
   signed_pdf_path?: string | null;
   signed_at?: string | null;
   reviewed_by?: string | null;
+  /** Approver's display name, captured at decision time. Shown in the log. */
+  reviewed_by_name?: string | null;
   reviewed_at?: string | null;
+  /** When the employee was emailed the outcome. Null = not told yet. */
+  decision_notified_at?: string | null;
   review_note?: string | null;
 }
 

@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import type { TimeOffRequest } from "@/lib/types";
-import { formatTimeDisplay, updateTimeOffStatus } from "@/lib/time-off-store";
+import { formatTimeDisplay } from "@/lib/time-off-store";
 
 /**
  * The approval queue: time-off requests signed at the office kiosk, waiting on
@@ -23,34 +23,45 @@ import { formatTimeDisplay, updateTimeOffStatus } from "@/lib/time-off-store";
  */
 export default function PendingTimeOffSection({
   requests,
-  reviewerName,
   onDecided,
   formatDateDisplay,
 }: {
   /** Pending requests only — the parent filters. */
   requests: TimeOffRequest[];
-  /** Who is approving, recorded on the row. */
-  reviewerName: string;
   onDecided: (updated: TimeOffRequest) => void;
   formatDateDisplay: (dateStr: string) => string;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [denyingId, setDenyingId] = useState<string | null>(null);
+  const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   if (requests.length === 0) return null;
 
+  /**
+   * Decisions go through the API route rather than a direct update: it
+   * records the approver's display name, refuses a second decision on the
+   * same request, and tells the kiosk to email the employee.
+   */
   async function decide(r: TimeOffRequest, status: "approved" | "denied") {
     setBusyId(r.id);
     setError(null);
-    const updated = await updateTimeOffStatus(r.id, status, reviewerName);
-    if (updated) {
-      onDecided(updated);
-    } else {
-      setError(
-        "That request could not be updated. Someone may have just decided it — reload to see where it stands."
-      );
+    try {
+      const res = await fetch(`/api/time-off/${r.id}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, note: status === "denied" ? note : "" }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Could not save the decision");
+      onDecided(json.request as TimeOffRequest);
+      setDenyingId(null);
+      setNote("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
     }
-    setBusyId(null);
   }
 
   return (
@@ -143,7 +154,7 @@ export default function PendingTimeOffSection({
                     </a>
                   )}
                   <button
-                    onClick={() => decide(r, "denied")}
+                    onClick={() => { setDenyingId(r.id); setNote(""); }}
                     disabled={busy}
                     className="flex items-center gap-1 rounded-lg border border-danger/40 bg-background px-2.5 py-2 text-xs font-medium text-danger disabled:opacity-50 active:scale-[0.97]"
                   >
@@ -163,6 +174,36 @@ export default function PendingTimeOffSection({
                   </button>
                 </div>
               </div>
+
+              {denyingId === r.id && (
+                <div className="mt-2.5">
+                  <label className="block text-xs font-medium text-muted mb-1">
+                    Why is this denied? The employee is emailed this.
+                  </label>
+                  <textarea
+                    value={note}
+                    onChange={(e) => setNote(e.target.value.slice(0, 1000))}
+                    rows={2}
+                    autoFocus
+                    className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  />
+                  <div className="mt-1.5 flex justify-end gap-1.5">
+                    <button
+                      onClick={() => { setDenyingId(null); setNote(""); }}
+                      className="rounded-lg px-3 py-1.5 text-xs text-muted"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => decide(r, "denied")}
+                      disabled={busy || note.trim().length < 3}
+                      className="rounded-lg bg-danger px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      {busy ? "Sending…" : "Deny and tell them"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </li>
           );
         })}
