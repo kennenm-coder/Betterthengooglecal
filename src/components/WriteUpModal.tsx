@@ -76,6 +76,7 @@ import {
   Wrench,
   Pencil,
   Trash2,
+  CopyPlus,
   Package,
   Camera,
   ImagePlus,
@@ -816,6 +817,40 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       const it = prev.find((x) => x.id === id);
       if (it) for (const p of it.photos) deleteDraftPhoto(p.id);
       return prev.filter((x) => x.id !== id);
+    });
+  }
+  // Copy a whole work item — what needs done, the detail line, its trim, parts,
+  // ordering notes and photos — and drop the copy in right under the original.
+  // Three units needing the same thing is three work items, and this is how the
+  // second and third get written without typing it all again.
+  //
+  // The units are deliberately NOT copied: duplicating is how the same work
+  // reaches ANOTHER unit, so the copy starts unassigned and waits to be pointed
+  // at one. Leaving the original's units ticked would quietly submit the same
+  // work twice against the same unit if whoever's writing it up forgot to
+  // untick. The parts' own unit ticks are cleared for the same reason — they
+  // point at units this copy no longer claims.
+  function duplicateIssue(id: string) {
+    setIssues((prev) => {
+      const i = prev.findIndex((x) => x.id === id);
+      if (i < 0) return prev;
+      const src = prev[i];
+      // Draft photos are stored by id, so the copy needs ids of its own —
+      // sharing them would make deleting one photo delete the other's too.
+      const photos = src.photos.map((ph) => {
+        const copy: LocalPhoto = { ...ph, id: crypto.randomUUID() };
+        if (ph.blob) putDraftPhoto(copy.id, ph.blob);
+        return copy;
+      });
+      const copy: WuIssue = {
+        ...src,
+        id: crypto.randomUUID(),
+        unitKeys: [],
+        materials: src.materials.map((m) => ({ ...m })),
+        parts: src.parts.map((pt) => ({ ...pt, key: crypto.randomUUID(), unitKeys: [] })),
+        photos,
+      };
+      return [...prev.slice(0, i + 1), copy, ...prev.slice(i + 1)];
     });
   }
   function toggleIssueUnit(issueId: string, unitKey: string) {
@@ -2086,6 +2121,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                       vendorOptions={vendorOptions}
                       onUpdate={(patch) => updateIssue(it.id, patch)}
                       onRemove={() => removeIssue(it.id)}
+                      onDuplicate={() => duplicateIssue(it.id)}
                       onToggleUnit={(unitKey) => toggleIssueUnit(it.id, unitKey)}
                       onOpenCamera={() => openCamera({ kind: "issue", issueId: it.id })}
                       onUpload={(files) => addPhotosTo({ kind: "issue", issueId: it.id }, files)}
@@ -2768,6 +2804,7 @@ function IssueCard({
   vendorOptions,
   onUpdate,
   onRemove,
+  onDuplicate,
   onToggleUnit,
   onOpenCamera,
   onUpload,
@@ -2789,6 +2826,7 @@ function IssueCard({
   vendorOptions: string[];
   onUpdate: (patch: Partial<WuIssue>) => void;
   onRemove: () => void;
+  onDuplicate: () => void;
   onToggleUnit: (unitKey: string) => void;
   onOpenCamera: () => void;
   onUpload: (files: File[]) => void;
@@ -2802,11 +2840,21 @@ function IssueCard({
         <span className="text-sm font-bold flex items-center gap-1.5">
           <Wrench className="w-4 h-4 text-amber-600" /> Item {index + 1}
         </span>
-        {canRemove && (
-          <button onClick={onRemove} className="p-1.5 rounded-lg text-muted hover:text-danger">
-            <Trash2 className="w-4 h-4" />
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onDuplicate}
+            title="Duplicate this item for another unit"
+            className="px-2 py-1.5 rounded-lg text-muted hover:text-amber-600 flex items-center gap-1 text-xs font-medium"
+          >
+            <CopyPlus className="w-4 h-4" />
+            Duplicate
           </button>
-        )}
+          {canRemove && (
+            <button onClick={onRemove} className="p-1.5 rounded-lg text-muted hover:text-danger">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div>
