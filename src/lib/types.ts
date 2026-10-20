@@ -213,6 +213,11 @@ export interface WriteUpMaterialItem {
   size?: string;
   /** Trim only: the catalog item's category, needed by the trim order line. */
   category?: string;
+  /** The `seq` of the work item this line was ordered for, so the compiled
+   *  total can stop counting it once that work is installed. Absent on
+   *  write-ups saved before materials were linked, and on lines added in the
+   *  flat edit form — those are always counted as still needed. */
+  workSeq?: number;
 }
 
 /** A photo attached to a unit's write-up, stored in the writeup-photos bucket. */
@@ -221,6 +226,10 @@ export interface WriteUpPhoto {
   path: string;
   /** Human label, e.g. "Unit 101 photo 1 of 4". */
   name: string;
+  /** The `seq` of the work item this photo was taken under, so reopening the
+   *  write-up puts it back on that item. Absent on photos saved before this
+   *  was recorded — those are attached by best guess. */
+  workSeq?: number;
 }
 
 /** A product the field manually added because it was never programmed into the

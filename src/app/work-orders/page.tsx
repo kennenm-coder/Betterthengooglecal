@@ -21,6 +21,7 @@ import {
   WRITEUP_EMAIL_TO,
   type WriteUpEntryInput,
 } from "@/lib/work-order-store";
+import { fetchMaterialJobs } from "@/lib/store";
 import { getWriteUpEmails } from "@/lib/action-settings";
 import { dedupeRecipients } from "@/lib/email-recipients";
 import { groupWriteUpSections, padSeq, splitMaterialLines, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
@@ -125,7 +126,25 @@ export default function WorkOrdersPage() {
   const [showPicker, setShowPicker] = useState(false);
   const [pending, setPending] = useState<{ target: WriteUpTarget; units: MaterialUnit[] } | null>(null);
   // Editing a whole submission (all its unit rows) through the guided flow.
-  const [editing, setEditing] = useState<FieldWorkOrder[] | null>(null);
+  // The job's programmed units load in the background so the editor can show
+  // the unit chips, read a unit's current spec, and know each unit's product
+  // type — the write-up rows alone carry none of that.
+  const [editing, setEditing] = useState<{ rows: FieldWorkOrder[]; units: MaterialUnit[] } | null>(null);
+  function startEdit(rows: FieldWorkOrder[]) {
+    setEditing({ rows, units: [] });
+    const orderNumber = rows[0]?.orderNumber;
+    if (!orderNumber) return;
+    fetchMaterialJobs()
+      .then((jobs) => {
+        const mat = jobs.get(orderNumber);
+        const units: MaterialUnit[] = Array.isArray(mat?.units) ? mat.units : [];
+        if (!units.length) return;
+        setEditing((prev) => (prev && prev.rows === rows ? { rows, units } : prev));
+      })
+      .catch(() => {
+        /* no job on file — the editor works from the write-up rows alone */
+      });
+  }
 
   // Desktop-only resend: field managers reviewing on a computer can re-fire the
   // submission email if it didn't go through the first time. Mobile is hidden to
@@ -689,7 +708,7 @@ export default function WorkOrdersPage() {
                           canReview={canReview}
                           canComplete={canEdit}
                           canEdit={canEdit}
-                          onEdit={() => setEditing(sec.rows)}
+                          onEdit={() => startEdit(sec.rows)}
                           onReviewItems={(itemsToReview, reviewed) => setItemsReviewed(sec, itemsToReview, reviewed)}
                           onToggleCompleted={(itemsToToggle, completed) => setItemsCompleted(sec, itemsToToggle, completed)}
                           onStatus={(status) => setSectionStatus(sec, status)}
@@ -732,17 +751,17 @@ export default function WorkOrdersPage() {
         />
       )}
 
-      {editing && editing.length > 0 && (
+      {editing && editing.rows.length > 0 && (
         <WriteUpModal
           order={{
-            orderNumber: editing[0].orderNumber,
-            workOrderNumber: editing[0].workOrderNumber,
-            customerName: editing[0].customerName,
-            address: editing[0].address,
+            orderNumber: editing.rows[0].orderNumber,
+            workOrderNumber: editing.rows[0].workOrderNumber,
+            customerName: editing.rows[0].customerName,
+            address: editing.rows[0].address,
             materialJob: null,
           }}
-          units={[]}
-          editBatch={editing}
+          units={editing.units}
+          editBatch={editing.rows}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);

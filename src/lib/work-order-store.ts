@@ -1209,6 +1209,8 @@ export interface EntryPhoto {
   /** Existing photo to keep as-is when editing (already in storage). */
   path?: string;
   name: string;
+  /** Work item number the photo belongs to (WriteUpPhoto.workSeq). */
+  workSeq?: number;
 }
 
 /** One unit's worth of work inside a multi-unit write-up session. */
@@ -1234,14 +1236,17 @@ export interface WriteUpEntryInput {
 async function resolveEntryPhotos(orderNumber: string, unitLabel: string | null, photos: EntryPhoto[]): Promise<WriteUpPhoto[]> {
   const out: WriteUpPhoto[] = [];
   for (const p of photos) {
+    // Kept and new alike carry the work item they belong to, so a reopen can
+    // put them back under it instead of guessing.
+    const seq = p.workSeq != null ? { workSeq: p.workSeq } : {};
     if (p.path) {
-      out.push({ path: p.path, name: p.name });
+      out.push({ path: p.path, name: p.name, ...seq });
       continue;
     }
     if (!p.blob) continue;
     const blob = await compressImage(p.blob);
     const path = await uploadWriteUpPhoto(orderNumber, unitLabel, blob, out.length + 1);
-    if (path) out.push({ path, name: p.name || `${unitLabel || "Whole job"} photo ${out.length + 1}` });
+    if (path) out.push({ path, name: p.name || `${unitLabel || "Whole job"} photo ${out.length + 1}`, ...seq });
   }
   return out;
 }

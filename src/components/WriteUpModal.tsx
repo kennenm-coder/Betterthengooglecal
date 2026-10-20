@@ -586,14 +586,19 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     }
     const issueAggs = [...iMap.values()].sort((a, b) => a.order - b.order);
 
-    // Best guess: attach each row's materials + photos to an issue that affects
-    // that unit (materials/photos are stored per-unit, not per-issue). Photos
-    // attach NOW as path-only placeholders so a save before phase 2 finishes
-    // keeps them (previously they were dropped and the row lost its photos);
-    // their preview blobs download in phase 2.
+    // Materials + photos are stored per UNIT row, not per issue. Each one that
+    // was saved with the number of the work item it was entered under goes
+    // straight back to that item. One saved before the number was recorded
+    // falls back to a best guess: an issue that affects its unit, else the
+    // first whole-job issue, else issue 1. Photos attach NOW as path-only
+    // placeholders so a save before phase 2 finishes keeps them; their preview
+    // blobs download in phase 2.
     const matByIssue = new Map<string, WriteUpMaterialItem[]>();
     const photoPathsByIssue = new Map<string, WriteUpPhoto[]>();
-    const targetFor = (unitKey: string | null): IAgg | undefined => {
+    const bySeq = new Map<number, IAgg>();
+    for (const [gk, g] of iMap) if (gk.startsWith("s:")) bySeq.set(Number(gk.slice(2)), g);
+    const targetFor = (seq: number | undefined, unitKey: string | null): IAgg | undefined => {
+      if (seq != null && bySeq.has(seq)) return bySeq.get(seq);
       if (unitKey) {
         const m = issueAggs.find((g) => g.unitKeys.has(unitKey));
         if (m) return m;
@@ -602,10 +607,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     };
     for (const r of editBatch) {
       const unitKey = r.unitLabel ? labelToKey.get(r.unitLabel.trim()) || null : null;
-      const target = targetFor(unitKey);
-      if (!target) continue;
-      if (r.materialItems.length) matByIssue.set(target.key, [...(matByIssue.get(target.key) || []), ...r.materialItems]);
-      if (r.photos.length) photoPathsByIssue.set(target.key, [...(photoPathsByIssue.get(target.key) || []), ...r.photos]);
+      for (const m of r.materialItems) {
+        const target = targetFor(m.workSeq, unitKey);
+        if (target) matByIssue.set(target.key, [...(matByIssue.get(target.key) || []), m]);
+      }
+      for (const p of r.photos) {
+        const target = targetFor(p.workSeq, unitKey);
+        if (target) photoPathsByIssue.set(target.key, [...(photoPathsByIssue.get(target.key) || []), p]);
+      }
     }
 
     const hydIssues: WuIssue[] = issueAggs.map((g) => ({
@@ -665,6 +674,26 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     }
     return opts;
   }, [units]);
+
+  // A programmed unit's product type isn't stored on its write-up row (only a
+  // manually-added unit saves one), so a reopened write-up has it blank until
+  // the job's units arrive — the Write-Ups page loads those in the background.
+  // Fill it in from the job so the parts picker matches on family again.
+  useEffect(() => {
+    if (!isBatchEdit || unitOptions.length === 0) return;
+    setWuUnits((prev) => {
+      let changed = false;
+      const next = prev.map((u) => {
+        if (u.isNewProduct || u.unitType.trim()) return u;
+        const mu = unitOptions.find((o) => o.label === u.unitLabel)?.unit;
+        const t = mu ? String(mu.unitType || mu.type || mu.summarySubType || "") : "";
+        if (!t) return u;
+        changed = true;
+        return { ...u, unitType: t };
+      });
+      return changed ? next : prev;
+    });
+  }, [isBatchEdit, unitOptions]);
 
   // Every vendor seen anywhere in the material catalog (not just the picked
   // profile's) so the trim adder's vendor list includes shop / warehouse / etc.
@@ -930,7 +959,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       tasks: WriteUpLineItem[];
       specs: SpecChange[];
       materials: WriteUpMaterialItem[];
-      photos: LocalPhoto[];
+      /** Each photo stamped with the number of the work item it was taken under. */
+      photos: (LocalPhoto & { workSeq: number })[];
       notes: string;
       responsibility: string;
       defectCode: string;
@@ -981,9 +1011,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             ? "NEEDS ORDERED"
             : "",
       ].filter(Boolean);
-      const task: WriteUpLineItem = { kind: "custom", label: it.label.trim(), notes: noteBits.join(" · ") || undefined, seq: issueIdx + 1 };
+      const seq = issueIdx + 1;
+      const task: WriteUpLineItem = { kind: "custom", label: it.label.trim(), notes: noteBits.join(" · ") || undefined, seq };
       const keys = it.unitKeys.filter((k) => byKey.has(k));
       const targets = keys.length === 0 ? [whole()] : keys.map((k) => byKey.get(k)!);
+      // Trim, parts and photos are stored per UNIT row, so each one is stamped
+      // with this item's number (workSeq) — that stamp is what lets a reopened
+      // write-up show them under the item they were entered on, and what lets
+      // the office's material total drop them once the item is installed.
       const partToMaterial = (p: PartItem): WriteUpMaterialItem => ({
         item: p.productType ? `${p.name.trim()} (${p.productType})` : p.name.trim(),
         color: p.color || "",
@@ -996,6 +1031,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         kind: "part",
         partNumber: p.partNumber || undefined,
         size: p.size || undefined,
+        workSeq: seq,
       });
       // Parts checked for specific units go on each of those units' rows; the
       // rest (no units checked = all affected) go on the item's first target.
@@ -1011,8 +1047,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         a.tasks.push(task);
         // Attach this item's materials + photos to just its first target (no dupes).
         if (idx === 0) {
-          a.materials.push(...generalPartMaterials, ...it.materials);
-          a.photos.push(...it.photos);
+          a.materials.push(...generalPartMaterials, ...it.materials.map((m) => ({ ...m, workSeq: seq })));
+          a.photos.push(...it.photos.map((p) => ({ ...p, workSeq: seq })));
         }
       });
     });
@@ -1031,9 +1067,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     }
     // The crew note rides on the whole-job row, stored as a one-line list.
     if (crewNote.trim()) whole().suggestedCrews = textToCrews(crewNote);
-    return [...byKey.values()]
+    // Every unit tapped up top gets a row even when nothing points at it yet.
+    // Otherwise a unit no work item ticked (they all default to "Whole job")
+    // was never saved, and reopening the write-up showed no units at all.
+    const unitRowKeys = new Set(validUnits.map((u) => u.key));
+    return [...byKey.entries()]
       .filter(
-        (a) =>
+        ([key, a]) =>
+          unitRowKeys.has(key) ||
           a.tasks.length ||
           a.specs.length ||
           a.materials.length ||
@@ -1042,7 +1083,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
           a.responsibility ||
           a.suggestedCrews.length
       )
-      .map((a) => ({
+      .map(([, a]) => ({
         unitLabel: a.unitLabel,
         lineItems: a.tasks,
         specChanges: a.specs,
@@ -1052,7 +1093,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         responsibility: a.responsibility,
         defectCode: a.defectCode,
         suggestedCrews: a.suggestedCrews,
-        photos: a.photos.map((p) => ({ blob: p.path ? undefined : p.blob, path: p.path, name: p.name })),
+        photos: a.photos.map((p) => ({ blob: p.path ? undefined : p.blob, path: p.path, name: p.name, workSeq: p.workSeq })),
       }));
   }
 
@@ -2586,8 +2627,10 @@ function MaterialRowEditor({
   const [lengths, setLengths] = useState(initial.lengths || "");
   const [vendor, setVendor] = useState(initial.vendor || "");
 
-  // Same derived vendor as the adder, so a row saved before the auto-fill
-  // existed (or one whose vendor was cleared) still gets the catalog's answer.
+  // Same auto-fill as the adder: the catalog writes the vendor into the box
+  // once per profile / colour / species, and after that the box is the editor's
+  // own. A row saved before the auto-fill existed still gets the catalog's
+  // answer the first time it's opened.
   const autoVendor = useMemo(
     () =>
       autoVendorFor(
@@ -2596,7 +2639,27 @@ function MaterialRowEditor({
       ),
     [item, initial.profileId, species, color, materialCatalog]
   );
-  const vendorShown = vendor || autoVendor;
+  const vendorKey = `${initial.profileId || item.trim()}|${species.trim()}|${color.trim()}`;
+  // A row that already carries a vendor counts as filled for its own
+  // combination, so opening it never rewrites that vendor — and clearing it
+  // doesn't bring it back.
+  const filledKey = useRef<string | null>(
+    (initial.vendor || "").trim()
+      ? `${initial.profileId || (initial.item || "").trim()}|${(initial.species || "").trim()}|${(initial.color || "").trim()}`
+      : null
+  );
+  const [vendorWasAuto, setVendorWasAuto] = useState(false);
+  useEffect(() => {
+    if (!autoVendor || filledKey.current === vendorKey) return;
+    filledKey.current = vendorKey;
+    setVendor(autoVendor);
+    setVendorWasAuto(true);
+  }, [autoVendor, vendorKey]);
+  function editVendor(v: string) {
+    setVendor(v);
+    setVendorWasAuto(false);
+    filledKey.current = vendorKey;
+  }
 
   // Same rule as the adder: quantity is derived from the lengths field so it's
   // never double-entered. Fall back to the saved qty for older items that were
@@ -2615,7 +2678,7 @@ function MaterialRowEditor({
       qty: effectiveQty,
       unit: unit.trim() || "PCS",
       lengths: lengths.trim(),
-      vendor: vendor.trim() || autoVendor,
+      vendor: vendor.trim(),
     });
   }
 
@@ -2647,9 +2710,11 @@ function MaterialRowEditor({
       </p>
       <ComboInput label="Color" value={color} onChange={setColor} options={colorOptions} placeholder="Start typing a color or stain…" />
       <ComboInput label="Species" value={species} onChange={setSpecies} options={speciesOptions} placeholder="Start typing a species…" />
-      <ComboInput label="Vendor" value={vendorShown} onChange={setVendor} options={vendorOptions} placeholder="Start typing a vendor…" />
-      {!vendor && autoVendor && (
-        <p className="text-[11px] text-muted -mt-1">Filled in from the catalog — change it if it&apos;s wrong.</p>
+      <ComboInput label="Vendor" value={vendor} onChange={editVendor} options={vendorOptions} placeholder="Start typing a vendor…" />
+      {vendorWasAuto && vendor && (
+        <p className="text-[11px] text-muted -mt-1">
+          Filled in from the catalog — clear it and type your own (RBA SHOP for work we keep in house) if it&apos;s wrong.
+        </p>
       )}
       <div className="flex gap-2">
         <button
@@ -3659,12 +3724,6 @@ function MaterialAdder({
   );
 
   // The vendor the catalog says supplies this profile in this colour + species.
-  // Derived rather than written into the field, which is how the material-list
-  // maker does it (JobEditor's `am.vendor || autoVendor`): a typed vendor always
-  // wins and is never overwritten, and until someone types one this stays in
-  // step with the colour and species as they're filled in. The value it lands on
-  // is baked into the row when it's added, so the saved write-up carries a real
-  // vendor even if the catalog changes later.
   const autoVendor = useMemo(
     () =>
       autoVendorFor(
@@ -3678,7 +3737,27 @@ function MaterialAdder({
       ),
     [picked, search, species, color, materialCatalog]
   );
-  const vendorShown = vendor || autoVendor;
+
+  // The catalog gets ONE say per profile / colour / species: the moment it can
+  // name a vendor it writes it into the box, and from then on the box belongs to
+  // whoever's doing the write-up — they can clear it and type their own (RBA
+  // SHOP when we're keeping the order in house) and nothing puts the catalog's
+  // answer back. Change the profile, the colour or the species and the catalog
+  // fills it in once more, because the vendor really does depend on all three.
+  const vendorKey = `${picked?.id || search.trim()}|${species.trim()}|${color.trim()}`;
+  const filledKey = useRef<string | null>(null);
+  const [vendorWasAuto, setVendorWasAuto] = useState(false);
+  useEffect(() => {
+    if (!autoVendor || filledKey.current === vendorKey) return;
+    filledKey.current = vendorKey;
+    setVendor(autoVendor);
+    setVendorWasAuto(true);
+  }, [autoVendor, vendorKey]);
+  function editVendor(v: string) {
+    setVendor(v);
+    setVendorWasAuto(false);
+    filledKey.current = vendorKey;
+  }
 
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -3693,9 +3772,8 @@ function MaterialAdder({
     setCustom(false);
     setSearch(c.profile);
     setUnit(c.unit || "PCS");
-    // Deliberately NOT setting the vendor here. The catalog decides it from
-    // colour + species, and writing one in now would look like a typed choice
-    // and stop the auto-fill ever correcting it.
+    // Deliberately NOT setting the vendor here. The catalog fills it in from
+    // profile + colour + species once those are known.
     if (c.species.length === 1) setSpecies(c.species[0]);
   }
   function chooseCustom() {
@@ -3711,6 +3789,8 @@ function MaterialAdder({
     setSpecies("");
     setLengths("");
     setVendor("");
+    filledKey.current = null;
+    setVendorWasAuto(false);
   }
   // Build the item from the current fields, or null if it isn't complete enough
   // to add (no name, or no count). Shared by the Add button and the flush.
@@ -3725,8 +3805,7 @@ function MaterialAdder({
       qty: Math.max(1, computedQty),
       unit: unit.trim() || "PCS",
       lengths: lengths.trim(),
-      // A typed vendor wins; otherwise the catalog's answer is baked in here.
-      vendor: vendor.trim() || autoVendor,
+      vendor: vendor.trim(),
       custom: custom || !picked,
       kind: "trim",
       category: picked?.category || undefined,
@@ -3822,17 +3901,18 @@ function MaterialAdder({
               (shop / warehouse / etc.). Custom typing still allowed. */}
           <ComboInput
             label="Vendor"
-            value={vendorShown}
-            onChange={setVendor}
+            value={vendor}
+            onChange={editVendor}
             options={vendorList}
             placeholder="Start typing a vendor…"
           />
-          {!vendor && autoVendor && (
+          {vendorWasAuto && vendor && (
             <p className="text-[11px] text-muted -mt-1">
-              Filled in from the catalog — change it if it&apos;s wrong.
+              Filled in from the catalog — clear it and type your own (RBA SHOP
+              for work we keep in house) if it&apos;s wrong.
             </p>
           )}
-          {!vendorShown && (
+          {!vendor && (
             <p className="text-[11px] text-muted -mt-1">
               Fill in colour and species and the catalog fills the vendor in.
             </p>
