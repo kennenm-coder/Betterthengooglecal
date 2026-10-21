@@ -3,7 +3,7 @@
 // are dynamically imported so they only load when the user hits Download.
 
 import type { FieldWorkOrder } from "./types";
-import { groupWriteUpSections, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine } from "./writeup-sections";
+import { groupWriteUpSections, openUnitsOf, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine } from "./writeup-sections";
 
 export interface WriteUpExportInput {
   orderNumber: string;
@@ -331,9 +331,12 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     if (sec.outstanding.length > 0 || sec.completed.length > 0) {
       line("WORK TO COMPLETE", M, { size: 8, bold: true, color: MUTED, gap: 12 });
       for (const it of sec.outstanding) {
-        const units = it.units.length ? `  —  ${it.units.join(", ")}` : "";
+        // The units still open, not every unit the item ever touched.
+        const left = openUnitsOf(it);
+        const units = left.units.length ? `  —  ${left.units.join(", ")}` : "";
+        const done = left.done > 0 ? `  (${left.done} of ${left.total} units done)` : "";
         const note = it.notes ? ` (${it.notes})` : "";
-        wrapped(`${padSeq(it.seq)}   ${it.label}${units}${note}`, M + 4, contentW - 4, { size: 10 });
+        wrapped(`${padSeq(it.seq)}   ${it.label}${units}${done}${note}`, M + 4, contentW - 4, { size: 10 });
       }
       if (sec.completed.length > 0) {
         line("COMPLETED", M, { size: 8, bold: true, color: GREEN, gap: 12 });

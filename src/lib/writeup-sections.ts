@@ -3,9 +3,10 @@
 // blocks — each with its own work-to-complete list and its own material total.
 //
 // The material total is what the office buys from, so it merges identical lines
-// and counts only the work that isn't installed yet. Each work item owns its own
-// material list on the create screen; those lines carry the item's seq, which is
-// what lets the total drop them once the item is checked off.
+// and counts only the work that isn't installed yet. Each work item owns a
+// material list PER AFFECTED UNIT on the create screen, stored on that unit's
+// own row; every line carries the item's seq, which is what lets the total drop
+// it once that unit's copy of the item is checked off.
 //
 // Grouping key: batch_id when present (migration 013), else the created time to
 // the minute (legacy rows share a near-identical timestamp per submission).
@@ -26,6 +27,16 @@ import {
   WriteUpStatus,
 } from "./types";
 
+/** One unit's standing on a work item that fans out to several. The field
+ *  ticks these off a unit at a time — one window can be done while the next
+ *  two are still open — so each carries its own completion and the line items
+ *  behind it. */
+export interface WorkItemUnitState {
+  unitLabel: string;
+  completed: boolean;
+  sources: { rowId: string; index: number }[];
+}
+
 export interface NumberedWorkItem {
   /** 1-based number within the section, stable across completion. */
   seq: number;
@@ -33,6 +44,9 @@ export interface NumberedWorkItem {
   notes?: string;
   /** Units this item affects ("Whole job" for a whole-job item). */
   units: string[];
+  /** Per-unit completion, in the same order as `units`. One entry for a
+   *  single-unit or whole-job item. */
+  unitStates: WorkItemUnitState[];
   /** True only when the item is installed (done) on every unit it affects. */
   completed: boolean;
   /** True only when the item is reviewed on every unit it affects. */
@@ -207,6 +221,8 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
       label: string;
       notes?: string;
       units: Set<string>;
+      /** Per-unit tally, keyed by unit label, in the order the units appear. */
+      byUnit: Map<string, { total: number; done: number; sources: { rowId: string; index: number }[] }>;
       total: number;
       done: number;
       reviewed: number;
@@ -223,10 +239,18 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
         const gkey = li.seq != null ? `s:${li.seq}` : `l:${li.label.trim().toLowerCase()}`;
         let g = groups.get(gkey);
         if (!g) {
-          g = { seq: li.seq, label: li.label, notes: li.notes, units: new Set(), total: 0, done: 0, reviewed: 0, sources: [], order: appearance++ };
+          g = { seq: li.seq, label: li.label, notes: li.notes, units: new Set(), byUnit: new Map(), total: 0, done: 0, reviewed: 0, sources: [], order: appearance++ };
           groups.set(gkey, g);
         }
         g.units.add(unit);
+        let bu = g.byUnit.get(unit);
+        if (!bu) {
+          bu = { total: 0, done: 0, sources: [] };
+          g.byUnit.set(unit, bu);
+        }
+        bu.total += 1;
+        if (li.completed) bu.done += 1;
+        bu.sources.push({ rowId: row.id, index });
         g.total += 1;
         if (li.completed) g.done += 1;
         if (li.reviewed) {
@@ -252,6 +276,11 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
       label: g.label,
       notes: g.notes,
       units: [...g.units],
+      unitStates: [...g.byUnit.entries()].map(([unitLabel, u]) => ({
+        unitLabel,
+        completed: u.total > 0 && u.done === u.total,
+        sources: u.sources,
+      })),
       completed: g.total > 0 && g.done === g.total,
       reviewed: g.total > 0 && g.reviewed === g.total,
       reviewedByName: g.reviewedByName,
@@ -273,17 +302,48 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
     ordered.forEach((g, i) => {
       if (g.seq != null) workByStoredSeq.set(g.seq, { workNumber: i + 1, completed: numbered[i].completed });
     });
+    // Which work items keep their material per unit. A write-up written since
+    // materials went per unit spreads an item's lines across the rows of the
+    // units they're for; one written before it put every line on the FIRST
+    // affected unit's row, where the row says nothing about who the material
+    // was for. So per-unit completion decides a line's fate only where the
+    // lines are actually spread out — an older write-up still waits for the
+    // item to be done everywhere, exactly as it did when it was written.
+    const rowsWithMaterial = new Map<number, Set<string>>();
     for (const row of rows) {
+      for (const m of row.materialItems || []) {
+        if (m.workSeq == null) continue;
+        if (!rowsWithMaterial.has(m.workSeq)) rowsWithMaterial.set(m.workSeq, new Set());
+        rowsWithMaterial.get(m.workSeq)!.add(row.id);
+      }
+    }
+    const unitsOfStoredSeq = new Map<number, number>();
+    for (const g of ordered) if (g.seq != null) unitsOfStoredSeq.set(g.seq, g.byUnit.size);
+    const perUnitMaterial = (seq: number): boolean =>
+      (rowsWithMaterial.get(seq)?.size || 0) > 1 || (unitsOfStoredSeq.get(seq) || 1) <= 1;
+
+    for (const row of rows) {
+      // A line is installed once the work it was ordered for is done ON THIS
+      // UNIT. The line sits on its unit's own row, so that unit's own copy of
+      // the work item is what decides — unit 101's trim drops off the buy list
+      // the day 101 is finished, without waiting on 102 and 103.
+      const doneOnRow = new Map<number, boolean>();
+      for (const li of row.lineItems || []) if (li.seq != null) doneOnRow.set(li.seq, !!li.completed);
       for (const c of row.specChanges || []) specChanges.push(c);
       if (row.notes && row.notes.trim()) notes.push({ unitLabel: row.unitLabel, text: row.notes });
       if (row.newProduct) newProducts.push({ unitLabel: row.unitLabel, product: row.newProduct });
       for (const p of row.photos || []) photos.push(p);
       for (const m of row.materialItems || []) {
         const work = m.workSeq != null ? workByStoredSeq.get(m.workSeq) : undefined;
+        // Falls back to the item across every unit for a line whose own row no
+        // longer carries that work item, and for a write-up from before the
+        // lines were kept per unit.
+        const onRow =
+          m.workSeq != null && perUnitMaterial(m.workSeq) ? doneOnRow.get(m.workSeq) : undefined;
         materials.push({
           ...m,
           unitLabel: row.unitLabel,
-          installed: !!work?.completed,
+          installed: onRow !== undefined ? onRow : !!work?.completed,
           workNumbers: work ? [work.workNumber] : [],
         });
       }
@@ -328,6 +388,17 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
   sections.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
   sections.forEach((s, i) => (s.index = i + 1));
   return sections;
+}
+
+/**
+ * The units a still-open item has left, and how far along it is — an item on
+ * three units can have two of them finished, and a reader shown all three
+ * would go looking for work that's already done.
+ */
+export function openUnitsOf(it: NumberedWorkItem): { units: string[]; done: number; total: number } {
+  const open = it.unitStates.filter((u) => !u.completed).map((u) => u.unitLabel);
+  const done = it.unitStates.length - open.length;
+  return { units: open.length ? open : it.units, done, total: it.unitStates.length };
 }
 
 /** Zero-padded work-item number, e.g. 3 → "003". */

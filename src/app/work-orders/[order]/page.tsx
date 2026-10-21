@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { FieldWorkOrder } from "@/lib/types";
 import { fetchWriteUpsForOrder, getSignedPhotoUrl, writeUpsToPlainText } from "@/lib/work-order-store";
-import { groupWriteUpSections, padSeq } from "@/lib/writeup-sections";
+import { groupWriteUpSections, openUnitsOf, padSeq } from "@/lib/writeup-sections";
 import { downloadWriteUpZip } from "@/lib/writeup-export";
 import { useAuth } from "@/hooks/useAuth";
 import { canSeeWriteUps } from "@/lib/roles";
@@ -322,18 +322,29 @@ export default function WorkOrderDocPage() {
                   <div className={lbl}>Work to complete</div>
                   {sec.outstanding.length > 0 ? (
                     <ul className="space-y-1.5">
-                      {sec.outstanding.map((it) => (
+                      {sec.outstanding.map((it) => {
+                        // Only the units still open: two of three finished is
+                        // two fewer places for a crew to go looking.
+                        const left = openUnitsOf(it);
+                        return (
                         <li key={it.seq} className="text-sm flex items-start gap-2">
                           <span className="font-mono text-xs font-bold shrink-0 mt-0.5" style={{ color: ACCENT_TEXT }}>
                             {padSeq(it.seq)}
                           </span>
                           <span className="flex-1">
                             {it.label}
-                            {it.units.length > 0 && <span className="text-muted"> — {it.units.join(", ")}</span>}
+                            {left.units.length > 0 && <span className="text-muted"> — {left.units.join(", ")}</span>}
+                            {left.done > 0 && (
+                              <span className="text-green-700">
+                                {" "}
+                                ({left.done} of {left.total} units done)
+                              </span>
+                            )}
                             {it.notes && <span className="block text-xs text-muted">{it.notes}</span>}
                           </span>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   ) : (
                     <p className="text-sm text-green-700 font-medium">All work completed ✓</p>

@@ -48,6 +48,17 @@ export interface DraftPart {
   partNumber?: string;
 }
 
+/** One unit's two lists on a work item. The key they're stored under is the
+ *  unit's key, or WHOLE_JOB_LIST when the item has no unit ticked. */
+export interface DraftIssueLists {
+  materials: WriteUpMaterialItem[];
+  parts: DraftPart[];
+}
+
+/** The bucket a work item's lists live under when it affects no unit. Shared
+ *  with the modal so a draft round-trips the whole-job case. */
+export const WHOLE_JOB_LIST = "__wholejob__";
+
 /** A work-to-complete item in a draft — its own materials/photos + unit keys. */
 export interface DraftIssue {
   id: string;
@@ -56,10 +67,14 @@ export interface DraftIssue {
   /** Only on drafts saved before the parts list stopped hiding behind a
    *  checkbox. Read for backwards compatibility, never written. */
   needsOrdering?: boolean;
-  parts: DraftPart[];
+  /** Trim + parts keyed by unit, so an item affecting three units carries
+   *  three lists. The two fields below are the one-list-per-item shape every
+   *  draft used before that: read for backwards compatibility, never written. */
+  lists?: Record<string, DraftIssueLists>;
+  parts?: DraftPart[];
+  materials?: WriteUpMaterialItem[];
   orderingNotes: string;
   unitKeys: string[];
-  materials: WriteUpMaterialItem[];
   photos: DraftPhoto[];
 }
 

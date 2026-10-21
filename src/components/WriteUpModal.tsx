@@ -53,6 +53,9 @@ import {
 } from "@/lib/trim-order-handoff";
 import {
   WriteUpDraft,
+  DraftIssue,
+  DraftPart,
+  WHOLE_JOB_LIST,
   saveDraft,
   loadDraft,
   clearDraft,
@@ -76,6 +79,7 @@ import {
   Wrench,
   Pencil,
   Trash2,
+  Copy,
   CopyPlus,
   Package,
   Camera,
@@ -123,7 +127,7 @@ interface LocalPhoto {
 //   2. Units affected (picked or added manually) — a top-level list
 //   3. Spec changes per unit
 //   4. Work to complete (issues) — each references which units it affects
-//   5. Trim / material + parts — two lists, one per catalog
+//   5. Trim / material + parts — two lists per catalog, one pair PER UNIT
 //   6. Photos — one set
 
 /** A unit affected by this write-up: identity + its spec corrections. */
@@ -158,19 +162,125 @@ interface PartItem {
   partNumber?: string;
 }
 
-/** A work-to-complete item — its own materials + photos, references the units
- *  it affects (empty = whole job). */
+/** One unit's two lists on a work item. */
+interface IssueLists {
+  materials: WriteUpMaterialItem[];
+  parts: PartItem[];
+}
+
+const EMPTY_LISTS: IssueLists = { materials: [], parts: [] };
+
+/** A work-to-complete item — its materials + photos, references the units it
+ *  affects (empty = whole job).
+ *
+ *  Materials are kept PER UNIT: the same work on three units is three sets of
+ *  trim and parts, because three units rarely take identical pieces and the
+ *  office was reading one blended list and guessing what went where. The lists
+ *  are keyed by unit key, or by WHOLE_JOB_LIST when no unit is ticked. */
 interface WuIssue {
   id: string;
   label: string;
   note: string;
-  parts: PartItem[];
   /** Special instructions for whoever places the order (rush it, pull from the
    *  shop) — not a place to list items; the two lists do that. */
   orderingNotes: string;
   unitKeys: string[];
-  materials: WriteUpMaterialItem[];
+  lists: Record<string, IssueLists>;
   photos: LocalPhoto[];
+}
+
+/** The buckets an item shows a section for, in the order they're displayed:
+ *  one per ticked unit, or the single whole-job bucket. */
+function listKeysOf(issue: Pick<WuIssue, "unitKeys">): string[] {
+  return issue.unitKeys.length ? issue.unitKeys : [WHOLE_JOB_LIST];
+}
+
+function listsAt(issue: WuIssue, key: string): IssueLists {
+  return issue.lists[key] || EMPTY_LISTS;
+}
+
+function listsEmpty(l: IssueLists): boolean {
+  return l.materials.length === 0 && l.parts.length === 0;
+}
+
+/** Lines across every shown bucket — what "does this item order anything" asks. */
+function allLists(issue: WuIssue): IssueLists[] {
+  return listKeysOf(issue).map((k) => listsAt(issue, k));
+}
+
+/** Replace one bucket's lists, dropping it entirely once it's empty so a draft
+ *  never carries a trail of blank buckets for units long since unticked. */
+function setLists(issue: WuIssue, key: string, next: IssueLists): WuIssue {
+  const lists = { ...issue.lists };
+  if (listsEmpty(next)) delete lists[key];
+  else lists[key] = next;
+  return { ...issue, lists };
+}
+
+/** Lists on their way to another bucket: a part's own unit pins are cleared,
+ *  because the bucket it lands in is now what says which unit it's for. */
+function listsUnpinned(l: IssueLists): IssueLists {
+  return { materials: l.materials, parts: l.parts.map((pt) => (pt.unitKeys.length ? { ...pt, unitKeys: [] } : pt)) };
+}
+
+/** A bucket's contents as a phrase for a confirm — "4 trim lines and 1 part". */
+function linesPhrase(l: IssueLists): string {
+  const bits: string[] = [];
+  if (l.materials.length) bits.push(`${l.materials.length} trim line${l.materials.length === 1 ? "" : "s"}`);
+  if (l.parts.length) bits.push(`${l.parts.length} part${l.parts.length === 1 ? "" : "s"}`);
+  return bits.join(" and ");
+}
+
+const partFromDraft = (p: DraftPart): PartItem => ({
+  key: p.key,
+  name: p.name,
+  productType: p.productType,
+  qty: p.qty,
+  custom: p.custom,
+  unitKeys: p.unitKeys || [],
+  catalogId: p.catalogId,
+  color: p.color,
+  size: p.size,
+  partNumber: p.partNumber,
+});
+
+const partToDraft = (p: PartItem): DraftPart => ({
+  key: p.key,
+  name: p.name,
+  productType: p.productType,
+  qty: p.qty,
+  custom: p.custom,
+  unitKeys: p.unitKeys,
+  catalogId: p.catalogId,
+  color: p.color,
+  size: p.size,
+  partNumber: p.partNumber,
+});
+
+/** A draft item's per-unit lists. A draft saved before materials went per unit
+ *  carried one list for the whole item: it's dropped into the bucket it now
+ *  belongs to — the item's first unit, or the whole-job bucket. */
+function listsFromDraft(it: DraftIssue): Record<string, IssueLists> {
+  if (it.lists) {
+    const out: Record<string, IssueLists> = {};
+    for (const [k, l] of Object.entries(it.lists))
+      out[k] = { materials: l.materials || [], parts: (l.parts || []).map(partFromDraft) };
+    return out;
+  }
+  const legacy: IssueLists = { materials: it.materials || [], parts: (it.parts || []).map(partFromDraft) };
+  if (listsEmpty(legacy)) return {};
+  return { [(it.unitKeys || [])[0] || WHOLE_JOB_LIST]: legacy };
+}
+
+/** Whether a stored draft item holds anything worth offering to restore. */
+function draftIssueHasContent(it: DraftIssue): boolean {
+  return !!(
+    it.label.trim() ||
+    it.photos?.length ||
+    it.materials?.length ||
+    it.parts?.length ||
+    Object.keys(it.lists || {}).length
+  );
 }
 
 /** Where the camera / upload is currently adding photos. */
@@ -460,7 +570,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       if (cancelled) return;
       const hasContent =
         d &&
-        ((d.issues && d.issues.some((it) => it.label.trim() || it.materials?.length || it.photos?.length)) ||
+        ((d.issues && d.issues.some(draftIssueHasContent)) ||
           (d.units && d.units.length > 0) ||
           d.background?.trim() ||
           d.financingNotes?.trim() ||
@@ -588,14 +698,20 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     }
     const issueAggs = [...iMap.values()].sort((a, b) => a.order - b.order);
 
-    // Materials + photos are stored per UNIT row, not per issue. Each one that
-    // was saved with the number of the work item it was entered under goes
-    // straight back to that item. One saved before the number was recorded
-    // falls back to a best guess: an issue that affects its unit, else the
-    // first whole-job issue, else issue 1. Photos attach NOW as path-only
-    // placeholders so a save before phase 2 finishes keeps them; their preview
-    // blobs download in phase 2.
-    const matByIssue = new Map<string, WriteUpMaterialItem[]>();
+    // Materials + photos are stored per UNIT row. Each one that was saved with
+    // the number of the work item it was entered under goes straight back to
+    // that item. One saved before the number was recorded falls back to a best
+    // guess: an issue that affects its unit, else the first whole-job issue,
+    // else issue 1. Photos attach NOW as path-only placeholders so a save
+    // before phase 2 finishes keeps them; their preview blobs download in
+    // phase 2.
+    //
+    // A material line also goes back to the unit whose row it was stored on,
+    // which is what fills the per-unit lists. A write-up saved before materials
+    // went per unit put every one of an item's lines on the FIRST affected
+    // unit's row, so it reopens with that unit's list full and the others
+    // empty — true to what was saved, and "Same as" fills the rest.
+    const listsByIssue = new Map<string, Record<string, IssueLists>>();
     const photoPathsByIssue = new Map<string, WriteUpPhoto[]>();
     const bySeq = new Map<number, IAgg>();
     for (const [gk, g] of iMap) if (gk.startsWith("s:")) bySeq.set(Number(gk.slice(2)), g);
@@ -607,11 +723,23 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       }
       return issueAggs.find((g) => g.unitKeys.size === 0) || issueAggs[0];
     };
+    /** The bucket a line belongs in on its item: the unit whose row carried it
+     *  when that unit is one the item affects, else the item's first unit, else
+     *  the whole-job bucket. */
+    const bucketFor = (g: IAgg, unitKey: string | null): string => {
+      if (unitKey && g.unitKeys.has(unitKey)) return unitKey;
+      return g.unitKeys.size ? [...g.unitKeys][0] : WHOLE_JOB_LIST;
+    };
     for (const r of editBatch) {
       const unitKey = r.unitLabel ? labelToKey.get(r.unitLabel.trim()) || null : null;
       for (const m of r.materialItems) {
         const target = targetFor(m.workSeq, unitKey);
-        if (target) matByIssue.set(target.key, [...(matByIssue.get(target.key) || []), m]);
+        if (!target) continue;
+        const buckets = listsByIssue.get(target.key) || {};
+        const k = bucketFor(target, unitKey);
+        const cur = buckets[k] || EMPTY_LISTS;
+        buckets[k] = { materials: [...cur.materials, m], parts: cur.parts };
+        listsByIssue.set(target.key, buckets);
       }
       for (const p of r.photos) {
         const target = targetFor(p.workSeq, unitKey);
@@ -623,10 +751,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       id: g.key,
       label: g.label,
       note: g.note,
-      parts: [],
       orderingNotes: g.orderingNotes,
       unitKeys: [...g.unitKeys],
-      materials: matByIssue.get(g.key) || [],
+      lists: listsByIssue.get(g.key) || {},
       photos: (photoPathsByIssue.get(g.key) || []).map((p) => ({ id: crypto.randomUUID(), name: p.name, path: p.path })),
     }));
     setIssues(hydIssues.length ? hydIssues : [makeIssue()]);
@@ -719,8 +846,10 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   /** Commit every adder's pending entry into the model right before a save.
    *  Returns the merged issues (create flow) + any flushed edit-mode materials. */
   function flushAdders(): { mergedIssues: WuIssue[]; editMats: WriteUpMaterialItem[] } {
-    const matByIssue = new Map<string, WriteUpMaterialItem[]>();
-    const partByIssue = new Map<string, PartItem[]>();
+    // Bucketed by "<issue id>|<unit key>", so a line left typed in an adder
+    // lands on the unit whose section it was being typed into.
+    const matByBucket = new Map<string, WriteUpMaterialItem[]>();
+    const partByBucket = new Map<string, PartItem[]>();
     const editMats: WriteUpMaterialItem[] = [];
     for (const [key, fn] of flushers.current) {
       const res = fn();
@@ -729,20 +858,24 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       const kind = key.slice(0, sep);
       const id = key.slice(sep + 1);
       if (kind === "mat" && id === "edit") editMats.push(res as WriteUpMaterialItem);
-      else if (kind === "mat") matByIssue.set(id, [...(matByIssue.get(id) || []), res as WriteUpMaterialItem]);
-      else if (kind === "parts") partByIssue.set(id, [...(partByIssue.get(id) || []), res as PartItem]);
+      else if (kind === "mat") matByBucket.set(id, [...(matByBucket.get(id) || []), res as WriteUpMaterialItem]);
+      else if (kind === "parts") partByBucket.set(id, [...(partByBucket.get(id) || []), res as PartItem]);
     }
     let mergedIssues = issues;
-    if (matByIssue.size || partByIssue.size) {
+    if (matByBucket.size || partByBucket.size) {
       mergedIssues = issues.map((it) => {
-        const m = matByIssue.get(it.id);
-        const p = partByIssue.get(it.id);
-        if (!m && !p) return it;
-        return {
-          ...it,
-          materials: m ? [...it.materials, ...m] : it.materials,
-          parts: p ? [...it.parts, ...p] : it.parts,
-        };
+        let next = it;
+        for (const key of listKeysOf(it)) {
+          const m = matByBucket.get(`${it.id}|${key}`);
+          const p = partByBucket.get(`${it.id}|${key}`);
+          if (!m && !p) continue;
+          const cur = listsAt(next, key);
+          next = setLists(next, key, {
+            materials: m ? [...cur.materials, ...m] : cur.materials,
+            parts: p ? [...cur.parts, ...p] : cur.parts,
+          });
+        }
+        return next;
       });
       setIssues(mergedIssues);
     }
@@ -766,7 +899,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     const existing = wuUnits.find((u) => !u.isNewProduct && u.unitLabel === label);
     if (existing) {
       setWuUnits((prev) => prev.filter((u) => u.key !== existing.key));
-      setIssues((is) => is.map((it) => ({ ...it, unitKeys: it.unitKeys.filter((k) => k !== existing.key) })));
+      setIssues((is) => is.map((it) => withoutUnit(it, existing.key)));
     } else {
       setWuUnits((prev) => [...prev, makeWuUnit({ isNewProduct: false, unitLabel: label })]);
     }
@@ -779,7 +912,21 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   }
   function removeUnit(key: string) {
     setWuUnits((prev) => prev.filter((u) => u.key !== key));
-    setIssues((is) => is.map((it) => ({ ...it, unitKeys: it.unitKeys.filter((k) => k !== key) })));
+    setIssues((is) => is.map((it) => withoutUnit(it, key)));
+  }
+  /** Drop a unit from a work item — its ticks and its own two lists. Used when
+   *  the unit itself comes off the write-up, so there's nothing to confirm: the
+   *  unit is gone either way. A whole-job item is untouched. */
+  function withoutUnit(it: WuIssue, key: string): WuIssue {
+    if (!it.unitKeys.includes(key)) return it;
+    const lists = { ...it.lists };
+    delete lists[key];
+    const unitKeys = it.unitKeys.filter((k) => k !== key);
+    // Last unit off: the work is a whole-job item now, so its lines come along
+    // instead of leaving with the unit.
+    const own = it.lists[key];
+    if (unitKeys.length === 0 && own && !listsEmpty(own)) lists[WHOLE_JOB_LIST] = listsUnpinned(own);
+    return { ...it, unitKeys, lists };
   }
   function unitObjFor(u: WuUnit): MaterialUnit | null {
     if (u.isNewProduct || !u.unitLabel) return null;
@@ -802,9 +949,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         ? withAbbrev(u.unitLabel, unitAbbrev(u))
         : "Whole job";
 
+  const unitTitleByKey = (key: string) => {
+    const u = wuUnits.find((x) => x.key === key);
+    return u ? unitTitle(u) : "That unit";
+  };
+
   // ── Work to complete (create): issues that reference affected units ──
   function makeIssue(): WuIssue {
-    return { id: crypto.randomUUID(), label: "", note: "", parts: [], orderingNotes: "", unitKeys: [], materials: [], photos: [] };
+    return { id: crypto.randomUUID(), label: "", note: "", orderingNotes: "", unitKeys: [], lists: {}, photos: [] };
   }
   function addIssue() {
     setIssues((prev) => [...prev, makeIssue()]);
@@ -842,25 +994,118 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         if (ph.blob) putDraftPhoto(copy.id, ph.blob);
         return copy;
       });
+      // Materials are kept per unit, so the copy starts from the FIRST filled
+      // unit's two lists — one unit's worth of trim and parts, waiting on the
+      // unit this copy gets pointed at. Taking every unit's lists would order
+      // three units' material for one.
+      const srcKey = listKeysOf(src).find((k) => !listsEmpty(listsAt(src, k)));
+      const srcLists = srcKey ? listsAt(src, srcKey) : EMPTY_LISTS;
       const copy: WuIssue = {
         ...src,
         id: crypto.randomUUID(),
         unitKeys: [],
-        materials: src.materials.map((m) => ({ ...m })),
-        parts: src.parts.map((pt) => ({ ...pt, key: crypto.randomUUID(), unitKeys: [] })),
+        lists: listsEmpty(srcLists)
+          ? {}
+          : {
+              [WHOLE_JOB_LIST]: {
+                materials: srcLists.materials.map((m) => ({ ...m })),
+                parts: srcLists.parts.map((pt) => ({ ...pt, key: crypto.randomUUID(), unitKeys: [] })),
+              },
+            },
         photos,
       };
       return [...prev.slice(0, i + 1), copy, ...prev.slice(i + 1)];
     });
   }
+  /**
+   * Tick a unit on or off a work item. Each unit carries its own trim and parts
+   * on the item, so the lists have to follow the ticks:
+   *
+   *  - ticking the FIRST unit hands it whatever was typed while the item was
+   *    whole-job — same work, it just has a unit to hang its material on now;
+   *  - unticking the LAST unit hands those lines back to the whole-job bucket,
+   *    since the work didn't change, only its scope;
+   *  - unticking any other unit that has lines is a correction mid-write-up, so
+   *    it asks first and drops them on yes.
+   */
   function toggleIssueUnit(issueId: string, unitKey: string) {
+    const issue = issues.find((x) => x.id === issueId);
+    if (!issue) return;
+    if (!issue.unitKeys.includes(unitKey)) {
+      const carried = issue.unitKeys.length === 0 ? listsAt(issue, WHOLE_JOB_LIST) : EMPTY_LISTS;
+      setIssues((prev) =>
+        prev.map((it) => {
+          if (it.id !== issueId) return it;
+          const lists = { ...it.lists };
+          if (!listsEmpty(carried)) {
+            delete lists[WHOLE_JOB_LIST];
+            lists[unitKey] = listsUnpinned(carried);
+          }
+          return { ...it, unitKeys: [...it.unitKeys, unitKey], lists };
+        })
+      );
+      return;
+    }
+    const own = listsAt(issue, unitKey);
+    const last = issue.unitKeys.length === 1;
+    if (!last && !listsEmpty(own)) {
+      const one = own.materials.length + own.parts.length === 1;
+      const ok = window.confirm(
+        `${unitTitleByKey(unitKey)} has ${linesPhrase(own)} on this item. Taking the unit off removes ${one ? "it" : "them"} too. Remove?`
+      );
+      if (!ok) return;
+    }
+    setIssues((prev) => prev.map((it) => (it.id === issueId ? withoutUnit(it, unitKey) : it)));
+  }
+
+  /** The "Whole job" chip — drops every unit from the item. One unit's lines
+   *  come along; several can't be merged without ordering three units' worth of
+   *  material for one, so those are confirmed away. */
+  function setIssueWholeJob(issueId: string) {
+    const issue = issues.find((x) => x.id === issueId);
+    if (!issue || issue.unitKeys.length === 0) return;
+    const filled = issue.unitKeys.filter((k) => !listsEmpty(listsAt(issue, k)));
+    if (filled.length > 1) {
+      const lines = filled.reduce(
+        (n, k) => n + listsAt(issue, k).materials.length + listsAt(issue, k).parts.length,
+        0
+      );
+      const ok = window.confirm(
+        `${filled.length} units have material on this item (${lines} line${lines === 1 ? "" : "s"} in all). Making it a whole-job item removes them. Remove?`
+      );
+      if (!ok) return;
+    }
+    setIssues((prev) =>
+      prev.map((it) =>
+        it.id === issueId
+          ? {
+              ...it,
+              unitKeys: [],
+              lists: filled.length === 1 ? { [WHOLE_JOB_LIST]: listsUnpinned(listsAt(it, filled[0])) } : {},
+            }
+          : it
+      )
+    );
+  }
+
+  /** "Same as Unit 1" — copy one unit's trim and parts onto another unit of the
+   *  same work item. A plain copy, not a link: edit either side afterwards. */
+  function cloneIssueLists(issueId: string, fromKey: string, toKey: string) {
     setIssues((prev) =>
       prev.map((it) => {
         if (it.id !== issueId) return it;
-        const has = it.unitKeys.includes(unitKey);
-        return { ...it, unitKeys: has ? it.unitKeys.filter((k) => k !== unitKey) : [...it.unitKeys, unitKey] };
+        const src = listsAt(it, fromKey);
+        return setLists(it, toKey, {
+          materials: src.materials.map((m) => ({ ...m })),
+          parts: src.parts.map((pt) => ({ ...pt, key: crypto.randomUUID(), unitKeys: [] })),
+        });
       })
     );
+  }
+
+  /** Replace one unit's lists on a work item (what the two list editors call). */
+  function setIssueLists(issueId: string, key: string, next: IssueLists) {
+    setIssues((prev) => prev.map((it) => (it.id === issueId ? setLists(it, key, next) : it)));
   }
 
   // ── Edit-mode work items ──
@@ -990,7 +1235,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const createHasContent =
     validIssues.length > 0 ||
     validUnits.some((u) => u.hasSpecChange && u.specEntries.some((e) => specEntryValue(e).length > 0)) ||
-    issues.some((it) => it.materials.length > 0 || it.photos.length > 0) ||
+    issues.some((it) => it.photos.length > 0 || allLists(it).some((l) => !listsEmpty(l))) ||
     background.trim().length > 0 ||
     financingNotes.trim().length > 0 ||
     paintStainNotes.trim().length > 0 ||
@@ -1051,8 +1296,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       // two lists, so the office's email and PDF still flag an item that needs
       // ordering without anyone having to tick anything: a part is always
       // ordered, and trim is ordered unless its vendor says we already have it.
-      const hasOrderables =
-        it.parts.some((p) => p.name.trim()) || it.materials.some((m) => isOrderable(m.vendor));
+      const hasOrderables = allLists(it).some(
+        (l) => l.parts.some((p) => p.name.trim()) || l.materials.some((m) => isOrderable(m.vendor))
+      );
       const noteBits = [
         it.note.trim(),
         it.orderingNotes.trim()
@@ -1083,24 +1329,30 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         size: p.size || undefined,
         workSeq: seq,
       });
-      // Parts checked for specific units go on each of those units' rows; the
-      // rest (no units checked = all affected) go on the item's first target.
-      const namedParts = it.parts.filter((p) => p.name.trim());
-      const generalParts: PartItem[] = [];
-      for (const p of namedParts) {
-        const valid = (p.unitKeys || []).filter((k) => byKey.has(k));
-        if (valid.length === 0) generalParts.push(p);
-        else for (const k of valid) byKey.get(k)!.materials.push(partToMaterial(p));
-      }
-      const generalPartMaterials = generalParts.map(partToMaterial);
       targets.forEach((a, idx) => {
         a.tasks.push(task);
-        // Attach this item's materials + photos to just its first target (no dupes).
-        if (idx === 0) {
-          a.materials.push(...generalPartMaterials, ...it.materials.map((m) => ({ ...m, workSeq: seq })));
-          a.photos.push(...it.photos.map((p) => ({ ...p, workSeq: seq })));
-        }
+        // Photos are one set for the whole item, so they ride on its first
+        // target only — otherwise three units would upload the same picture.
+        if (idx === 0) a.photos.push(...it.photos.map((p) => ({ ...p, workSeq: seq })));
       });
+      // Each unit's own trim and parts go onto THAT unit's row; a whole-job
+      // item's single list goes on the whole-job row. One list per unit is the
+      // whole point: the office reads what each unit takes, not a blended pile.
+      for (const listKey of listKeysOf(it)) {
+        const bucket = listsAt(it, listKey);
+        if (listsEmpty(bucket)) continue;
+        const target = listKey === WHOLE_JOB_LIST ? whole() : byKey.get(listKey);
+        if (!target) continue;
+        target.materials.push(...bucket.materials.map((m) => ({ ...m, workSeq: seq })));
+        for (const p of bucket.parts.filter((pp) => pp.name.trim())) {
+          // A part pinned to particular units still goes on each of their rows.
+          // Only a whole-job or single-unit item offers those pins — once the
+          // item is split per unit, the section it sits in says the unit.
+          const pinned = (p.unitKeys || []).filter((k) => byKey.has(k));
+          if (pinned.length === 0) target.materials.push(partToMaterial(p));
+          else for (const k of pinned) byKey.get(k)!.materials.push(partToMaterial(p));
+        }
+      }
     });
     // Background + notes go on the whole-job row.
     const noteParts = [
@@ -1180,21 +1432,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         id: it.id,
         label: it.label,
         note: it.note,
-        parts: (it.parts || []).map((p) => ({
-          key: p.key,
-          name: p.name,
-          productType: p.productType,
-          qty: p.qty,
-          custom: p.custom,
-          unitKeys: p.unitKeys || [],
-          catalogId: p.catalogId,
-          color: p.color,
-          size: p.size,
-          partNumber: p.partNumber,
-        })),
         orderingNotes: it.orderingNotes || "",
         unitKeys: it.unitKeys,
-        materials: it.materials || [],
+        lists: listsFromDraft(it),
         photos: await photosFromDraft(it.photos || []),
       }))
     );
@@ -1238,21 +1478,11 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         id: it.id,
         label: it.label,
         note: it.note,
-        parts: it.parts.map((p) => ({
-          key: p.key,
-          name: p.name,
-          productType: p.productType,
-          qty: p.qty,
-          custom: p.custom,
-          unitKeys: p.unitKeys,
-          catalogId: p.catalogId,
-          color: p.color,
-          size: p.size,
-          partNumber: p.partNumber,
-        })),
         orderingNotes: it.orderingNotes,
         unitKeys: it.unitKeys,
-        materials: it.materials,
+        lists: Object.fromEntries(
+          Object.entries(it.lists).map(([k, l]) => [k, { materials: l.materials, parts: l.parts.map(partToDraft) }])
+        ),
         photos: it.photos.map((p) => ({ id: p.id, name: p.name })),
       })),
     };
@@ -1585,8 +1815,10 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     for (const it of issues) {
       const label = it.label.trim();
       if (label && !presetSet.has(label.toLowerCase())) addCustomWork(label).catch(() => {});
-      for (const p of it.parts) {
-        if (p.custom && p.name.trim()) addCustomPart(p.name.trim(), p.productType).catch(() => {});
+      for (const l of allLists(it)) {
+        for (const p of l.parts) {
+          if (p.custom && p.name.trim()) addCustomPart(p.name.trim(), p.productType).catch(() => {});
+        }
       }
     }
   }
@@ -2123,6 +2355,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                       onRemove={() => removeIssue(it.id)}
                       onDuplicate={() => duplicateIssue(it.id)}
                       onToggleUnit={(unitKey) => toggleIssueUnit(it.id, unitKey)}
+                      onWholeJob={() => setIssueWholeJob(it.id)}
+                      onSetLists={(key, next) => setIssueLists(it.id, key, next)}
+                      onCloneLists={(from, to) => cloneIssueLists(it.id, from, to)}
                       onOpenCamera={() => openCamera({ kind: "issue", issueId: it.id })}
                       onUpload={(files) => addPhotosTo({ kind: "issue", issueId: it.id }, files)}
                       onRemovePhoto={(pid) => removeIssuePhoto(it.id, pid)}
@@ -2806,6 +3041,9 @@ function IssueCard({
   onRemove,
   onDuplicate,
   onToggleUnit,
+  onWholeJob,
+  onSetLists,
+  onCloneLists,
   onOpenCamera,
   onUpload,
   onRemovePhoto,
@@ -2828,12 +3066,19 @@ function IssueCard({
   onRemove: () => void;
   onDuplicate: () => void;
   onToggleUnit: (unitKey: string) => void;
+  /** The "Whole job" chip — takes every unit off the item. */
+  onWholeJob: () => void;
+  onSetLists: (listKey: string, next: IssueLists) => void;
+  onCloneLists: (fromKey: string, toKey: string) => void;
   onOpenCamera: () => void;
   onUpload: (files: File[]) => void;
   onRemovePhoto: (id: string) => void;
   /** Registers per-adder flushes (keyed) so Submit can commit pending entries. */
   onRegisterFlush?: (key: string, fn: (() => WriteUpMaterialItem | PartItem | null) | null) => void;
 }) {
+  const listKeys = listKeysOf(issue);
+  /** Two or more units ticked: each gets its own headed pair of lists. */
+  const perUnit = listKeys.length > 1;
   return (
     <section className="rounded-2xl border border-border bg-surface/40 p-3 space-y-3">
       <div className="flex items-center justify-between gap-2">
@@ -2894,7 +3139,7 @@ function IssueCard({
           </p>
         ) : (
           <div className="flex flex-wrap gap-2 mt-2">
-            <UnitChip active={issue.unitKeys.length === 0} label="Whole job" onClick={() => onUpdate({ unitKeys: [] })} />
+            <UnitChip active={issue.unitKeys.length === 0} label="Whole job" onClick={onWholeJob} />
             {affectedUnits.map((u) => (
               <UnitChip key={u.key} active={issue.unitKeys.includes(u.key)} label={unitTitle(u)} onClick={() => onToggleUnit(u.key)} />
             ))}
@@ -2905,32 +3150,82 @@ function IssueCard({
       {/* Two lists, because there are two catalogs behind them and each needs
           different details entered. Both are always visible: the headings are
           what tell someone which list their thing belongs in, so hiding either
-          one behind a tick sent trim into the parts box without its specs. */}
+          one behind a tick sent trim into the parts box without its specs.
 
-      {/* 1. Trim / material — profiles from the trim catalog, ordered from a
-             lumber vendor by the piece in lengths. */}
-      <MaterialSection
-        materials={issue.materials}
-        onChange={(m) => onUpdate({ materials: m })}
-        catalog={catalog}
-        materialCatalog={materialCatalog}
-        colorOptions={colorOptions}
-        speciesOptions={speciesOptions}
-        vendorOptions={vendorOptions}
-        onRegisterFlush={(fn) => onRegisterFlush?.(`mat:${issue.id}`, fn)}
-      />
+          One pair PER UNIT once the item affects more than one. Three units
+          rarely take identical pieces, and one blended list left the office
+          guessing what went where. With one unit, or a whole-job item, there's
+          a single pair and the card reads exactly as it always did. */}
+      {listKeys.map((listKey) => {
+        const unit = affectedUnits.find((u) => u.key === listKey);
+        const lists = listsAt(issue, listKey);
+        // Units already filled in — the ones worth copying from. Offered only
+        // on an EMPTY section, so a tap can never land on top of typed lines.
+        const copyFrom = perUnit
+          ? listKeys.filter((k) => k !== listKey && !listsEmpty(listsAt(issue, k)))
+          : [];
+        return (
+          <div
+            key={listKey}
+            className={perUnit ? "rounded-xl border border-border bg-background/40 p-2.5 space-y-3" : "space-y-3"}
+          >
+            {perUnit && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold text-amber-600">{unit ? unitTitle(unit) : "Whole job"}</span>
+                {listsEmpty(lists) && copyFrom.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {copyFrom.map((from) => {
+                      const fromUnit = affectedUnits.find((u) => u.key === from);
+                      return (
+                        <button
+                          key={from}
+                          onClick={() => onCloneLists(from, listKey)}
+                          className="px-2.5 py-1 rounded-full border border-border text-[11px] font-semibold text-muted hover:border-amber-400 hover:text-amber-600 flex items-center gap-1"
+                        >
+                          <Copy className="w-3 h-3" />
+                          Same as {fromUnit ? unitTitle(fromUnit) : "that unit"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
-      {/* 2. Parts — from the parts catalog, ordered from Andersen by part
-             number for one unit. */}
-      <PartsPicker
-        parts={issue.parts}
-        catalog={partsCatalog}
-        bundles={partsBundles}
-        affectedUnits={affectedUnits.filter((u) => issue.unitKeys.length === 0 || issue.unitKeys.includes(u.key))}
-        unitTitle={unitTitle}
-        onChange={(parts) => onUpdate({ parts })}
-        onRegisterFlush={(fn) => onRegisterFlush?.(`parts:${issue.id}`, fn)}
-      />
+            {/* 1. Trim / material — profiles from the trim catalog, ordered
+                   from a lumber vendor by the piece in lengths. */}
+            <MaterialSection
+              materials={lists.materials}
+              onChange={(m) => onSetLists(listKey, { materials: m, parts: lists.parts })}
+              catalog={catalog}
+              materialCatalog={materialCatalog}
+              colorOptions={colorOptions}
+              speciesOptions={speciesOptions}
+              vendorOptions={vendorOptions}
+              onRegisterFlush={(fn) => onRegisterFlush?.(`mat:${issue.id}|${listKey}`, fn)}
+            />
+
+            {/* 2. Parts — from the parts catalog, ordered from Andersen by part
+                   number for one unit. The per-part unit pins only show when
+                   the lists aren't already split per unit; otherwise the
+                   section heading above is what names the unit. */}
+            <PartsPicker
+              parts={lists.parts}
+              catalog={partsCatalog}
+              bundles={partsBundles}
+              affectedUnits={
+                perUnit && unit
+                  ? [unit]
+                  : affectedUnits.filter((u) => issue.unitKeys.length === 0 || issue.unitKeys.includes(u.key))
+              }
+              pinUnits={!perUnit}
+              unitTitle={unitTitle}
+              onChange={(parts) => onSetLists(listKey, { materials: lists.materials, parts })}
+              onRegisterFlush={(fn) => onRegisterFlush?.(`parts:${issue.id}|${listKey}`, fn)}
+            />
+          </div>
+        );
+      })}
 
       {/* Instructions about HOW to order — not a third place to list items. */}
       <div>
@@ -3001,6 +3296,7 @@ function PartsPicker({
   catalog,
   bundles,
   affectedUnits,
+  pinUnits = true,
   unitTitle,
   onChange,
   onRegisterFlush,
@@ -3009,6 +3305,10 @@ function PartsPicker({
   catalog: PartsCatalogItem[];
   bundles: PartsBundle[];
   affectedUnits: WuUnit[];
+  /** Whether each part offers its own "For <unit>" chips. Off once the work
+   *  item's lists are already split per unit — the section heading says the
+   *  unit, so pinning a part to another one would contradict it. */
+  pinUnits?: boolean;
   unitTitle: (u: WuUnit) => string;
   onChange: (parts: PartItem[]) => void;
   /** Registers a flush that commits a typed-but-not-added custom part on Submit. */
@@ -3211,7 +3511,8 @@ function PartsPicker({
       if (pinned.length === 0) return null;
       const m = familyMatcher(pinned.map((u) => u.unitType));
       if (m.empty || m.matches(p.productType)) return null;
-      return p.unitKeys.length ? pinned.map(unitTitle).join(", ") : "these units";
+      if (p.unitKeys.length || pinned.length === 1) return pinned.map(unitTitle).join(", ");
+      return "these units";
     },
     [affectedUnits, unitTitle]
   );
@@ -3333,7 +3634,7 @@ function PartsPicker({
                 </div>
               ) : null}
 
-              {affectedUnits.length > 0 && (
+              {pinUnits && affectedUnits.length > 0 && (
                 <div>
                   <span className="text-[11px] text-muted">For</span>
                   <div className="flex flex-wrap gap-1.5 mt-1">

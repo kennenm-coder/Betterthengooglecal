@@ -344,16 +344,25 @@ export default function WorkOrdersPage() {
    *  they span. Purely a field-progress toggle: no reviewer stamp and no status
    *  change — a reviewer still approves the write-up separately. */
   async function setItemsCompleted(section: WriteUpSection, items: WriteUpSection["outstanding"], completed: boolean) {
+    return setSourcesCompleted(section, items.flatMap((it) => it.sources), completed);
+  }
+
+  /** The same toggle at line-item level, which is what lets one unit of a
+   *  multi-unit work item be ticked off on its own: a crew finishes 101 while
+   *  102 and 103 are still open, and only 101's line flips. */
+  async function setSourcesCompleted(
+    section: WriteUpSection,
+    sources: { rowId: string; index: number }[],
+    completed: boolean
+  ) {
     const nextItemsByRow = new Map<string, FieldWorkOrder["lineItems"]>();
     for (const r of section.rows) nextItemsByRow.set(r.id, r.lineItems.map((li) => ({ ...li })));
     const touched = new Set<string>();
-    for (const it of items) {
-      for (const src of it.sources) {
-        const arr = nextItemsByRow.get(src.rowId);
-        if (!arr || !arr[src.index]) continue;
-        arr[src.index].completed = completed;
-        touched.add(src.rowId);
-      }
+    for (const src of sources) {
+      const arr = nextItemsByRow.get(src.rowId);
+      if (!arr || !arr[src.index]) continue;
+      arr[src.index].completed = completed;
+      touched.add(src.rowId);
     }
     const results = await Promise.all(
       [...touched].map((rowId) => updateWriteUpLineItems(rowId, nextItemsByRow.get(rowId)!))
@@ -711,6 +720,7 @@ export default function WorkOrdersPage() {
                           onEdit={() => startEdit(sec.rows)}
                           onReviewItems={(itemsToReview, reviewed) => setItemsReviewed(sec, itemsToReview, reviewed)}
                           onToggleCompleted={(itemsToToggle, completed) => setItemsCompleted(sec, itemsToToggle, completed)}
+                          onToggleUnitCompleted={(sources, completed) => setSourcesCompleted(sec, sources, completed)}
                           onStatus={(status) => setSectionStatus(sec, status)}
                           onSaveCrews={(crews) => setSectionCrews(sec, crews)}
                           nudge={nudgeFor(sec)}
@@ -836,6 +846,7 @@ function ReviewSection({
   onEdit,
   onReviewItems,
   onToggleCompleted,
+  onToggleUnitCompleted,
   onStatus,
   onSaveCrews,
   nudge,
@@ -850,6 +861,8 @@ function ReviewSection({
   onEdit: () => void;
   onReviewItems: (items: NumberedWorkItem[], reviewed: boolean) => void;
   onToggleCompleted: (items: NumberedWorkItem[], completed: boolean) => void;
+  /** Ticks one unit of a work item off on its own. */
+  onToggleUnitCompleted: (sources: { rowId: string; index: number }[], completed: boolean) => void;
   onStatus: (status: WriteUpStatus) => void | Promise<void>;
   onSaveCrews: (text: string) => Promise<boolean>;
   /** The question this write-up is asking right now, if any. */
@@ -1180,31 +1193,74 @@ function ReviewSection({
           <ul className="space-y-1.5">
             {allWork.map((it) => {
               const canToggle = canComplete;
+              // The same work on three units is finished a unit at a time, so a
+              // multi-unit item keeps its one number and gets a checkbox per
+              // unit underneath. Its own box ticks every unit at once, and the
+              // item stays on this list until the last one is done. The
+              // reviewer's checkmark stays per item — one approval covers them.
+              const perUnit = it.unitStates.length > 1;
+              const doneUnits = it.unitStates.filter((u) => u.completed).length;
               return (
-                <li key={it.seq} className="flex items-start gap-2 text-sm">
-                  <button
-                    disabled={!canToggle}
-                    onClick={() => onToggleCompleted([it], !it.completed)}
-                    className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
-                      it.completed ? "bg-green-600 border-green-600 text-white" : "border-border text-transparent"
-                    } ${canToggle ? "cursor-pointer" : "cursor-default"}`}
-                    title={it.completed ? "Completed — tap to undo" : "Mark completed"}
-                  >
-                    <Check className="w-3 h-3" />
-                  </button>
-                  <span className="font-mono text-xs font-bold text-muted mt-0.5 shrink-0">{padSeq(it.seq)}</span>
-                  <span className="flex-1 min-w-0">
-                    <span>{it.label}</span>
-                    {it.units.length > 0 && <span className="text-muted"> — {it.units.join(", ")}</span>}
-                    <span className="flex flex-wrap gap-x-2">
-                      {it.reviewed && it.reviewedByName && (
-                        <span className="text-[10px] text-blue-600">
-                          Reviewed by {it.reviewedByName}
-                          {it.reviewedAt ? ` · ${format(parseISO(it.reviewedAt), "MMM d")}` : ""}
+                <li key={it.seq} className="text-sm">
+                  <div className="flex items-start gap-2">
+                    <button
+                      disabled={!canToggle}
+                      onClick={() => onToggleCompleted([it], !it.completed)}
+                      className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                        it.completed ? "bg-green-600 border-green-600 text-white" : "border-border text-transparent"
+                      } ${canToggle ? "cursor-pointer" : "cursor-default"}`}
+                      title={
+                        it.completed
+                          ? "Completed — tap to undo"
+                          : perUnit
+                            ? "Mark completed on every unit"
+                            : "Mark completed"
+                      }
+                    >
+                      <Check className="w-3 h-3" />
+                    </button>
+                    <span className="font-mono text-xs font-bold text-muted mt-0.5 shrink-0">{padSeq(it.seq)}</span>
+                    <span className="flex-1 min-w-0">
+                      <span>{it.label}</span>
+                      {perUnit ? (
+                        <span className="text-muted">
+                          {" "}
+                          — {doneUnits} of {it.unitStates.length} units
                         </span>
+                      ) : (
+                        it.units.length > 0 && <span className="text-muted"> — {it.units.join(", ")}</span>
                       )}
+                      <span className="flex flex-wrap gap-x-2">
+                        {it.reviewed && it.reviewedByName && (
+                          <span className="text-[10px] text-blue-600">
+                            Reviewed by {it.reviewedByName}
+                            {it.reviewedAt ? ` · ${format(parseISO(it.reviewedAt), "MMM d")}` : ""}
+                          </span>
+                        )}
+                      </span>
                     </span>
-                  </span>
+                  </div>
+                  {perUnit && (
+                    <ul className="mt-1 ml-6 space-y-1">
+                      {it.unitStates.map((u) => (
+                        <li key={u.unitLabel} className="flex items-center gap-2">
+                          <button
+                            disabled={!canToggle}
+                            onClick={() => onToggleUnitCompleted(u.sources, !u.completed)}
+                            className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                              u.completed ? "bg-green-600 border-green-600 text-white" : "border-border text-transparent"
+                            } ${canToggle ? "cursor-pointer" : "cursor-default"}`}
+                            title={u.completed ? `${u.unitLabel} done — tap to undo` : `Mark done on ${u.unitLabel}`}
+                          >
+                            <Check className="w-2.5 h-2.5" />
+                          </button>
+                          <span className={`text-xs ${u.completed ? "line-through text-muted" : "text-muted"}`}>
+                            {u.unitLabel}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </li>
               );
             })}
