@@ -22,6 +22,7 @@
 // trim over afterwards, and every function below resolves rather than throwing.
 
 import { getSupabase } from "./supabase";
+import { mergeLengths } from "./lengths";
 import { WriteUpMaterialItem } from "./types";
 import { isOrderable } from "./trim-vendor";
 
@@ -88,11 +89,37 @@ function newLineId(): string {
   return "qo-" + Date.now() + Math.random().toString(36).slice(2, 5);
 }
 
-/** The trim lines from a write-up that actually need ordering. */
+/** Whether two lengths entries combine into one that still says the same
+ *  thing. "4@8'" + "2@8'" is 6 pieces and "2" + "2" is 4 of something, but
+ *  ".5" + ".5" is half a roll twice over, which mergeLengths keeps as ".5" —
+ *  merging those two lines would order half of what the field asked for. So
+ *  anything that doesn't add up is left as separate lines. */
+function lengthsAddUp(a: string, b: string): boolean {
+  const left = (a || "").trim();
+  const right = (b || "").trim();
+  if (!left || left === "—" || !right || right === "—") return true;
+  const counted = (s: string) => /(\d+)@(\S+)/.test(s);
+  if (counted(left) && counted(right)) return true;
+  return /^\d+$/.test(left) && /^\d+$/.test(right);
+}
+
+/**
+ * The trim lines from a write-up that actually need ordering.
+ *
+ * Identical lines are combined into one, quantities added and lengths merged.
+ * A work item spanning three units now carries a material list PER UNIT, so the
+ * same casing on all three arrives here as three lines — and the order editor
+ * has no unit on a line, so those would read as three anonymous copies of each
+ * other and print as three rows on the vendor's PO. One line to buy is what the
+ * office always got from a write-up, and what its own material total still
+ * shows, so that is what goes over.
+ */
 export function orderableTrimLines(materials: WriteUpMaterialItem[]): StandaloneOrderLine[] {
-  return materials
-    .filter((m) => m.kind !== "part" && (m.item || "").trim() && isOrderable(m.vendor))
-    .map((m) => ({
+  const out: StandaloneOrderLine[] = [];
+  const byKey = new Map<string, StandaloneOrderLine>();
+  for (const m of materials) {
+    if (m.kind === "part" || !(m.item || "").trim() || !isOrderable(m.vendor)) continue;
+    const line: StandaloneOrderLine = {
       id: newLineId(),
       profileId: m.profileId || "",
       profile: (m.item || "").trim(),
@@ -102,7 +129,27 @@ export function orderableTrimLines(materials: WriteUpMaterialItem[]): Standalone
       vendor: (m.vendor || "").trim(),
       qty: m.qty > 0 ? m.qty : 1,
       lengths: m.lengths || "",
-    }));
+    };
+    // The unit of measure joins the key even though a line doesn't carry one:
+    // 2 tubes and 2 pieces of the same thing are not 4 of anything.
+    const key = [
+      line.profileId,
+      line.profile.toLowerCase(),
+      line.species.toLowerCase(),
+      line.color.toLowerCase(),
+      line.vendor.toLowerCase(),
+      (m.unit || "").trim().toLowerCase(),
+    ].join("|");
+    const seen = byKey.get(key);
+    if (!seen || !lengthsAddUp(seen.lengths, line.lengths)) {
+      if (!seen) byKey.set(key, line);
+      out.push(line);
+      continue;
+    }
+    seen.qty += line.qty;
+    seen.lengths = mergeLengths(seen.lengths, line.lengths);
+  }
+  return out;
 }
 
 /** Identity of a trim line for "is this the same line?" purposes. Quantity is
