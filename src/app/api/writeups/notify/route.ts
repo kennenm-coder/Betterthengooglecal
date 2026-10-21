@@ -33,6 +33,11 @@ export const runtime = "nodejs";
  * therefore be one of:
  *   - an address on the `allowed_emails` roster (a team member), or
  *   - an address an admin put in someone's `auto_cc` (a known external), or
+ *   - an address an admin set as a default recipient on the Admin page
+ *     (`action_settings`: the write-up To list, the field-notes inbox, and the
+ *     action people) — these are shared inboxes like fieldnotes@rbanwo.com that
+ *     have no roster row of their own, and `action_settings` is admin-write
+ *     only (migration 017), so trusting them is the same trust as `auto_cc`, or
  *   - on a domain listed in WRITEUP_ALLOWED_DOMAINS.
  */
 export async function POST(request: Request) {
@@ -93,16 +98,40 @@ export async function POST(request: Request) {
     if (rosterError) throw new Error(rosterError.message);
 
     permitted = new Set<string>();
+    const permit = (v: unknown) => {
+      if (typeof v === "string" && v.trim()) permitted.add(v.trim().toLowerCase());
+    };
+
     for (const row of roster ?? []) {
-      if (typeof row.email === "string" && row.email.trim()) {
-        permitted.add(row.email.trim().toLowerCase());
-      }
-      for (const entry of Array.isArray(row.auto_cc) ? row.auto_cc : []) {
-        if (typeof entry === "string" && entry.trim()) {
-          permitted.add(entry.trim().toLowerCase());
+      permit(row.email);
+      for (const entry of Array.isArray(row.auto_cc) ? row.auto_cc : []) permit(entry);
+    }
+
+    // The default recipients an admin set on the Admin page. Shared inboxes
+    // (fieldnotes@, procurement@, …) are never roster rows, so without these
+    // every send was rejected — the whole feature 403'd on its own defaults.
+    const { data: settings, error: settingsError } = await admin
+      .from("action_settings")
+      .select("key, value")
+      .in("key", ["writeup_email_to", "fieldnotes_email_to", "action_people"]);
+    if (settingsError) throw new Error(settingsError.message);
+
+    for (const row of settings ?? []) {
+      const value = row.value;
+      if (row.key === "action_people") {
+        for (const person of Array.isArray(value) ? value : []) {
+          permit((person as { email?: unknown } | null)?.email);
         }
+      } else if (Array.isArray(value)) {
+        for (const entry of value) permit(entry);
+      } else {
+        permit(value);
       }
     }
+
+    // The hard-coded fallbacks the clients use when those settings are unset
+    // (DEFAULT_WRITEUP_EMAIL / DEFAULT_FIELDNOTES_EMAIL / WRITEUP_EMAIL_TO).
+    permit("fieldnotes@rbanwo.com");
   } catch (err) {
     // Fail CLOSED. If we can't tell who is allowed, we don't send — the
     // write-up itself is already saved, and the UI shows "email didn't send".
