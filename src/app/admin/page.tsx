@@ -31,10 +31,18 @@ import {
   LogOut,
   Check,
   UserPlus,
+  Search,
+  ShieldAlert,
 } from "lucide-react";
 import { createAuthClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { ROLE_OPTIONS, ROLE_STYLES, isAdmin, installerRoleConflict } from "@/lib/roles";
+import {
+  ROLE_OPTIONS,
+  ROLE_STYLES,
+  ROLE_LABELS,
+  isAdmin,
+  installerRoleConflict,
+} from "@/lib/roles";
 import { getWriteUpPresets, setWriteUpPresets } from "@/lib/work-order-store";
 import { format, parseISO } from "date-fns";
 
@@ -174,6 +182,23 @@ interface AccessRequest {
   created_at: string;
 }
 
+/**
+ * A removal waiting on its typed confirmation. Denying a request throws away
+ * someone's ask for access — they have to go and request it all over again —
+ * so it gets the same gate as deleting an account outright.
+ */
+type PendingRemoval =
+  | { kind: "delete"; entry: AllowedEmail }
+  | { kind: "deny"; request: AccessRequest };
+
+function removalVerb(p: PendingRemoval): RemovalVerb {
+  return p.kind === "delete" ? "delete" : "deny";
+}
+
+function removalPerson(p: PendingRemoval): { email: string; name: string | null } {
+  return p.kind === "delete" ? p.entry : p.request;
+}
+
 // Calendar-app RLS keys off the single `role` column. When someone holds
 // multiple roles we still store one primary `role` (highest calendar role
 // present), and the full set in `roles`. Scheduling-only accounts fall back
@@ -190,6 +215,38 @@ function primaryRole(roles: string[]): string {
 function rowRoles(entry: { role: string; roles: string[] | null }): string[] {
   if (Array.isArray(entry.roles) && entry.roles.length) return entry.roles;
   return entry.role ? [entry.role] : [];
+}
+
+/** What a row sorts and searches by — their name, or the email if unnamed. */
+function displayName(entry: { email: string; name: string | null }): string {
+  return entry.name?.trim() || entry.email;
+}
+
+/** The two things on this page that cannot be undone. */
+type RemovalVerb = "delete" | "deny";
+
+/**
+ * The sentence an admin has to type out before a removal goes through.
+ *
+ * It names the person on purpose: a phrase you could type from muscle memory
+ * ("DELETE") stops nothing, but one you can only produce by reading the row
+ * in front of you makes removing the WRONG person very hard to do by accident.
+ */
+function confirmPhraseFor(
+  verb: RemovalVerb,
+  person: { email: string; name: string | null }
+): string {
+  return `please ${verb} ${displayName(person)}`;
+}
+
+/** Forgiving on case and stray spaces, strict on the actual words. */
+function phraseMatches(
+  typed: string,
+  verb: RemovalVerb,
+  person: { email: string; name: string | null }
+): boolean {
+  const norm = (v: string) => v.trim().replace(/\s+/g, " ").toLowerCase();
+  return norm(typed) === norm(confirmPhraseFor(verb, person));
 }
 
 /** Checkbox group for assigning multiple roles. */
@@ -301,6 +358,15 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
   const [crews, setCrews] = useState<SchedCrew[]>([]);
   const [newCrewId, setNewCrewId] = useState<string | null>(null);
   const [editCrewId, setEditCrewId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState<string[]>([]);
+  // The removal that has been STARTED — an account delete, or a denied access
+  // request. Neither happens until the sentence in the dialog is typed out in
+  // full, so both share one piece of state and one dialog.
+  const [pending, setPending] = useState<PendingRemoval | null>(null);
+  const [typed, setTyped] = useState("");
+  const [removeError, setRemoveError] = useState("");
+  const [removing, setRemoving] = useState(false);
 
   // Payroll admins can only assign member or payroll-admin roles — not admin,
   // and not installer: it is a restricted role whose setup also needs a
@@ -384,10 +450,14 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
     await loadData();
   }
 
-  async function denyRequest(id: string) {
+  async function denyRequest(req: AccessRequest) {
     const supabase = createAuthClient();
-    await supabase.from("access_requests").delete().eq("id", id);
-    setRequests((prev) => prev.filter((r) => r.id !== id));
+    const { error: denyErr } = await supabase
+      .from("access_requests")
+      .delete()
+      .eq("id", req.id);
+    if (denyErr) throw new Error(denyErr.message);
+    setRequests((prev) => prev.filter((r) => r.id !== req.id));
   }
 
   async function addEmail() {
@@ -530,17 +600,63 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
     }
   }
 
-  async function removeEmail(id: string) {
-    // Prevent removing the last admin
-    const entry = emails.find((e) => e.id === id);
-    if (entry && isLastAdminEntry(entry)) {
-      setError("Cannot remove the last admin. Promote another admin first.");
+  function startRemoval(next: PendingRemoval) {
+    setTyped("");
+    setRemoveError("");
+    setPending(next);
+  }
+
+  function cancelRemoval() {
+    setPending(null);
+    setTyped("");
+    setRemoveError("");
+  }
+
+  async function deleteAccount(entry: AllowedEmail) {
+    const supabase = createAuthClient();
+    const { data: removed, error: deleteErr } = await supabase
+      .from("allowed_emails")
+      .delete()
+      .eq("id", entry.id)
+      .select();
+
+    if (deleteErr) throw new Error(deleteErr.message);
+    if (!removed || removed.length === 0) {
+      // Delete ran but changed nothing — RLS turned it down.
+      throw new Error(
+        "That delete was blocked by database permissions (no row removed). Your account may not have admin rights in the database."
+      );
+    }
+    setEmails((prev) => prev.filter((e) => e.id !== entry.id));
+  }
+
+  async function confirmRemoval() {
+    if (!pending) return;
+    const person = removalPerson(pending);
+    // Belt and braces: the button is disabled until the sentence matches, but
+    // a stray Enter key should not be able to get round that either.
+    if (!phraseMatches(typed, removalVerb(pending), person)) return;
+    if (pending.kind === "delete" && isLastAdminEntry(pending.entry)) return;
+
+    setRemoving(true);
+    setRemoveError("");
+
+    try {
+      if (pending.kind === "delete") {
+        await deleteAccount(pending.entry);
+      } else {
+        await denyRequest(pending.request);
+      }
+    } catch (err) {
+      setRemoveError(
+        err instanceof Error ? err.message : "Something went wrong. Try again."
+      );
+      setRemoving(false);
       return;
     }
 
-    const supabase = createAuthClient();
-    await supabase.from("allowed_emails").delete().eq("id", id);
-    setEmails((prev) => prev.filter((e) => e.id !== id));
+    setRemoving(false);
+    cancelRemoval();
   }
 
   async function handleSignOut() {
@@ -554,6 +670,50 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
       <div className="flex items-center justify-center py-12">
         <Loader2 className="w-6 h-6 text-primary animate-spin" />
       </div>
+    );
+  }
+
+  // Only the roles somebody actually holds get a filter chip — the full
+  // ROLE_OPTIONS list is far too long to sit above the roster.
+  const roleCounts = new Map<string, number>();
+  for (const entry of emails) {
+    for (const r of rowRoles(entry)) {
+      roleCounts.set(r, (roleCounts.get(r) || 0) + 1);
+    }
+  }
+  const filterRoles = ROLE_OPTIONS.filter((r) => roleCounts.has(r.value));
+
+  const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const visible = emails
+    .filter((entry) => {
+      const roles = rowRoles(entry);
+      // Several roles ticked reads as "any of these", which is what you want
+      // when you are asking who can do a thing.
+      if (roleFilter.length && !roleFilter.some((r) => roles.includes(r))) {
+        return false;
+      }
+      if (!terms.length) return true;
+      const haystack = [
+        entry.name || "",
+        entry.email,
+        ...roles.map((r) => ROLE_LABELS[r] || r),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return terms.every((t) => haystack.includes(t));
+    })
+    // Added-in order is useless for finding anyone; A–Z is not.
+    .sort((a, b) =>
+      displayName(a).localeCompare(displayName(b), undefined, {
+        sensitivity: "base",
+      })
+    );
+
+  const filtering = terms.length > 0 || roleFilter.length > 0;
+
+  function toggleRoleFilter(value: string) {
+    setRoleFilter((prev) =>
+      prev.includes(value) ? prev.filter((r) => r !== value) : [...prev, value]
     );
   }
 
@@ -595,9 +755,9 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                     <Check className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => denyRequest(req.id)}
+                    onClick={() => startRemoval({ kind: "deny", request: req })}
                     className="p-1.5 rounded hover:bg-danger/10 text-danger transition-colors"
-                    title="Deny"
+                    title={`Deny ${displayName(req)}`}
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -617,8 +777,80 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
           create an account.
         </p>
 
+        {emails.length > 0 && (
+          <div className="space-y-2 mb-3">
+            <div className="relative">
+              <Search className="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search name, email or role"
+                className="w-full rounded-lg border border-border bg-background pl-9 pr-9 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-muted hover:text-foreground transition-colors"
+                  title="Clear search"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {filterRoles.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {filterRoles.map((r) => {
+                  const on = roleFilter.includes(r.value);
+                  return (
+                    <button
+                      key={r.value}
+                      type="button"
+                      onClick={() => toggleRoleFilter(r.value)}
+                      className={`text-[11px] font-medium px-2 py-1 rounded-full border transition-colors ${
+                        on
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-background text-muted hover:border-primary/40"
+                      }`}
+                    >
+                      {r.label}
+                      <span className="ml-1 opacity-60">
+                        {roleCounts.get(r.value)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-muted">
+                {filtering
+                  ? `${visible.length} of ${emails.length} ${
+                      emails.length === 1 ? "account" : "accounts"
+                    }`
+                  : `${emails.length} ${
+                      emails.length === 1 ? "account" : "accounts"
+                    }, A–Z`}
+              </p>
+              {filtering && (
+                <button
+                  onClick={() => {
+                    setSearch("");
+                    setRoleFilter([]);
+                  }}
+                  className="text-[11px] text-primary hover:underline"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="space-y-2">
-          {emails.map((entry) =>
+          {visible.map((entry) =>
             editingId === entry.id ? (
               <div
                 key={entry.id}
@@ -745,8 +977,9 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      removeEmail(entry.id);
+                      startRemoval({ kind: "delete", entry });
                     }}
+                    title={`Delete ${displayName(entry)}`}
                     className="p-1.5 rounded hover:bg-danger/10 text-muted hover:text-danger transition-colors shrink-0 ml-2"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -763,6 +996,22 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
               <p className="text-xs mt-1">
                 Add team member emails below to grant access
               </p>
+            </div>
+          )}
+
+          {emails.length > 0 && visible.length === 0 && (
+            <div className="text-center py-6 text-muted">
+              <Search className="w-8 h-8 mx-auto mb-2" />
+              <p className="text-sm">No accounts match</p>
+              <button
+                onClick={() => {
+                  setSearch("");
+                  setRoleFilter([]);
+                }}
+                className="text-xs text-primary hover:underline mt-1"
+              >
+                Clear filters
+              </button>
             </div>
           )}
         </div>
@@ -837,6 +1086,179 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
           Sign Out
         </button>
       </section>
+
+      {pending && (
+        <ConfirmRemovalDialog
+          pending={pending}
+          blocked={
+            pending.kind === "delete" && isLastAdminEntry(pending.entry)
+              ? "This is the last admin account. Promote someone else to admin first, then it can be removed."
+              : null
+          }
+          typed={typed}
+          onTyped={(v) => {
+            setTyped(v);
+            setRemoveError("");
+          }}
+          error={removeError}
+          busy={removing}
+          onConfirm={confirmRemoval}
+          onCancel={cancelRemoval}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The two actions on this page nothing undoes — deleting an account, and
+ * denying an access request — are deliberately slow: a dialog you cannot click
+ * past, and a sentence naming the person that has to be typed out before the
+ * button turns on.
+ */
+function ConfirmRemovalDialog({
+  pending,
+  blocked,
+  typed,
+  onTyped,
+  error,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  pending: PendingRemoval;
+  blocked: string | null;
+  typed: string;
+  onTyped: (next: string) => void;
+  error: string;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const verb = removalVerb(pending);
+  const person = removalPerson(pending);
+  const roles = pending.kind === "delete" ? rowRoles(pending.entry) : [];
+  const phrase = confirmPhraseFor(verb, person);
+  const ready = !blocked && phraseMatches(typed, verb, person);
+
+  const heading =
+    pending.kind === "delete" ? "Delete this account?" : "Deny this request?";
+  const blurb =
+    pending.kind === "delete"
+      ? "They lose access to the app immediately, and this cannot be undone."
+      : "Their request is thrown away and they are not added to the team. If this was a mistake they have to request access all over again.";
+  const confirmLabel =
+    pending.kind === "delete" ? "Delete account" : "Deny request";
+  const busyLabel = pending.kind === "delete" ? "Deleting..." : "Denying...";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-4"
+      onClick={() => !busy && onCancel()}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-xl border border-danger/30 bg-background p-4 space-y-4 max-h-[90vh] overflow-y-auto"
+      >
+        <div className="flex items-start gap-3">
+          <ShieldAlert className="w-5 h-5 text-danger shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">{heading}</p>
+            <p className="text-xs text-muted mt-1">{blurb}</p>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-sm font-medium truncate">
+              {displayName(person)}
+            </span>
+            {roles.map((r) => (
+              <span
+                key={r}
+                className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${
+                  ROLE_STYLES[r] || ROLE_STYLES.member
+                }`}
+              >
+                {ROLE_LABELS[r] || r}
+              </span>
+            ))}
+          </div>
+          <span className="text-xs text-muted block truncate">
+            {person.email}
+          </span>
+        </div>
+
+        {blocked ? (
+          <p className="text-xs text-danger flex items-start gap-1">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+            {blocked}
+          </p>
+        ) : (
+          <div>
+            <p className="text-xs text-muted mb-2">
+              To confirm, type{" "}
+              <span className="font-semibold text-foreground">{phrase}</span>{" "}
+              below.
+            </p>
+            <input
+              type="text"
+              value={typed}
+              onChange={(e) => onTyped(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && ready && !busy) onConfirm();
+                if (e.key === "Escape" && !busy) onCancel();
+              }}
+              placeholder={phrase}
+              disabled={busy}
+              autoFocus
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-danger/50 disabled:opacity-60"
+            />
+          </div>
+        )}
+
+        {error && (
+          <p className="text-xs text-danger flex items-start gap-1">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+            {error}
+          </p>
+        )}
+
+        <div className="flex gap-2">
+          {!blocked && (
+            <button
+              onClick={onConfirm}
+              disabled={!ready || busy}
+              className="flex-1 py-2.5 rounded-lg bg-danger text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {busy ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {busyLabel}
+                </>
+              ) : (
+                <>
+                  {pending.kind === "delete" ? (
+                    <Trash2 className="w-4 h-4" />
+                  ) : (
+                    <X className="w-4 h-4" />
+                  )}
+                  {confirmLabel}
+                </>
+              )}
+            </button>
+          )}
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="flex-1 py-2.5 rounded-lg border border-border text-sm font-medium disabled:opacity-60"
+          >
+            {blocked ? "Close" : "Cancel"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
