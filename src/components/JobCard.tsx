@@ -120,7 +120,7 @@ export default function JobCard({
   const [showAction, setShowAction] = useState(false);
   const [showWriteUp, setShowWriteUp] = useState(false);
   const { user, roles } = useAuth();
-  const { applyLegacyLink } = useData();
+  const { applyLegacyLink, activeWriteUpsAt, refreshActiveWriteUps } = useData();
   const fieldWorker = canDoFieldWork(roles);
   const canEditLegacy = canEditLegacyLink(roles);
   const router = useRouter();
@@ -141,6 +141,14 @@ export default function JobCard({
   }, [order.dayCrews]);
   const mat = order.materialJob;
   const legacyUrl = order.legacyInstallUrl || null;
+
+  // A service job's own number finds nothing: the write-ups a crew needs were
+  // filed against the install. They're found by address, from the index the
+  // calendar already holds, so the button is here on the first paint or not at
+  // all — no spinner, and the legacy link still shows when there's nothing.
+  const writeUpRefs = order.workOrderType === "Service" ? activeWriteUpsAt(order.address) : [];
+  const writeUpOrders = new Set(writeUpRefs.map((r) => r.orderNumber).filter(Boolean));
+  const showWriteUps = writeUpRefs.length > 0;
 
   const [editingLegacy, setEditingLegacy] = useState(false);
   const [legacyInput, setLegacyInput] = useState("");
@@ -499,6 +507,25 @@ export default function JobCard({
             </div>
           )}
 
+          {/* Active write-ups at this address — a service tile's equivalent of
+              the install instructions button, since the issues to fix live on
+              the original install's order number, not this one. */}
+          {showWriteUps && (
+            <button
+              onClick={() => {
+                window.history.replaceState(null, "", `/?order=${order.id}`);
+                router.push(`/work-orders/address/${encodeURIComponent(order.address)}`);
+              }}
+              className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-amber-600 text-white text-sm font-medium active:scale-[0.98] transition-transform"
+            >
+              <Wrench className="w-4 h-4" />
+              Active Write-Ups
+              {writeUpOrders.size > 1 && (
+                <span className="text-xs font-normal opacity-90">· {writeUpOrders.size} orders</span>
+              )}
+            </button>
+          )}
+
           {/* Open Install Instructions — navigates to full page */}
           {mat && (
             <button
@@ -515,7 +542,7 @@ export default function JobCard({
 
           {/* Legacy install instructions — only when there's no real material
               job. Anyone can open the link; only scheduling/admin can edit it. */}
-          {!mat && (legacyUrl || canEditLegacy) && (
+          {!mat && !showWriteUps && (legacyUrl || canEditLegacy) && (
             <div className="mt-3">
               {legacyUrl && !editingLegacy && (
                 <>
@@ -603,7 +630,12 @@ export default function JobCard({
         <WriteUpModal
           order={order}
           units={mat?.units || []}
-          onClose={() => setShowWriteUp(false)}
+          onClose={() => {
+            setShowWriteUp(false);
+            // A write-up filed here is an active write-up at this address, so
+            // the index behind the service tiles has to pick it up.
+            refreshActiveWriteUps();
+          }}
         />
       )}
     </div>

@@ -18,8 +18,13 @@ import {
   deleteLegacyLink,
   yieldToMain,
 } from "@/lib/store";
+import {
+  fetchActiveWriteUpAddressIndex,
+  ActiveWriteUpRef,
+} from "@/lib/work-order-store";
+import { addressKey } from "@/lib/address-match";
 import { useAuth } from "@/hooks/useAuth";
-import { canEditLegacyLink } from "@/lib/roles";
+import { canEditLegacyLink, canSeeWriteUps } from "@/lib/roles";
 import { getSupabase } from "@/lib/supabase";
 
 const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"]);
@@ -40,6 +45,14 @@ interface DataContextType {
   resyncLinkedJobs: () => Promise<void>;
   /** Reflect a legacy install-link change locally (url, or null to clear). */
   applyLegacyLink: (orderNumber: string, url: string | null) => void;
+  /**
+   * The active write-ups at an address, from the thin index pulled on boot.
+   * Synchronous so a service tile can decide between the write-ups button and
+   * the legacy link while it renders, with no spinner in between.
+   */
+  activeWriteUpsAt: (address: string) => ActiveWriteUpRef[];
+  /** Re-pull the index after a write-up is filed, closed, or archived. */
+  refreshActiveWriteUps: () => Promise<void>;
 }
 
 const DataContext = createContext<DataContextType>({
@@ -54,6 +67,8 @@ const DataContext = createContext<DataContextType>({
   linkedJobsStale: false,
   resyncLinkedJobs: async () => {},
   applyLegacyLink: () => {},
+  activeWriteUpsAt: () => [],
+  refreshActiveWriteUps: async () => {},
 });
 
 export function useData() {
@@ -84,6 +99,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [loadingBackground, setLoadingBackground] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [linkedJobsStale, setLinkedJobsStale] = useState(false);
+  const [activeWriteUps, setActiveWriteUps] = useState<Map<string, ActiveWriteUpRef[]>>(new Map());
   const abortRef = useRef<AbortController | null>(null);
   const genRef = useRef(0);
   const loadedMonthsRef = useRef<Set<string>>(new Set());
@@ -311,6 +327,33 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const refreshActiveWriteUps = useCallback(async () => {
+    const index = await fetchActiveWriteUpAddressIndex().catch(() => null);
+    if (index) setActiveWriteUps(index);
+  }, []);
+
+  // Only the roles that can open a write-up pull the index; for everyone else
+  // the lookup answers empty and service tiles fall back to the legacy link.
+  const canViewWriteUps = canSeeWriteUps(roles);
+  useEffect(() => {
+    if (!canViewWriteUps) return;
+    refreshActiveWriteUps();
+  }, [canViewWriteUps, refreshActiveWriteUps]);
+
+  const activeWriteUpsAt = useCallback(
+    (address: string): ActiveWriteUpRef[] => {
+      if (!canViewWriteUps) return [];
+      const key = addressKey(address);
+      if (!key.street) return [];
+      const hits = activeWriteUps.get(key.street);
+      if (!hits) return [];
+      // ZIP only rules a row out when both sides have one — a write-up stored
+      // with the street line alone still belongs to this job.
+      return hits.filter((h) => !key.zip || !h.zip || h.zip === key.zip);
+    },
+    [activeWriteUps, canViewWriteUps]
+  );
+
   // Auto-delete legacy links that a real material job now overrides (the real
   // install instructions win). Best-effort + RLS-gated: only authorized roles
   // can delete, so this runs once role resolves. The tile hides overridden
@@ -392,6 +435,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         linkedJobsStale,
         resyncLinkedJobs,
         applyLegacyLink,
+        activeWriteUpsAt,
+        refreshActiveWriteUps,
       }}
     >
       {children}

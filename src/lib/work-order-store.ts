@@ -1,6 +1,7 @@
 import { getSupabase } from "./supabase";
 import { fetchCatalogAndOffsets, fetchTrimCatalogOptions, MaterialCatalog } from "./nwo-builder";
 import { fetchMaterialJobs } from "./store";
+import { addressKey } from "./address-match";
 import {
   FieldWorkOrder,
   WriteUpLineItem,
@@ -1843,6 +1844,78 @@ export async function fetchOpenWriteUpCounts(): Promise<Map<string, number>> {
     counts.set(row.order_number, (counts.get(row.order_number) || 0) + 1);
   }
   return counts;
+}
+
+// ─── Active write-ups by address ────────────────────────────────────────────
+// A service work order has its own number, so write-ups filed against the
+// original install can't be found by order number from a service tile. They're
+// found by address instead, which means the tile needs to know whether there
+// are any BEFORE it renders — the button has to appear or fall back to the
+// legacy link with no spinner in between.
+//
+// So the address index is deliberately thin: three columns for every active
+// write-up in the system, small enough to pull alongside the legacy links on
+// boot. The full rows (photos, line items, materials) are only fetched once
+// someone actually opens the viewer, and then only for the ids at that address.
+
+/** Submitted and not yet resolved. Drafts and closed/archived rows don't count. */
+export const ACTIVE_WRITEUP_STATUSES: WriteUpStatus[] = ["in_review", "open"];
+
+export interface ActiveWriteUpRef {
+  id: string;
+  orderNumber: string;
+  address: string;
+  zip: string;
+}
+
+/**
+ * Every active write-up, grouped by normalized street line.
+ *
+ * Rows whose address doesn't parse as a street address are dropped — they could
+ * not be matched to a work order with any confidence, and a wrong match would
+ * put another customer's issues on this crew's screen.
+ */
+export async function fetchActiveWriteUpAddressIndex(): Promise<Map<string, ActiveWriteUpRef[]>> {
+  const index = new Map<string, ActiveWriteUpRef[]>();
+  const supabase = getSupabase();
+  if (!supabase) return index;
+  const { data, error } = await supabase
+    .from("field_work_orders")
+    .select("id, order_number, address")
+    .in("status", ACTIVE_WRITEUP_STATUSES);
+  if (error || !data) return index;
+
+  for (const row of data as { id: string; order_number: string | null; address: string | null }[]) {
+    const key = addressKey(row.address);
+    if (!key.street) continue;
+    const list = index.get(key.street) || [];
+    list.push({
+      id: row.id,
+      orderNumber: row.order_number || "",
+      address: row.address || "",
+      zip: key.zip,
+    });
+    index.set(key.street, list);
+  }
+  return index;
+}
+
+/**
+ * The active write-ups at an address, keyed off the index rather than a
+ * server-side address comparison — the ids are a primary-key lookup, so no
+ * amount of address drift can make this query slow or wrong.
+ */
+export async function fetchWriteUpsByIds(ids: string[]): Promise<FieldWorkOrder[]> {
+  const supabase = getSupabase();
+  if (!supabase || ids.length === 0) return [];
+  const { data, error } = await supabase
+    .from("field_work_orders")
+    .select("*")
+    .in("id", ids)
+    .in("status", ACTIVE_WRITEUP_STATUSES)
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
+  return (data as FieldWorkOrderRow[]).map(rowToWriteUp);
 }
 
 /**
