@@ -49,6 +49,7 @@
 -- 004s (004_payroll_admin_team_access and 004_scheduling_roles).
 --
 -- Last full run: 2026-10-15 — every migration 001-038 applied.
+-- 039 applied 2026-10-23 (index confirmed present in pg_indexes).
 -- ============================================================
 
 with
@@ -64,6 +65,7 @@ bkt as (select id as k from storage.buckets),
 pol as (select tablename as t, policyname as p,
                coalesce(qual, '') || ' ' || coalesce(with_check, '') as body
           from pg_policies),
+idx as (select indexname as k from pg_indexes where schemaname = 'public'),
 grt as (select distinct table_name as k
           from information_schema.role_table_grants
          where table_schema = 'public' and grantee = 'authenticated'
@@ -295,7 +297,12 @@ checks(migration, feature, verdict, checked) as (values
         and exists(select 1 from pol where t = 'standalone_trim_orders'
                      and p = 'cutlist_write_standalone_trim_orders' and body like '%standalone-trim%')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'the NEW fieldmgr insert policy AND standalone-trim inside the older cut-list policy')
+  'the NEW fieldmgr insert policy AND standalone-trim inside the older cut-list policy'),
+
+ ('039', 'active write-ups by address',
+  case when exists(select 1 from idx where k = 'idx_field_work_orders_active_address')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'the partial index behind the service tiles'' write-up lookup')
 )
 select migration, feature, verdict, checked
 from checks
