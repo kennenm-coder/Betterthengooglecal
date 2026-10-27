@@ -37,15 +37,17 @@ const FAMILIES: { key: string; test: RegExp; unless?: RegExp }[] = [
   { key: "patio door", test: /\bpatio\b|frenchwood|\bgliding\s+door\b|\bhinged\s+door\b|\bsliding\s+door\b/ },
   { key: "entry door", test: /\bentry\b|\bentrance\b|\bfront\s+door\b/ },
   { key: "storm door", test: /\bstorm\b/ },
-  // Windows.
-  { key: "casement", test: /\bcasement\b|\bcasment\b|\bcsmt\b/ },
+  // Windows. Fixed casement before casement/picture: it looks like both, but
+  // its parts are its own — a casement frame with picture glass, no operator.
+  { key: "fixed casement", test: /\bfixed[\s-]?casement\b|\bfc\b|\bcasement[\s-]?picture\b|\bpicture[\s-]?casement\b/ },
+  { key: "casement", test: /\bcasement\b|\bcasment\b|\bcsmt\b/, unless: /\bfixed[\s-]?casement\b|\bcasement[\s-]?picture\b|\bpicture[\s-]?casement\b/ },
   { key: "awning", test: /\bawning\b|\bawn\b/ },
   { key: "double hung", test: /\bdouble[\s-]?hung\b|\bsingle[\s-]?hung\b|\bdbl[\s-]?hung\b|\bd\.?h\.?\b|\bhung\b/ },
   // "Gliding" on its own is a window; on a door it is a patio door, caught
   // above. Without this, gliding-window parts would follow a patio-door unit
   // around and vice versa.
   { key: "gliding window", test: /\bglider\b|\bgliding\b|\bsliding\b|\bslider\b/, unless: /\bdoor\b|\bpatio\b|frenchwood/ },
-  { key: "picture", test: /\bpicture\b|\bfixed\b|\bdirect[\s-]?set\b|\bpict\b/ },
+  { key: "picture", test: /\bpicture\b|\bfixed\b|\bdirect[\s-]?set\b|\bpict\b/, unless: /\bfixed[\s-]?casement\b|\bcasement[\s-]?picture\b|\bpicture[\s-]?casement\b/ },
   { key: "specialty", test: /\bspecialty\b|\barch\b|\barched\b|\bspringline\b|\bcircle\b|\bround\s?top\b|\boctagon\b|\btrapezoid\b|\btriangle\b|\bhalf[\s-]?round\b/ },
   { key: "transom", test: /\btransom\b/ },
   { key: "skylight", test: /\bskylight\b|\broof\s+window\b/ },
