@@ -35,6 +35,7 @@ import { canDoFieldWork, canEditLegacyLink } from "@/lib/roles";
 import { upsertLegacyLink, deleteLegacyLink } from "@/lib/store";
 import { useData } from "./DataProvider";
 import { parseISO, isSameDay } from "date-fns";
+import { describeParts } from "@/lib/purchase-orders";
 
 function isValidHttpUrl(s: string): boolean {
   try {
@@ -120,7 +121,7 @@ export default function JobCard({
   const [showAction, setShowAction] = useState(false);
   const [showWriteUp, setShowWriteUp] = useState(false);
   const { user, roles } = useAuth();
-  const { applyLegacyLink, activeWriteUpsAt, refreshActiveWriteUps } = useData();
+  const { applyLegacyLink, activeWriteUpsAt, refreshActiveWriteUps, partsFor } = useData();
   const fieldWorker = canDoFieldWork(roles);
   const canEditLegacy = canEditLegacyLink(roles);
   const router = useRouter();
@@ -146,6 +147,14 @@ export default function JobCard({
   // filed against the install. They're found by address, from the index the
   // calendar already holds, so the button is here on the first paint or not at
   // all — no spinner, and the legacy link still shows when there's nothing.
+  // What rForce says about this job's own product or parts. A service job has
+  // its own purchase orders now (migration 042), so this answers for one as
+  // readily as for an install — and it is the question people walk to the dock
+  // to settle. Null when the feed knows nothing, which leaves the tile as it
+  // was; installers can't read the table at all, so it is null for them too.
+  const parts = describeParts(partsFor(order.orderNumber));
+  const partsLabel = order.workOrderType === "Service" ? "Parts" : "Product";
+
   const writeUpRefs = order.workOrderType === "Service" ? activeWriteUpsAt(order.address) : [];
   const writeUpOrders = new Set(writeUpRefs.map((r) => r.orderNumber).filter(Boolean));
   const showWriteUps = writeUpRefs.length > 0;
@@ -491,6 +500,33 @@ export default function JobCard({
                   <span>Booked: {formatDateShort(order.bookingDate)}</span>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Is the product in yet? Always visible, because it is the thing
+              people phone the office about. Four states, in the order a job
+              passes through them — see lib/purchase-orders.ts. */}
+          {parts && (
+            <div
+              className="mt-3 pt-3 border-t border-border flex items-center gap-2 text-[15px]"
+              title={parts.detail}
+            >
+              <Package className="w-3.5 h-3.5 text-muted shrink-0" />
+              <span className="text-muted">{partsLabel}:</span>
+              <span
+                className={`px-2 py-0.5 rounded-full text-sm font-medium ${
+                  parts.stage === "received"
+                    ? "bg-emerald-500/10 text-emerald-700 border border-emerald-500/30"
+                    : parts.stage === "partial"
+                      ? "bg-amber-500/10 text-amber-700 border border-amber-500/30"
+                      : parts.stage === "ordered"
+                        ? "bg-sky-500/10 text-sky-700 border border-sky-500/30"
+                        : "bg-surface text-muted border border-border"
+                }`}
+              >
+                {parts.stage === "received" ? "✓ " : ""}
+                {parts.label}
+              </span>
             </div>
           )}
 

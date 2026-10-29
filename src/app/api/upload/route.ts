@@ -333,6 +333,45 @@ async function countMatchedOrders(rows: PurchaseOrderRow[]): Promise<number | nu
   return matched.size;
 }
 
+/**
+ * Confirm the jobs this feed now vouches for.
+ *
+ * Runs straight after every PO import, which is the whole point: the report
+ * arrives at 4:00 am on its own, and a job the vendor acknowledged weeks ago
+ * should not wait in the confirmation queue for somebody to remember to press
+ * a button.
+ *
+ * The rule is `rforce_auto_confirm()` (migration 043) and lives in the
+ * database rather than here, because the confirmation auditor's own screen
+ * runs the same sweep on demand and a rule that runs in two places must only
+ * be written once. It confirms a job only when the vendor has acknowledged
+ * every live PO on it, never touches one somebody already confirmed or has a
+ * draft open on, and marks what it writes as coming from the feed rather than
+ * from an audit.
+ *
+ * Non-fatal on purpose. The import's job is to land the purchase orders; if
+ * the sweep cannot run — most likely because 043 is not applied yet — the data
+ * is still correct and the auditor's button still works.
+ */
+async function autoConfirmFromFeed(): Promise<number | null> {
+  try {
+    const supabase = getAdminClient();
+    const { data, error } = await supabase.rpc("rforce_auto_confirm", {
+      p_apply: true,
+      p_actor: "rForce feed",
+    });
+    if (error) {
+      console.warn("rForce auto-confirm skipped:", error.message);
+      return null;
+    }
+    const rows = (data ?? []) as { confirmed?: boolean }[];
+    return rows.filter((r) => r.confirmed).length;
+  } catch (err) {
+    console.warn("rForce auto-confirm skipped:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const contentType = request.headers.get("content-type") || "";
@@ -407,6 +446,8 @@ export async function POST(request: NextRequest) {
       const upserted = await upsertPurchaseOrders(purchaseOrders);
       const distinctOrders = new Set(purchaseOrders.map((r) => r.order_number)).size;
       const matchedOrders = await countMatchedOrders(purchaseOrders);
+      // Only after the POs have landed — the sweep reads what we just wrote.
+      const autoConfirmed = await autoConfirmFromFeed();
 
       return NextResponse.json({
         success: true,
@@ -415,6 +456,7 @@ export async function POST(request: NextRequest) {
         upserted,
         orders: distinctOrders,
         matchedOrders,
+        autoConfirmed,
       });
     }
 

@@ -22,6 +22,11 @@ import {
   fetchActiveWriteUpAddressIndex,
   ActiveWriteUpRef,
 } from "@/lib/work-order-store";
+import {
+  fetchPurchaseOrderIndex,
+  PurchaseOrderIndex,
+  PurchaseOrderRollup,
+} from "@/lib/purchase-orders";
 import { addressKey } from "@/lib/address-match";
 import { useAuth } from "@/hooks/useAuth";
 import { canEditLegacyLink, canSeeWriteUps } from "@/lib/roles";
@@ -53,6 +58,16 @@ interface DataContextType {
   activeWriteUpsAt: (address: string) => ActiveWriteUpRef[];
   /** Re-pull the index after a write-up is filed, closed, or archived. */
   refreshActiveWriteUps: () => Promise<void>;
+  /**
+   * What rForce's vendor-PO feed knows about a job: how much of its product or
+   * parts the vendor has confirmed, when it ships, and whether it has landed.
+   * Keyed by order number, so it answers for a service job's own parts as
+   * readily as for an install's product (migration 042).
+   *
+   * Synchronous, like activeWriteUpsAt, so a tile decides what to draw on the
+   * first paint rather than popping a line in afterwards.
+   */
+  partsFor: (orderNumber: string) => PurchaseOrderRollup | null;
 }
 
 const DataContext = createContext<DataContextType>({
@@ -69,6 +84,7 @@ const DataContext = createContext<DataContextType>({
   applyLegacyLink: () => {},
   activeWriteUpsAt: () => [],
   refreshActiveWriteUps: async () => {},
+  partsFor: () => null,
 });
 
 export function useData() {
@@ -100,6 +116,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [linkedJobsStale, setLinkedJobsStale] = useState(false);
   const [activeWriteUps, setActiveWriteUps] = useState<Map<string, ActiveWriteUpRef[]>>(new Map());
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderIndex>(new Map());
   const abortRef = useRef<AbortController | null>(null);
   const genRef = useRef(0);
   const loadedMonthsRef = useRef<Set<string>>(new Set());
@@ -340,6 +357,28 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     refreshActiveWriteUps();
   }, [canViewWriteUps, refreshActiveWriteUps]);
 
+  // The feed refreshes once a day at 4am, so this is pulled once on boot
+  // alongside the write-up index. ~530 small rows. Installers are excluded by
+  // the table's own policy (040) and the read simply comes back empty for
+  // them, so the parts line never appears on their tiles — product cost is not
+  // theirs to see, and the rollup carries it.
+  const refreshPurchaseOrders = useCallback(async () => {
+    const index = await fetchPurchaseOrderIndex().catch(() => null);
+    if (index && index.size > 0) setPurchaseOrders(index);
+  }, []);
+  useEffect(() => {
+    refreshPurchaseOrders();
+  }, [refreshPurchaseOrders]);
+
+  const partsFor = useCallback(
+    (orderNumber: string): PurchaseOrderRollup | null => {
+      const key = (orderNumber || "").trim();
+      if (!key) return null;
+      return purchaseOrders.get(key) ?? null;
+    },
+    [purchaseOrders]
+  );
+
   const activeWriteUpsAt = useCallback(
     (address: string): ActiveWriteUpRef[] => {
       if (!canViewWriteUps) return [];
@@ -437,6 +476,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         applyLegacyLink,
         activeWriteUpsAt,
         refreshActiveWriteUps,
+        partsFor,
       }}
     >
       {children}
