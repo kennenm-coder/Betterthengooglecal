@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { parseXlsHtml } from "@/lib/parse-xls";
 import { parseCsv } from "@/lib/parse-csv";
 import { isAccountsCsv, parseAccountsCsv, AccountRow } from "@/lib/parse-accounts-csv";
+import { isPurchaseOrderReport, parsePurchaseOrderReport, PurchaseOrderRow } from "@/lib/parse-po-report";
 import { WorkOrder } from "@/lib/types";
 import { requireRole, getAdminClient } from "@/lib/auth";
 import { writeImportLog, fetchExistingOrders, computeOrderChanges } from "@/lib/import-log";
@@ -17,8 +18,10 @@ export const maxDuration = 60;
 
 type FileResult = {
   text: string;
-  format: "xls" | "csv" | "accounts_csv" | "unknown";
+  format: ImportFormat;
 };
+
+type ImportFormat = "xls" | "csv" | "accounts_csv" | "po_report" | "unknown";
 
 async function getFileContent(request: NextRequest): Promise<FileResult | null> {
   const contentType = request.headers.get("content-type") || "";
@@ -80,8 +83,16 @@ async function getFileContent(request: NextRequest): Promise<FileResult | null> 
   return { text, format: detectFormat(text) };
 }
 
-function detectFormat(text: string): "xls" | "csv" | "accounts_csv" | "unknown" {
+function detectFormat(text: string): ImportFormat {
   const trimmed = text.replace(/^﻿/, "").trimStart();
+
+  // Vendor PO / ETA report, in either export shape — the HTML ".xls" or the
+  // "Details Only" CSV. Checked first because the HTML shape would otherwise
+  // be claimed by the work-order test below; the header it looks for appears
+  // in no other report we import.
+  if (isPurchaseOrderReport(trimmed)) {
+    return "po_report";
+  }
 
   // HTML table (XLS export)
   if (trimmed.startsWith("<") && trimmed.includes("<table")) {
@@ -245,6 +256,64 @@ async function upsertAccountsToSupabase(accounts: AccountRow[]) {
   return { updated, inserted, total: updated + inserted };
 }
 
+/**
+ * Upsert the vendor PO feed.
+ *
+ * Deliberately unlike upsertToSupabase() above: that one re-touches every row
+ * so the scheduling app can read a stalled `updated_at` as a cancellation.
+ * Here `last_seen_at` carries that signal instead, and the table's trigger
+ * leaves `updated_at` alone on a row whose reported fields did not move — so
+ * "what changed on this PO" stays answerable even though all ~730 rows are
+ * re-sent on every daily run.
+ *
+ * Cancelled POs are filtered out of the report upstream, so a PO that stops
+ * appearing simply stops advancing `last_seen_at`; nothing is ever deleted
+ * here. The trigger also owns `confirmed_at` / `received_at`, which is why
+ * neither is sent.
+ */
+async function upsertPurchaseOrders(rows: PurchaseOrderRow[]) {
+  const supabase = getAdminClient();
+  const seenAt = new Date().toISOString();
+
+  const payload = rows.map((row) => ({ ...row, last_seen_at: seenAt }));
+
+  const BATCH = 500;
+  let upserted = 0;
+  for (let i = 0; i < payload.length; i += BATCH) {
+    const chunk = payload.slice(i, i + BATCH);
+    const { error } = await supabase
+      .from("purchase_orders")
+      .upsert(chunk, { onConflict: "vendor_po_number" });
+
+    if (error) {
+      throw new Error(
+        `Purchase order upsert failed at batch ${Math.floor(i / BATCH) + 1}: ${error.message}`
+      );
+    }
+    upserted += chunk.length;
+  }
+  return upserted;
+}
+
+/**
+ * How many of the feed's order numbers we can actually tie to a work order.
+ * Reported back on every run rather than logged, because a sudden drop is the
+ * first sign the report's order-number column has changed shape.
+ */
+async function countMatchedOrders(rows: PurchaseOrderRow[]): Promise<number | null> {
+  const orderNumbers = [...new Set(rows.map((r) => r.order_number))];
+  if (orderNumbers.length === 0) return 0;
+
+  const supabase = getAdminClient();
+  const { data, error } = await supabase
+    .from("work_orders")
+    .select("order_number")
+    .in("order_number", orderNumbers);
+
+  if (error) return null;
+  return new Set((data ?? []).map((r) => r.order_number)).size;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const contentType = request.headers.get("content-type") || "";
@@ -303,6 +372,33 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Vendor PO / ETA path. No import log: the Changes tab is a field
+    // manager's view of jobs moving on the schedule, and a few hundred PO
+    // status ticks an hour would bury that — the same reason accounts uploads
+    // stay off it.
+    if (result.format === "po_report") {
+      const purchaseOrders = parsePurchaseOrderReport(result.text);
+      if (purchaseOrders.length === 0) {
+        return NextResponse.json(
+          { error: "PO report parsed but contained no valid purchase-order rows" },
+          { status: 400 }
+        );
+      }
+
+      const upserted = await upsertPurchaseOrders(purchaseOrders);
+      const distinctOrders = new Set(purchaseOrders.map((r) => r.order_number)).size;
+      const matchedOrders = await countMatchedOrders(purchaseOrders);
+
+      return NextResponse.json({
+        success: true,
+        format: "po_report",
+        parsed: purchaseOrders.length,
+        upserted,
+        orders: distinctOrders,
+        matchedOrders,
+      });
+    }
+
     // Work orders CSV / XLS path
     let orders: WorkOrder[];
     let format: string;
@@ -314,7 +410,14 @@ export async function POST(request: NextRequest) {
       orders = parseXlsHtml(result.text);
       format = "xls";
     } else {
-      orders = parseXlsHtml(result.text);
+      // Guess, but never guess that an unrecognised HTML table is the
+      // work-order export. parseXlsHtml falls back to the row's array index
+      // when there is no "Work Order Number" column, so a table of some other
+      // shape parses "successfully" into rows keyed 0, 1, 2… and overwrites
+      // real work orders. Now that three different reports arrive at this one
+      // endpoint, that header has to be present before we believe it.
+      const looksLikeWorkOrders = /work\s*order\s*number/i.test(result.text);
+      orders = looksLikeWorkOrders ? parseXlsHtml(result.text) : [];
       format = "xls";
       if (orders.length === 0) {
         orders = parseCsv(result.text);

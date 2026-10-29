@@ -236,3 +236,65 @@ Key Things to Verify During Setup
 - Supabase permissions allow the deployed app to select and upsert work_orders.
 - The latest report should not be expected to delete database records that are
   no longer present in Salesforce.
+
+
+The Third Report: Vendor PO / ETA
+---------------------------------
+
+A third rForce report arrives at the same /api/upload endpoint, the same way
+(Power Automate, base64 in "file", x-api-key header). Nothing about the
+Power Automate flow differs — the endpoint tells the three reports apart by
+their contents, not by the URL, the sender or the filename.
+
+Schedule: daily at 4:00 am, deliberately clear of the hourly 8am-5pm
+work-order import.
+
+Export settings in rForce's Attach File dialog: "Details Only". Either format
+works — "Comma Delimited .csv" or the HTML-table .xls — and both produce
+identical rows, so the setting can be changed without breaking the feed.
+
+Columns (one row per vendor purchase order):
+
+  1. Order: Status                            (informational)
+  2. Order: Sold Order Number                 <- the join key
+  3. Status                                   <- the PO's own status
+  4. Purchase Order: Purchase Order Number    <- the key, e.g. ZX3345099P
+  5. Vendor
+  6. Total                                    <- our cost for this PO
+  7. Estimated Ship Date                      <- blank until the PO is Confirmed
+  8. Order: Retail Total                      (informational)
+
+Cancelled POs are filtered out of the report in rForce.
+
+Detection: the endpoint looks for the header "Purchase Order: Purchase Order
+Number", which no other report we import carries. This test runs BEFORE the
+work-order XLS test, since both reports can be HTML tables.
+
+Parser: src/lib/parse-po-report.ts. Table: public.purchase_orders
+(migration 040). One sold order carries one to nine vendor POs, so this is a
+separate table joined on order_number, not columns on work_orders.
+
+Two naming traps worth saying out loud:
+
+- "PO number" means two different things here. The report's SOLD ORDER NUMBER
+  (04961974) is what the material-list app calls the job's P.O. # and what
+  work_orders.order_number holds. The report's PURCHASE ORDER NUMBER
+  (ZX3345099P) is the vendor PO. In the database they are `order_number` and
+  `vendor_po_number`.
+- "Estimated Ship Date" is a SHIP date. The confirmation auditor separately
+  stores a planned DELIVERY date read off the confirmation PDF. They are
+  different numbers and neither overwrites the other.
+
+Unlike the work-order import, this one does NOT re-touch unchanged rows to
+bump updated_at. The scheduling app's dropped-from-rForce check does not read
+this table; `last_seen_at` is the liveness signal here instead, and
+`updated_at` is reserved for POs that actually changed.
+
+The table also keeps three stamps the report does not provide: confirmed_at,
+received_at (roughly when product hit the dock — accurate to the day on a
+daily feed) and last_seen_at. A database trigger owns all three; the importer
+never sends them.
+
+PO imports are deliberately NOT written to import_logs. The Changes tab is a
+field manager's view of jobs moving on the schedule, and a few hundred PO
+status ticks would bury that — the same reason accounts uploads stay off it.

@@ -50,6 +50,7 @@
 --
 -- Last full run: 2026-10-15 — every migration 001-038 applied.
 -- 039 applied 2026-10-23 (index confirmed present in pg_indexes).
+-- 040 written 2026-10-29 — not yet applied at the time of writing.
 -- ============================================================
 
 with
@@ -302,7 +303,14 @@ checks(migration, feature, verdict, checked) as (values
  ('039', 'active write-ups by address',
   case when exists(select 1 from idx where k = 'idx_field_work_orders_active_address')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'the partial index behind the service tiles'' write-up lookup')
+  'the partial index behind the service tiles'' write-up lookup'),
+
+ ('040', 'vendor purchase orders (cost / ETA / dock)',
+  case when exists(select 1 from tbl where k = 'purchase_orders')
+        and exists(select 1 from fn where k = 'purchase_orders_stamp')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'the purchase_orders table AND its stamping trigger function — the table '
+  'alone would not prove the trigger half ran')
 )
 select migration, feature, verdict, checked
 from checks
