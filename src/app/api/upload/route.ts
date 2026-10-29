@@ -312,13 +312,25 @@ async function countMatchedOrders(rows: PurchaseOrderRow[]): Promise<number | nu
   if (orderNumbers.length === 0) return 0;
 
   const supabase = getAdminClient();
-  const { data, error } = await supabase
-    .from("work_orders")
-    .select("order_number")
-    .in("order_number", orderNumbers);
+  const matched = new Set<string>();
 
-  if (error) return null;
-  return new Set((data ?? []).map((r) => r.order_number)).size;
+  // Chunked, and not for URL length. One order carries several work orders —
+  // an install, a tech measure, any service visits — so asking about all ~530
+  // at once returns a few thousand rows and PostgREST caps the response. The
+  // count then silently reads low (469 instead of 530 on the 2026-10-29
+  // report), which is exactly the false alarm the comment above tells you to
+  // investigate. Small enough chunks stay under the cap.
+  const CHUNK = 150;
+  for (let i = 0; i < orderNumbers.length; i += CHUNK) {
+    const { data, error } = await supabase
+      .from("work_orders")
+      .select("order_number")
+      .in("order_number", orderNumbers.slice(i, i + CHUNK));
+
+    if (error) return null;
+    for (const row of data ?? []) if (row.order_number) matched.add(row.order_number);
+  }
+  return matched.size;
 }
 
 export async function POST(request: NextRequest) {
