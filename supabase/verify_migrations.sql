@@ -50,7 +50,8 @@
 --
 -- Last full run: 2026-10-15 — every migration 001-038 applied.
 -- 039 applied 2026-10-23 (index confirmed present in pg_indexes).
--- 040 written 2026-10-29 — not yet applied at the time of writing.
+-- 040 applied 2026-10-29 (table confirmed present, 702 rows imported).
+-- 041 written 2026-10-29 — not yet applied at the time of writing.
 -- ============================================================
 
 with
@@ -310,7 +311,12 @@ checks(migration, feature, verdict, checked) as (values
         and exists(select 1 from fn where k = 'purchase_orders_stamp')
        then 'APPLIED' else 'NOT APPLIED' end,
   'the purchase_orders table AND its stamping trigger function — the table '
-  'alone would not prove the trigger half ran')
+  'alone would not prove the trigger half ran'),
+
+ ('041', 'per-order PO rollup for the job cards',
+  case when exists(select 1 from fn where k = 'purchase_order_rollup')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'the rollup function the material-list job cards read')
 )
 select migration, feature, verdict, checked
 from checks
