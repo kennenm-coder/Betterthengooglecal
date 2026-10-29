@@ -296,9 +296,16 @@ async function upsertPurchaseOrders(rows: PurchaseOrderRow[]) {
 }
 
 /**
- * How many of the feed's order numbers we can actually tie to a work order.
+ * How many of the feed's JOB numbers we can actually tie to a work order.
  * Reported back on every run rather than logged, because a sudden drop is the
  * first sign the report's order-number column has changed shape.
+ *
+ * The baseline moved on 2026-10-29. This counts `order_number`, which used to
+ * be the sold order and is now the job the PO belongs to (migration 042), so
+ * service jobs match for the first time. On the 18:12 sample that day the
+ * figure went from 445 of 477 to 530 of 530 — every job number in the report
+ * now ties to a work order. Judge a drop against the new number, and treat
+ * anything short of "all of them" as worth a look.
  */
 async function countMatchedOrders(rows: PurchaseOrderRow[]): Promise<number | null> {
   const orderNumbers = [...new Set(rows.map((r) => r.order_number))];

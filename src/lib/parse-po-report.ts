@@ -8,12 +8,28 @@
  * dropdown apart in rForce's Attach File dialog and picking the other one
  * should not quietly stop the feed. Everything downstream of parsing is shared.
  *
- * Mind the two meanings of "PO" in this codebase. The report's
- * "Order: Sold Order Number" (04961974) is what the material-list app calls
- * the job's P.O. # (`data.job.poNumber`) and what `work_orders.order_number`
- * holds — that is the join key, stored here as `order_number`. The report's
- * "Purchase Order: Purchase Order Number" (ZX3345099P) is the vendor PO and
- * is stored as `vendor_po_number`. One order carries one to nine of them.
+ * Mind the THREE meanings of "order" this report now carries.
+ *
+ *   "Purchase Order: Purchase Order Number" (ZX3345099P) is the vendor PO,
+ *   stored as `vendor_po_number`. One order carries one to nine of them.
+ *
+ *   "Order: Order Number" is the JOB this PO belongs to — an install order or
+ *   a service order. Stored as `order_number`, and the join key: it is what
+ *   `work_orders.order_number` holds and what the material-list app calls the
+ *   job's P.O. # (`data.job.poNumber`).
+ *
+ *   "Order: Sold Order Number" (04961974) is the original order the customer
+ *   bought, stored as `sold_order_number`. Informational only.
+ *
+ * For the original product the last two are the same number. They diverge for
+ * SERVICE parts, where the sold number stays on the install that was sold and
+ * the job number points at the service order opened later — which is the only
+ * way to reach a service job's parts at all. See migration 042.
+ *
+ * "Order: Order Number" was added to the report on 2026-10-29, so the sold
+ * number is still accepted as a fallback for both: a run of the previous
+ * export, or a future one that drops the column, keeps importing with the old
+ * behaviour rather than failing.
  *
  * Cells are read by column INDEX off the header row rather than by building a
  * name→value object, because this report ships two columns whose names differ
@@ -25,7 +41,10 @@ import { parse } from "csv-parse/sync";
 
 export interface PurchaseOrderRow {
   vendor_po_number: string;
+  /** The job this PO belongs to — install or service. The join key. */
   order_number: string;
+  /** The original order the customer bought. Equal to order_number for product. */
+  sold_order_number: string;
   po_status: string;
   vendor: string;
   cost: number | null;
@@ -39,7 +58,9 @@ const SIGNATURE_HEADER = "purchase order: purchase order number";
 
 const HEADERS = {
   ORDER_STATUS: "order: status",
-  ORDER_NUMBER: "order: sold order number",
+  /** The job the PO belongs to. Added 2026-10-29; absent from older exports. */
+  JOB_ORDER_NUMBER: "order: order number",
+  SOLD_ORDER_NUMBER: "order: sold order number",
   PO_STATUS: "status",
   VENDOR_PO_NUMBER: SIGNATURE_HEADER,
   VENDOR: "vendor",
@@ -163,10 +184,14 @@ export function parsePurchaseOrderReport(content: string): PurchaseOrderRow[] {
   if (rows.length < 2) return [];
 
   const columns = indexHeaders(rows[0]);
-  // Without these two there is nothing to key on or to join to.
+  // Without a PO number and at least one order number there is nothing to key
+  // on or to join to. Either order column alone is enough: an old export has
+  // only the sold number, and each stands in for the other per row below.
   const poColumn = columns.get(HEADERS.VENDOR_PO_NUMBER);
-  const orderColumn = columns.get(HEADERS.ORDER_NUMBER);
-  if (poColumn === undefined || orderColumn === undefined) return [];
+  const jobOrderColumn = columns.get(HEADERS.JOB_ORDER_NUMBER);
+  const soldOrderColumn = columns.get(HEADERS.SOLD_ORDER_NUMBER);
+  if (poColumn === undefined) return [];
+  if (jobOrderColumn === undefined && soldOrderColumn === undefined) return [];
 
   // Last row wins on a repeated PO number. A PostgREST upsert cannot touch the
   // same key twice in one statement, so duplicates have to be collapsed here
@@ -179,12 +204,17 @@ export function parsePurchaseOrderReport(content: string): PurchaseOrderRow[] {
       column === undefined || column >= cells.length ? "" : (cells[column] ?? "").trim();
 
     const vendorPoNumber = at(poColumn);
-    const orderNumber = at(orderColumn);
-    if (!vendorPoNumber || !orderNumber) continue;
+    // Each falls back to the other, per row rather than per file: a blank cell
+    // in one column must not cost us the row, and on an old export the sold
+    // number is the only number there is.
+    const soldOrderNumber = at(soldOrderColumn);
+    const jobOrderNumber = at(jobOrderColumn) || soldOrderNumber;
+    if (!vendorPoNumber || !jobOrderNumber) continue;
 
     byPo.set(vendorPoNumber, {
       vendor_po_number: vendorPoNumber,
-      order_number: orderNumber,
+      order_number: jobOrderNumber,
+      sold_order_number: soldOrderNumber || jobOrderNumber,
       // Cancelled POs are filtered out of the report upstream, but if one ever
       // arrives it is stored as-is — consumers exclude that status. Dropping
       // the row instead would leave the old status sitting in the table

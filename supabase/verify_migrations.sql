@@ -316,7 +316,16 @@ checks(migration, feature, verdict, checked) as (values
  ('041', 'per-order PO rollup for the job cards',
   case when exists(select 1 from fn where k = 'purchase_order_rollup')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'the rollup function the material-list job cards read')
+  'the rollup function the material-list job cards read'),
+
+ ('042', 'PO job number split from the sold order',
+  case when exists(select 1 from col
+                    where k = 'purchase_orders.sold_order_number')
+        and exists(select 1 from fn where k = 'purchase_orders_stamp'
+                     and src like '%sold_order_number%')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'the sold_order_number column AND the trigger rewrite that compares it — '
+  'the column alone would leave updated_at lying about what moved')
 )
 select migration, feature, verdict, checked
 from checks
