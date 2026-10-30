@@ -109,6 +109,14 @@ interface Props {
   /** When set, edit a whole submission (all its unit rows) through the guided
    *  new-write-up flow, saving each row in place. Takes precedence over editWriteUp. */
   editBatch?: FieldWorkOrder[];
+  /**
+   * The job, rendered beside the form instead of behind it — on a desktop
+   * screen wide enough for both (the `split` breakpoint in globals.css).
+   * Narrower than that, or on a touch screen, it is not rendered at all and
+   * the form is the full-screen sheet it has always been. See
+   * JobReferencePanel.
+   */
+  reference?: React.ReactNode;
 }
 
 interface LocalPhoto {
@@ -427,7 +435,7 @@ function specEntriesFromChanges(changes: SpecChange[]): SpecEntry[] {
   });
 }
 
-export default function WriteUpModal({ order, units, onClose, onSaved, editWriteUp, editBatch }: Props) {
+export default function WriteUpModal({ order, units, onClose, onSaved, editWriteUp, editBatch, reference }: Props) {
   const { user, autoCc } = useAuth();
   const isBatchEdit = !!editBatch && editBatch.length > 0;
   // The old single-row flat editor only applies when NOT doing a guided batch edit.
@@ -2045,7 +2053,31 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         />
       )}
 
-      <div className="bg-background w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl h-[96vh] sm:h-auto sm:max-h-[94vh] flex flex-col shadow-xl">
+      {/* Split shell. Until the `split` breakpoint this div is
+          display:contents — it has no box, so the form panel below lays out
+          against the overlay exactly as it did before this existed. At the
+          breakpoint it becomes the two-pane frame and each pane takes half.
+          Resizing moves between the two with no re-render, so a half-finished
+          write-up survives it. */}
+      <div
+        className={
+          reference
+            ? "contents split:flex split:w-[min(1280px,96vw)] split:h-[94vh] split:rounded-2xl split:overflow-hidden split:shadow-xl"
+            : "contents"
+        }
+      >
+        {reference && (
+          <div className="hidden split:block split:w-1/2 split:h-full min-w-0">
+            {reference}
+          </div>
+        )}
+      <div
+        className={`bg-background w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl h-[96vh] sm:h-auto sm:max-h-[94vh] flex flex-col shadow-xl${
+          reference
+            ? " split:w-1/2 split:max-w-none split:h-full split:max-h-none split:rounded-none split:shadow-none"
+            : ""
+        }`}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -2507,6 +2539,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
           )}
         </div>
       </div>
+      </div>{/* /split shell — the form panel above is left at its original
+               indentation so the diff stays readable in a file this size. */}
     </div>
   );
 }

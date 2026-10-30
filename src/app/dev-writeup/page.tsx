@@ -6,7 +6,8 @@
 
 import { useState } from "react";
 import WriteUpModal from "@/components/WriteUpModal";
-import { MaterialUnit } from "@/lib/types";
+import JobReferencePanel from "@/components/JobReferencePanel";
+import { MaterialUnit, WorkOrder } from "@/lib/types";
 
 const mockUnits: MaterialUnit[] = [
   {
@@ -72,6 +73,36 @@ export default function DevWriteUpHarness() {
     materialJob: null,
   };
 
+  // Enough of a job for the desktop split view to have something in its left
+  // pane. The calendar passes a real WorkOrder; this is the harness standing
+  // in for one.
+  const refOrder = {
+    ...order,
+    id: "dev-1",
+    status: "Scheduled",
+    appointmentStatus: "Scheduled",
+    workOrderType: "Install",
+    scheduledStart: new Date().toISOString(),
+    scheduledEnd: new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
+    primaryResource: "Crew 4",
+    orderOwner: "Dana Office",
+    salesRep: "Pat Sales",
+    techMeasure: "Mo Measure",
+    installer: "Crew 4",
+    serviceRep: "",
+    contactName: "Diana Baker",
+    email: "diana.baker@example.com",
+    phones: [{ label: "Mobile", number: "(419) 555-0142" }],
+    serviceDescription: "",
+    dayCrews: null,
+    materialJob: {
+      id: "dev-mat",
+      units: mockUnits,
+      job: { installNotes: "Side door is the way in. Dog in the back." },
+    },
+    isMine: true,
+  } as unknown as WorkOrder;
+
   return (
     <div className="p-6">
       <h1 className="text-lg font-semibold mb-4">Write-up modal — dev harness</h1>
@@ -85,6 +116,7 @@ export default function DevWriteUpHarness() {
         <WriteUpModal
           order={order}
           units={mockUnits}
+          reference={<JobReferencePanel order={refOrder} />}
           onClose={() => setOpen(false)}
           onSaved={() => setOpen(false)}
         />

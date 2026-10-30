@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+/* "split" — wide enough for the write-up form and the job it is about, side by
+   side, and driven by a mouse. 1100px because the form needs about 512px to
+   not feel cramped and the job pane needs the same again; (pointer: fine) is
+   the same test the app uses elsewhere for "this is a desktop", so a tablet in
+   landscape stays on the full-screen sheet. See WriteUpModal. */
+@custom-variant split {
+  @media (pointer: fine) and (min-width: 1100px) {
+    @slot;
+  }
+}
+
 :root {
   --background: #ffffff;
   --foreground: #1f1f1f;
