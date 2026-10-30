@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Calendar, Search, ScrollText, Wrench, Package } from "lucide-react";
+import { Calendar, Search, ScrollText, Wrench } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { canSeeWriteUps, isInstaller } from "@/lib/roles";
 
@@ -16,10 +16,6 @@ const NAV_ITEMS = [
   { href: "/log", label: "Changes", icon: ScrollText, notInstaller: true },
   // Write-Ups is gated below (admin + field-manager only for now).
   { href: "/work-orders", label: "Write-Ups", icon: Wrench, writeUps: true },
-  // Service jobs waiting on parts. Hidden from installers for the same reason
-  // Changes is: the purchase-order table carries what the product cost us, and
-  // migration 040 keeps them out of it — the page would be empty anyway.
-  { href: "/parts", label: "Parts", icon: Package, notInstaller: true },
 ];
 
 export default function BottomNav() {

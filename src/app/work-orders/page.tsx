@@ -28,6 +28,14 @@ import { groupWriteUpSections, padSeq, pcsOf, splitInstalled, splitMaterialLines
 import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibility";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
+import ServicePartsCard from "@/components/ServicePartsCard";
+import {
+  fetchServicePartsIndex,
+  servicePartsAt,
+  partsTagFor,
+  type ServicePartsIndex,
+  type PartsTag,
+} from "@/lib/service-parts";
 import { crewsToText, textToCrews } from "@/lib/writeup-crews";
 import {
   nudgeFor,
@@ -60,6 +68,7 @@ import {
   X,
   Flag,
   Users,
+  Package,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -113,6 +122,10 @@ export default function WorkOrdersPage() {
   // One of the pills at the top is tapped: narrow the list to just those
   // write-ups. Cleared by tapping the pill again or switching tabs.
   const [attention, setAttention] = useState<Attention | null>(null);
+  // Service parts, keyed by street. Loaded on its own so a slow or forbidden
+  // purchase-order read never holds up the write-ups themselves — an empty
+  // index just means no parts cards, which is also what an installer sees.
+  const [partsIndex, setPartsIndex] = useState<ServicePartsIndex>(new Map());
 
   // View: admin + field-manager (full) and scheduling + scheduling-manager
   // (view-only). Edit/create/review capabilities below stay field-work-gated.
@@ -222,6 +235,17 @@ export default function WorkOrdersPage() {
     setWriteUps(data);
     setLoading(false);
   }
+
+  useEffect(() => {
+    if (!canView) return;
+    let live = true;
+    fetchServicePartsIndex().then((index) => {
+      if (live) setPartsIndex(index);
+    });
+    return () => {
+      live = false;
+    };
+  }, [canView]);
 
   const reviewer = {
     by: user?.email || "",
@@ -639,6 +663,12 @@ export default function WorkOrdersPage() {
               const sections = groupWriteUpSections(items);
               const allItems = items.flatMap((w) => w.lineItems);
               const doneItems = allItems.filter((li) => li.completed).length;
+              // The service jobs this write-up turned into, found by address —
+              // a write-up carries the install's order number, never the
+              // service order the parts were bought on. Empty for a write-up
+              // that never became service work.
+              const partsRows = servicePartsAt(partsIndex, first.address);
+              const partsTag = partsTagFor(partsRows);
               return (
                 <div key={orderNumber} className="rounded-xl border border-border bg-surface overflow-hidden">
                   <div className="flex items-stretch no-print">
@@ -678,6 +708,7 @@ export default function WorkOrdersPage() {
                             if (needsCrew(s)) return <FlagBadge key={`n-${s.key}`} tone="gray" label="No crew" />;
                             return null;
                           })}
+                          {partsTag && <PartsBadge tag={partsTag} />}
                         </div>
                       </div>
                       {isOpen ? (
@@ -698,6 +729,28 @@ export default function WorkOrdersPage() {
                   </div>
 
                   <div className={isOpen ? "block" : "hidden print-open"}>
+                    {/* no-print on purpose: a printed write-up goes out to
+                        manufacturing or the retail store, and what the parts
+                        cost us is nobody's business there. */}
+                    {partsRows.length > 0 && (
+                      <div className="border-t-2 border-border px-4 py-3 space-y-2 no-print">
+                        <p className="text-xs font-semibold text-muted flex items-center gap-1.5">
+                          <Package className="w-3.5 h-3.5" />
+                          Parts for this address
+                          {partsRows.length > 1 ? ` · ${partsRows.length} service orders` : ""}
+                        </p>
+                        {partsRows.map((row) => (
+                          <ServicePartsCard key={row.orderNumber} row={row} />
+                        ))}
+                        {partsRows.length > 1 && (
+                          <p className="text-[11px] text-muted">
+                            More than one open service order at this address. They are listed
+                            separately rather than added together, because they may not all belong
+                            to this write-up.
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {isDesktop && canResendEmail && (
                       <div className="border-t-2 border-border px-4 py-2.5 flex flex-wrap items-center gap-2 no-print">
                         <button
@@ -1573,6 +1626,34 @@ function FlagBadge({ tone, label }: { tone: keyof typeof PILL_TONE; label: strin
     <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${PILL_TONE[tone].idle}`}>
       {tone === "gray" ? <Users className="w-3 h-3" /> : <Flag className="w-3 h-3" />}
       {label}
+    </span>
+  );
+}
+
+const PARTS_TONE: Record<PartsTag["tone"], string> = {
+  green: "border-emerald-500/50 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10",
+  amber: "border-amber-500/50 text-amber-700 dark:text-amber-400 bg-amber-500/10",
+  sky: "border-sky-500/50 text-sky-700 dark:text-sky-400 bg-sky-500/10",
+  gray: "border-border text-muted bg-surface",
+};
+
+/**
+ * Where the parts are, on the collapsed tile.
+ *
+ * The urgent case — everything received in rForce with no visit booked — is
+ * the only one drawn solid, because it is the only one that is somebody's job
+ * to act on today. The rest are there to answer a question, not to nag.
+ */
+function PartsBadge({ tag }: { tag: PartsTag }) {
+  return (
+    <span
+      title={tag.detail}
+      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${
+        tag.urgent ? "bg-emerald-600 text-white border-emerald-600" : PARTS_TONE[tag.tone]
+      }`}
+    >
+      <Package className="w-3 h-3" />
+      {tag.label}
     </span>
   );
 }
