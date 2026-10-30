@@ -1,6 +1,6 @@
 "use client";
 
-import { WorkOrder } from "@/lib/types";
+import { WorkOrder, FieldWorkOrder, MaterialJobData } from "@/lib/types";
 import { formatTime, formatDateShort, typeColor, typeTileText } from "@/lib/calendar-utils";
 import { shortDay } from "@/lib/format-utils";
 import { describeParts } from "@/lib/purchase-orders";
@@ -62,7 +62,7 @@ export default function JobReferencePanel({ order }: { order: WorkOrder }) {
   )}`;
 
   return (
-    <div className="flex flex-col h-full min-w-0 border-r border-border bg-surface/40">
+    <div className="flex flex-col h-full min-w-0 border-r border-border bg-surface">
       {/* Header — mirrors the write-up pane's own header height so the two
           panes line up across the split. */}
       <div className="flex items-start gap-2 px-4 py-3 border-b border-border bg-background shrink-0">
@@ -72,27 +72,33 @@ export default function JobReferencePanel({ order }: { order: WorkOrder }) {
             {order.customerName}
           </h3>
           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-            <span
-              className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${typeColor(
-                order.workOrderType
-              )} ${typeTileText(order.workOrderType)}`}
-            >
-              {order.workOrderType}
-            </span>
-            <span className="text-xs text-muted">
-              {order.appointmentStatus || order.status}
-            </span>
+            {order.workOrderType && (
+              <span
+                className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${typeColor(
+                  order.workOrderType
+                )} ${typeTileText(order.workOrderType)}`}
+              >
+                {order.workOrderType}
+              </span>
+            )}
+            {(order.appointmentStatus || order.status) && (
+              <span className="text-xs text-muted">
+                {order.appointmentStatus || order.status}
+              </span>
+            )}
           </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        <Row icon={Calendar} label="Scheduled">
-          <span>
-            {formatDateShort(order.scheduledStart)} {formatTime(order.scheduledStart)}
-            {order.scheduledEnd && ` - ${formatTime(order.scheduledEnd)}`}
-          </span>
-        </Row>
+        {order.scheduledStart && (
+          <Row icon={Calendar} label="Scheduled">
+            <span>
+              {formatDateShort(order.scheduledStart)} {formatTime(order.scheduledStart)}
+              {order.scheduledEnd && ` - ${formatTime(order.scheduledEnd)}`}
+            </span>
+          </Row>
+        )}
 
         <Row icon={Hash} label="Order#">
           <span className="font-medium">{order.orderNumber}</span>
@@ -299,6 +305,64 @@ export default function JobReferencePanel({ order }: { order: WorkOrder }) {
       </div>
     </div>
   );
+}
+
+/**
+ * A stand-in job for the pane, built from a write-up row and the material job
+ * behind it. The Write-Ups page needs this: the calendar keeps only a window
+ * of dates loaded, and a write-up usually outlives the install it was filed
+ * against, so its job is more often absent than present.
+ *
+ * Everything the write-up row cannot know is left empty, and the pane leaves
+ * an empty row out rather than drawing a blank one — so this shows the
+ * customer, the address, the numbers, the install notes and the unit specs,
+ * and simply omits the schedule, the crew and the contact details.
+ */
+export function referenceJobFromWriteUp(
+  row: Pick<
+    FieldWorkOrder,
+    "orderNumber" | "workOrderNumber" | "customerName" | "address"
+  >,
+  mat: MaterialJobData | null
+): WorkOrder {
+  return {
+    id: `writeup-${row.orderNumber}`,
+    status: "",
+    orderNumber: row.orderNumber,
+    workOrderNumber: row.workOrderNumber,
+    address: row.address,
+    bookingDate: null,
+    customerName: row.customerName,
+    orderOwner: "",
+    salesRep: "",
+    techMeasure: mat?.job.techMeasurer || "",
+    installer: "",
+    serviceRep: "",
+    appointmentStatus: "",
+    scheduledStart: null,
+    scheduledEnd: null,
+    contactName: "",
+    email: "",
+    phones: [],
+    serviceDescription: "",
+    primaryResource: "",
+    dayCrews: null,
+    workOrderType: "",
+    description: "",
+    combinedRetailTotal: 0,
+    productCount: 0,
+    totalUnits: 0,
+    windows: 0,
+    patioDoors: 0,
+    doors: 0,
+    orderAlerts: "",
+    accountName: "",
+    latitude: null,
+    longitude: null,
+    materialJob: mat,
+    legacyInstallUrl: null,
+    isMine: true,
+  };
 }
 
 function Row({

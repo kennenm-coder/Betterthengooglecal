@@ -6,8 +6,10 @@
 
 import { useState } from "react";
 import WriteUpModal from "@/components/WriteUpModal";
-import JobReferencePanel from "@/components/JobReferencePanel";
-import { MaterialUnit, WorkOrder } from "@/lib/types";
+import JobReferencePanel, {
+  referenceJobFromWriteUp,
+} from "@/components/JobReferencePanel";
+import { MaterialUnit, MaterialJobData, WorkOrder } from "@/lib/types";
 
 const mockUnits: MaterialUnit[] = [
   {
@@ -63,6 +65,10 @@ const mockUnits: MaterialUnit[] = [
 
 export default function DevWriteUpHarness() {
   const [open, setOpen] = useState(true);
+  // The Write-Ups page edits a write-up whose job the calendar usually hasn't
+  // loaded, so the pane falls back to a stand-in built from the write-up row.
+  // This switches between the two to check both read properly.
+  const [standIn, setStandIn] = useState(false);
   if (process.env.NODE_ENV !== "development") return null;
 
   const order = {
@@ -103,6 +109,16 @@ export default function DevWriteUpHarness() {
     isMine: true,
   } as unknown as WorkOrder;
 
+  const standInJob = referenceJobFromWriteUp(
+    {
+      orderNumber: order.orderNumber,
+      workOrderNumber: order.workOrderNumber,
+      customerName: order.customerName,
+      address: order.address,
+    },
+    refOrder.materialJob as MaterialJobData
+  );
+
   return (
     <div className="p-6">
       <h1 className="text-lg font-semibold mb-4">Write-up modal — dev harness</h1>
@@ -112,11 +128,20 @@ export default function DevWriteUpHarness() {
       >
         Open write-up
       </button>
+      <label className="flex items-center gap-2 mt-3 text-sm">
+        <input
+          type="checkbox"
+          checked={standIn}
+          onChange={(e) => setStandIn(e.target.checked)}
+        />
+        Stand-in job (what the Write-Ups page shows when the calendar hasn&apos;t
+        loaded the job)
+      </label>
       {open && (
         <WriteUpModal
           order={order}
           units={mockUnits}
-          reference={<JobReferencePanel order={refOrder} />}
+          reference={<JobReferencePanel order={standIn ? standInJob : refOrder} />}
           onClose={() => setOpen(false)}
           onSaved={() => setOpen(false)}
         />

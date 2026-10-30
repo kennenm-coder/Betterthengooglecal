@@ -5,7 +5,7 @@ import Link from "next/link";
 import BottomNav from "@/components/BottomNav";
 import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork, canReviewWriteUps, canSeeWriteUps } from "@/lib/roles";
-import { FieldWorkOrder, WriteUpStatus, MaterialUnit } from "@/lib/types";
+import { FieldWorkOrder, WriteUpStatus, MaterialUnit, MaterialJobData, WorkOrder } from "@/lib/types";
 import {
   fetchWriteUps,
   updateWriteUpStatus,
@@ -28,6 +28,8 @@ import { groupWriteUpSections, padSeq, pcsOf, splitInstalled, splitMaterialLines
 import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibility";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
+import JobReferencePanel, { referenceJobFromWriteUp } from "@/components/JobReferencePanel";
+import { useData } from "@/components/DataProvider";
 import ServicePartsCard from "@/components/ServicePartsCard";
 import {
   fetchServicePartsIndex,
@@ -142,22 +144,42 @@ export default function WorkOrdersPage() {
   // The job's programmed units load in the background so the editor can show
   // the unit chips, read a unit's current spec, and know each unit's product
   // type — the write-up rows alone carry none of that.
-  const [editing, setEditing] = useState<{ rows: FieldWorkOrder[]; units: MaterialUnit[] } | null>(null);
+  const [editing, setEditing] = useState<{
+    rows: FieldWorkOrder[];
+    units: MaterialUnit[];
+    /** Kept whole, not just its units: the desktop reference pane reads the
+     *  install notes and the unit specs off it. */
+    mat: MaterialJobData | null;
+  } | null>(null);
   function startEdit(rows: FieldWorkOrder[]) {
-    setEditing({ rows, units: [] });
+    setEditing({ rows, units: [], mat: null });
     const orderNumber = rows[0]?.orderNumber;
     if (!orderNumber) return;
     fetchMaterialJobs()
       .then((jobs) => {
         const mat = jobs.get(orderNumber);
         const units: MaterialUnit[] = Array.isArray(mat?.units) ? mat.units : [];
-        if (!units.length) return;
-        setEditing((prev) => (prev && prev.rows === rows ? { rows, units } : prev));
+        if (!mat) return;
+        setEditing((prev) => (prev && prev.rows === rows ? { rows, units, mat } : prev));
       })
       .catch(() => {
         /* no job on file — the editor works from the write-up rows alone */
       });
   }
+
+  // The job behind the write-up being edited, for the desktop reference pane.
+  // The calendar's copy is the better one — it carries the schedule, the crew
+  // and the customer's phone — but it is only loaded for a window of dates,
+  // and a write-up usually outlives its install. The stand-in covers the rest.
+  const { orders } = useData();
+  const editReferenceJob: WorkOrder | null = useMemo(() => {
+    const row = editing?.rows[0];
+    if (!row) return null;
+    return (
+      orders.find((o) => o.orderNumber === row.orderNumber) ||
+      referenceJobFromWriteUp(row, editing?.mat ?? null)
+    );
+  }, [editing, orders]);
 
   // Desktop-only resend: field managers reviewing on a computer can re-fire the
   // submission email if it didn't go through the first time. Mobile is hidden to
@@ -825,6 +847,10 @@ export default function WorkOrdersPage() {
           }}
           units={editing.units}
           editBatch={editing.rows}
+          /* Desktop only: the job stays readable beside the form. The new
+             write-up above goes without — it is started from the picker, which
+             has already put the job in front of you. */
+          reference={editReferenceJob ? <JobReferencePanel order={editReferenceJob} /> : undefined}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
