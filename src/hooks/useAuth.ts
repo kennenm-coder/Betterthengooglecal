@@ -17,8 +17,9 @@ export type UserRole =
   | "process-manager"
   // Change-order-app role (no calendar capabilities; member-level in calendar).
   | "sales"
-  // TrimGauge (measure tech tool) + job audio notes. No calendar capabilities;
-  // member-level in calendar. Admin or measure-tech can sign in to TrimGauge.
+  // TrimGauge (measure tech tool) + job audio notes. Member-level in the
+  // calendar, plus the Measures screen (their own Tech Measure appointments —
+  // see measureScope in lib/roles). Admin or measure-tech can sign in to TrimGauge.
   | "measure-tech"
   // Cut-list-app roles (no calendar capabilities on their own). Managed here so
   // the shared allowed_emails table + Team UI stay the single source of truth.
@@ -36,6 +37,13 @@ export type UserRole =
 
 interface AuthState {
   user: User | null;
+  /**
+   * The display name an admin typed for this login on the Team page
+   * (allowed_emails.name). Empty when none was set — never falls back to the
+   * email, because the Measures screen matches rForce tech names against it
+   * and an email address would just silently match nothing.
+   */
+  name: string;
   /** Primary role — drives calendar-app RLS and gating. */
   role: UserRole;
   /** Full multi-role set (superset of `role`); used by apps needing finer grain. */
@@ -63,6 +71,7 @@ export function useAuth(): AuthState {
   const [state, setState] = useState<AuthState>(
     cachedState ?? {
       user: null,
+      name: "",
       role: "member",
       roles: [],
       autoCc: [],
@@ -83,7 +92,7 @@ export function useAuth(): AuthState {
       if (user?.email) {
         const { data } = await supabase
           .from("allowed_emails")
-          .select("role, roles, auto_cc")
+          .select("name, role, roles, auto_cc")
           .eq("email", user.email.toLowerCase())
           .maybeSingle();
 
@@ -104,6 +113,7 @@ export function useAuth(): AuthState {
 
         next = {
           user,
+          name: typeof data?.name === "string" ? data.name.trim() : "",
           role: (data?.role as UserRole) || "member",
           roles,
           autoCc: Array.isArray(data?.auto_cc) ? data.auto_cc : [],
@@ -113,6 +123,7 @@ export function useAuth(): AuthState {
       } else {
         next = {
           user,
+          name: "",
           role: "member",
           roles: [],
           autoCc: [],

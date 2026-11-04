@@ -2,13 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Calendar, Search, ScrollText, Wrench } from "lucide-react";
+import { Calendar, Search, ScrollText, Wrench, Ruler } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { canSeeWriteUps, isInstaller } from "@/lib/roles";
+import { canSeeWriteUps, isInstaller, isMeasureTech } from "@/lib/roles";
 
 // Settings lives in the top-right of the calendar header, not the bottom nav.
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: Calendar },
+  // A measure tech's own Tech Measure appointments. Only for logins holding the
+  // measure-tech role; every other account's nav is exactly as it was.
+  { href: "/measures", label: "Measures", icon: Ruler, measureTech: true },
   { href: "/search", label: "Search", icon: Search },
   // Changes lists every job that moved, on every crew, with customer names —
   // and it is served with the service-role key, so none of the installer
@@ -25,7 +28,8 @@ export default function BottomNav() {
   const items = NAV_ITEMS.filter(
     (i) =>
       (!i.writeUps || canSeeWriteUps(roles)) &&
-      (!i.notInstaller || !isInstaller(roles))
+      (!i.notInstaller || !isInstaller(roles)) &&
+      (!i.measureTech || isMeasureTech(roles))
   );
 
   return (
