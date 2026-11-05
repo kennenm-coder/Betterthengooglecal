@@ -9,7 +9,7 @@
 //            to the lead with a reason.
 // Rates and the math live in lib/more-for-more; this file only draws them.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import {
   X,
@@ -296,6 +296,23 @@ export default function MoreForMoreForm({
   // Today's rates and the people list from More for More settings.
   const { rates: liveRates, people: savedRoster } = useMfmSettings();
   const roster = previewPeople ?? savedRoster;
+
+  // A lead starting a new sheet: their own account is on the people list
+  // (049), so fill in their name as payroll has it, and their tier. Once
+  // only, and never over anything they've already picked.
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current || sheet || isOffice) return;
+    const email = user?.email?.toLowerCase();
+    const me = email ? roster.find((p) => p.email === email) : undefined;
+    if (!me) return;
+    prefilled.current = true;
+    setLead((l) => ({
+      ...l,
+      leadName: !l.leadName.trim() || l.leadName === myName ? me.name : l.leadName,
+      leadTier: l.leadTier ?? me.tier,
+    }));
+  }, [roster, sheet, isOffice, user?.email, myName]);
   // The lead always works at today's rates (their save stamps them on the
   // sheet). Payroll sees the rates the sheet was saved with, so a rate change
   // since then doesn't move a sheet they're checking.

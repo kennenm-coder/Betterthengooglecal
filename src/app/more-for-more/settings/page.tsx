@@ -135,15 +135,33 @@ function PersonRow({
   return (
     <li className={`px-3 py-2.5 space-y-2 ${person.active ? "" : "opacity-60"}`}>
       <div className="flex items-center gap-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onBlur={() => name.trim() !== person.name && save({ name })}
-          className="flex-1 min-w-0 rounded-md border border-border bg-surface px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-          aria-label="Name"
-        />
+        {person.email ? (
+          // Linked to a login: the name comes from the account (Team page), and
+          // deleting would only bring them back on the next sync.
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium truncate">
+              {person.name}
+              {!person.tier && (
+                <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                  NEEDS TIER
+                </span>
+              )}
+            </p>
+            <p className="text-[11px] text-muted truncate">
+              <span className="rounded bg-primary/10 px-1 text-primary font-medium">Account</span> {person.email}
+            </p>
+          </div>
+        ) : (
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => name.trim() !== person.name && save({ name })}
+            className="flex-1 min-w-0 rounded-md border border-border bg-surface px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            aria-label="Name"
+          />
+        )}
         {busy && <Loader2 className="w-4 h-4 animate-spin text-muted shrink-0" />}
-        {confirm ? (
+        {person.email ? null : confirm ? (
           <>
             <button onClick={() => setConfirm(false)} className="text-xs text-muted px-1">
               Keep
@@ -286,7 +304,14 @@ export default function MoreForMoreSettingsPage() {
     }
   }
 
-  const shownPeople = people.filter((p) => !peopleQuery.trim() || p.name.toLowerCase().includes(peopleQuery.trim().toLowerCase()));
+  // Active people still missing a tier first (that's payroll's job here),
+  // then everyone else A→Z, with people no longer suggested last.
+  const shownPeople = people
+    .filter((p) => !peopleQuery.trim() || p.name.toLowerCase().includes(peopleQuery.trim().toLowerCase()))
+    .sort((a, b) => {
+      const rank = (p: MfmPerson) => (!p.active ? 2 : p.tier ? 1 : 0);
+      return rank(a) - rank(b) || a.name.localeCompare(b.name);
+    });
 
   if (authLoading) {
     return (
@@ -433,12 +458,19 @@ export default function MoreForMoreSettingsPage() {
                 <span className="text-xs text-muted">{people.length}</span>
               </div>
               <p className="text-xs text-muted">
-                Suggested as a lead types a name on the form. Tapping a name fills in their tier. Leads can still
-                type anyone and pick a tier themselves. &ldquo;Lead&rdquo; and &ldquo;Apprentice&rdquo; decide
-                which box suggests them first.
+                Everyone with the Installer Lead or Installer role is added on their own, linked to their account
+                (leads as Lead, installers as Apprentice). Just set their tier. Names come from the Team page.
+                The form suggests these names as a lead types, and tapping one fills in the tier. Leads can still
+                type anyone and pick a tier themselves.
               </p>
+              {people.some((p) => p.active && !p.tier) && (
+                <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                  {people.filter((p) => p.active && !p.tier).length} still need a tier (listed first).
+                </p>
+              )}
 
               <div className="rounded-xl border border-border p-3 space-y-2">
+                <p className="text-xs font-medium text-muted">Add someone without an account</p>
                 <input
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
@@ -492,7 +524,9 @@ export default function MoreForMoreSettingsPage() {
               )}
 
               {people.length === 0 ? (
-                <p className="text-sm text-muted">Nobody yet. Add the leads and apprentices above.</p>
+                <p className="text-sm text-muted">
+                  Nobody yet. Accounts with the Installer Lead or Installer role show up here on their own.
+                </p>
               ) : (
                 <ul className="rounded-xl border border-border divide-y divide-border">
                   {shownPeople.map((p) => (

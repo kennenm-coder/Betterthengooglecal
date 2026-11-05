@@ -13,6 +13,12 @@ export interface MfmPerson {
   kind: PersonKind;
   tier: Tier | null;
   active: boolean;
+  /**
+   * The login this person is linked to (049): every installer / installer-
+   * lead account is added and kept in step automatically. Null for someone
+   * payroll typed in who has no account.
+   */
+  email?: string | null;
 }
 
 function db() {
@@ -52,11 +58,21 @@ function toPerson(r: Record<string, unknown>): MfmPerson {
     kind: (["lead", "apprentice", "either"].includes(String(r.kind)) ? r.kind : "either") as PersonKind,
     tier: t === 1 || t === 2 || t === 3 ? (t as Tier) : null,
     active: r.active !== false,
+    email: typeof r.email === "string" && r.email ? r.email.toLowerCase() : null,
   };
 }
 
-/** Everyone on the list, A→Z. Empty if the table is not there yet. */
+/**
+ * Everyone on the list, A→Z. Brings it up to date with the accounts first
+ * (049: new installer / installer-lead logins join, names follow the
+ * account). The sync failing — say before 049 runs — just skips that step.
+ * Empty if the table is not there yet.
+ */
 export async function fetchMfmPeople(): Promise<MfmPerson[]> {
+  await db().rpc("mfm_sync_people").then(
+    () => undefined,
+    () => undefined
+  );
   const { data, error } = await db().from("more_for_more_people").select("*").order("name");
   if (error) return [];
   return (data || []).map(toPerson);
