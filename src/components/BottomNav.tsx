@@ -19,7 +19,8 @@ const NAV_ITEMS = [
   // Also hidden from install leads (even a lead who is a field manager): their
   // More for More tab takes its place.
   { href: "/log", label: "Changes", icon: ScrollText, notInstaller: true },
-  // Install leads' bonus sheets. Sits where Changes was, left of Write-Ups.
+  // Install leads' bonus sheets (and admins'). Sits where Changes was, left
+  // of Write-Ups.
   { href: "/more-for-more", label: "More for More", icon: BadgeDollarSign, installerLead: true },
   // Write-Ups is gated below (admin + field-manager only for now).
   { href: "/work-orders", label: "Write-Ups", icon: Wrench, writeUps: true },
@@ -33,7 +34,8 @@ export default function BottomNav() {
     (i) =>
       (!i.writeUps || canSeeWriteUps(roles)) &&
       (!i.notInstaller || !(isInstaller(roles) || (isInstallerLead(roles) && !isAdmin(roles)))) &&
-      (!i.installerLead || isInstallerLead(roles)) &&
+      // Admins always see everything, so they get it without the role.
+      (!i.installerLead || isInstallerLead(roles) || isAdmin(roles)) &&
       (!i.measureTech || isMeasureTech(roles))
   );
 
