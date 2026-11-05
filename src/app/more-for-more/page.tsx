@@ -10,22 +10,32 @@ import BottomNav from "@/components/BottomNav";
 import MoreForMoreForm from "@/components/MoreForMoreForm";
 import { useData } from "@/components/DataProvider";
 import { useAuth } from "@/hooks/useAuth";
+import { refreshMfmNotices } from "@/hooks/useMfmNotices";
 import { canFillMoreForMore } from "@/lib/roles";
 import { crewsForDate, ownsOrder } from "@/lib/format-utils";
 import { searchOrders } from "@/lib/search";
 import { formatDateShort } from "@/lib/calendar-utils";
 import type { WorkOrder } from "@/lib/types";
 import {
+  fetchJobFlags,
   fetchMoreForMores,
   money,
   snapshotOf,
+  type JobFlag,
   type JobSnapshot,
   type MoreForMore,
 } from "@/lib/more-for-more";
 
 type Open = { job: JobSnapshot; order: WorkOrder | null; sheet: MoreForMore | null };
 
-function StatusPill({ sheet }: { sheet: MoreForMore | null }) {
+function StatusPill({ sheet, paper }: { sheet: MoreForMore | null; paper?: boolean }) {
+  if (!sheet && paper) {
+    return (
+      <span className="shrink-0 rounded-full bg-surface border border-border px-2 py-0.5 text-[10px] font-semibold text-muted">
+        ON PAPER
+      </span>
+    );
+  }
   if (!sheet) {
     return (
       <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
@@ -40,11 +50,30 @@ function StatusPill({ sheet }: { sheet: MoreForMore | null }) {
       </span>
     );
   }
+  if (sheet.status === "rejected") {
+    return (
+      <span className="shrink-0 rounded-full bg-danger px-2 py-0.5 text-[10px] font-semibold text-white">
+        SENT BACK
+      </span>
+    );
+  }
+  if (sheet.status === "draft") {
+    return (
+      <span className="shrink-0 rounded-full bg-slate-500/15 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+        IN PROGRESS
+      </span>
+    );
+  }
   return (
     <span className="shrink-0 rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400">
       WITH OFFICE
     </span>
   );
+}
+
+/** "To do" = no sheet yet (and none on paper), or one saved in progress. */
+function isTodo(r: { sheet: MoreForMore | null; paper: boolean }): boolean {
+  return (!r.sheet && !r.paper) || r.sheet?.status === "draft";
 }
 
 /** One row per job: a multi-day install arrives as several appointments. */
@@ -66,7 +95,13 @@ export default function MoreForMorePage() {
   const [loadError, setLoadError] = useState("");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<Open | null>(null);
-  const [filter, setFilter] = useState<"all" | "todo" | "office" | "done">("all");
+  const [filter, setFilter] = useState<"all" | "fix" | "todo" | "office" | "done">("all");
+  // ?open=<sheet id> — a notice on the calendar links straight to a sheet.
+  const [openId, setOpenId] = useState<string | null>(null);
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("open");
+    if (id) setOpenId(id);
+  }, []);
 
   const email = user?.email?.toLowerCase() || "";
   const allowed = canFillMoreForMore(roles);
@@ -85,6 +120,18 @@ export default function MoreForMorePage() {
 
   const sheetByJob = useMemo(() => new Map(sheets.map((s) => [s.order_number, s])), [sheets]);
 
+  // Payroll's marks: jobs whose sheet came in on paper, and (admin) jobs
+  // excluded from More for More, which drop off this list.
+  const [flags, setFlags] = useState<Map<string, JobFlag>>(new Map());
+  useEffect(() => {
+    if (!allowed) return;
+    let live = true;
+    fetchJobFlags().then((f) => live && setFlags(f));
+    return () => {
+      live = false;
+    };
+  }, [allowed]);
+
   // Installs this crew has already been on (today counts), newest first.
   const myJobs = useMemo(() => {
     const endOfToday = new Date();
@@ -100,23 +147,34 @@ export default function MoreForMorePage() {
     return latestPerJob(mine).sort((a, b) => (b.scheduledStart || "").localeCompare(a.scheduledStart || ""));
   }, [orders, crewNames]);
 
-  type Row = { key: string; job: JobSnapshot; order: WorkOrder | null; sheet: MoreForMore | null; date: string };
+  type Row = {
+    key: string;
+    job: JobSnapshot;
+    order: WorkOrder | null;
+    sheet: MoreForMore | null;
+    paper: boolean;
+    date: string;
+  };
 
   // My jobs, plus any job I sent a sheet in for that isn't one of them
-  // (found through search, or older than what's loaded).
+  // (found through search, or older than what's loaded). Excluded jobs are
+  // left out unless I already have a sheet on them.
   const rows: Row[] = useMemo(() => {
-    const out: Row[] = myJobs.map((o) => {
-      const mineLower = new Set(crewNames.map((n) => n.trim().toLowerCase()));
-      const all = crewsForDate(o);
-      const crew = all.find((n) => mineLower.has(n.trim().toLowerCase())) || all[0] || null;
-      return {
-        key: o.orderNumber,
-        job: snapshotOf(o, crew),
-        order: o,
-        sheet: sheetByJob.get(o.orderNumber) || null,
-        date: o.scheduledStart || "",
-      };
-    });
+    const mineLower = new Set(crewNames.map((n) => n.trim().toLowerCase()));
+    const out: Row[] = myJobs
+      .filter((o) => !flags.get(o.orderNumber)?.excluded || sheetByJob.has(o.orderNumber))
+      .map((o) => {
+        const all = crewsForDate(o);
+        const crew = all.find((n) => mineLower.has(n.trim().toLowerCase())) || all[0] || null;
+        return {
+          key: o.orderNumber,
+          job: snapshotOf(o, crew),
+          order: o,
+          sheet: sheetByJob.get(o.orderNumber) || null,
+          paper: !!flags.get(o.orderNumber)?.paper,
+          date: o.scheduledStart || "",
+        };
+      });
     const seen = new Set(out.map((r) => r.key));
     for (const s of sheets) {
       if (seen.has(s.order_number)) continue;
@@ -132,30 +190,47 @@ export default function MoreForMorePage() {
         },
         order: orders.find((o) => o.orderNumber === s.order_number) || null,
         sheet: s,
+        paper: !!flags.get(s.order_number)?.paper,
         date: s.install_date || s.created_at,
       });
     }
     return out.sort((a, b) => b.date.localeCompare(a.date));
-  }, [myJobs, sheets, sheetByJob, orders, crewNames]);
+  }, [myJobs, sheets, sheetByJob, orders, crewNames, flags]);
+
+  // Open the sheet a notice linked to, once the list has it.
+  useEffect(() => {
+    if (!openId) return;
+    const row = rows.find((r) => r.sheet?.id === openId);
+    if (!row) return;
+    setOpen({ job: row.job, order: row.order, sheet: row.sheet });
+    setOpenId(null);
+    window.history.replaceState(null, "", "/more-for-more");
+  }, [openId, rows]);
 
   const counts = useMemo(
     () => ({
-      todo: rows.filter((r) => !r.sheet).length,
+      fix: rows.filter((r) => r.sheet?.status === "rejected").length,
+      todo: rows.filter(isTodo).length,
       office: rows.filter((r) => r.sheet?.status === "submitted").length,
       done: rows.filter((r) => r.sheet?.status === "completed").length,
     }),
     [rows]
   );
 
-  const shownRows = rows.filter((r) =>
-    filter === "all"
-      ? true
-      : filter === "todo"
-        ? !r.sheet
-        : filter === "office"
-          ? r.sheet?.status === "submitted"
-          : r.sheet?.status === "completed"
-  );
+  const shownRows = rows
+    .filter((r) =>
+      filter === "all"
+        ? true
+        : filter === "fix"
+          ? r.sheet?.status === "rejected"
+          : filter === "todo"
+            ? isTodo(r)
+            : filter === "office"
+              ? r.sheet?.status === "submitted"
+              : r.sheet?.status === "completed"
+    )
+    // Sent-back sheets float to the top: they need doing first.
+    .sort((a, b) => Number(b.sheet?.status === "rejected") - Number(a.sheet?.status === "rejected"));
 
   const trimmed = query.trim();
   const searchResults = useMemo(() => {
@@ -170,6 +245,8 @@ export default function MoreForMorePage() {
 
   function onSaved(s: MoreForMore) {
     setSheets((prev) => [s, ...prev.filter((p) => p.id !== s.id)]);
+    // A resubmit clears a "sent back" notice and the tab's count.
+    refreshMfmNotices();
   }
 
   if (authLoading) {
@@ -228,7 +305,9 @@ export default function MoreForMorePage() {
             {(
               [
                 ["all", `All ${rows.length}`],
-                ["todo", `Not submitted ${counts.todo}`],
+                // Only shown when something has been sent back.
+                ...(counts.fix ? ([["fix", `Sent back ${counts.fix}`]] as const) : []),
+                ["todo", `To do ${counts.todo}`],
                 ["office", `With office ${counts.office}`],
                 ["done", `Completed ${counts.done}`],
               ] as const
@@ -237,7 +316,11 @@ export default function MoreForMorePage() {
                 key={key}
                 onClick={() => setFilter(key)}
                 className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium border ${
-                  filter === key ? "bg-foreground text-background border-foreground" : "border-border text-muted"
+                  filter === key
+                    ? "bg-foreground text-background border-foreground"
+                    : key === "fix"
+                      ? "border-danger text-danger"
+                      : "border-border text-muted"
                 }`}
               >
                 {label}
@@ -268,7 +351,7 @@ export default function MoreForMorePage() {
                         {crewsForDate(o).length ? ` · ${crewsForDate(o).join(", ")}` : ""}
                       </p>
                     </div>
-                    <StatusPill sheet={sheetByJob.get(o.orderNumber) || null} />
+                    <StatusPill sheet={sheetByJob.get(o.orderNumber) || null} paper={!!flags.get(o.orderNumber)?.paper} />
                     <ChevronRight className="w-4 h-4 text-muted shrink-0" />
                   </button>
                 </li>
@@ -306,7 +389,7 @@ export default function MoreForMorePage() {
                       {r.sheet ? ` · ${money(r.sheet.lead_total)}` : ""}
                     </p>
                   </div>
-                  <StatusPill sheet={r.sheet} />
+                  <StatusPill sheet={r.sheet} paper={r.paper} />
                   <ChevronRight className="w-4 h-4 text-muted shrink-0" />
                 </button>
               </li>

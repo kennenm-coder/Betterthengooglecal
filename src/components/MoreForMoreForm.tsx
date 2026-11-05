@@ -1,10 +1,12 @@
 "use client";
 
 // The More for More form. One component, two modes:
-//   lead   — the install lead on their phone: names, tiers, units, a note.
-//            Submitting shows them their total.
+//   lead   — the install lead on their phone: names, tiers, units,
+//            additional jobs, JIP bonus, a note. "Save progress" keeps a
+//            draft; submitting shows them their total.
 //   office — payroll: everything the lead filled (editable), plus deductions,
-//            JIP bonus, additional jobs, NPS, Office Only and the final pay.
+//            NPS, Office Only and the final pay. Complete it, or send it back
+//            to the lead with a reason.
 // Rates and the math live in lib/more-for-more; this file only draws them.
 
 import { useMemo, useState } from "react";
@@ -23,20 +25,26 @@ import {
   Info,
   CheckCircle2,
   RotateCcw,
+  Undo2,
+  AlertTriangle,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useMfmSettings } from "@/hooks/useMfmSettings";
 import type { WorkOrder } from "@/lib/types";
+import type { MfmPerson } from "@/lib/more-for-more-settings";
 import {
-  ADDITIONAL_JOB_RATE,
   calcSheet,
+  createOfficeSheet,
   DEDUCTIONS,
   deleteMoreForMore,
   emptyLeadData,
-  JIP_BONUS,
+  extrasOf,
   money,
   normalizeLead,
   normalizeOffice,
+  normalizeRates,
   rateFor,
+  rejectSheet,
   saveOfficeSheet,
   submitLeadSheet,
   suggestQty,
@@ -44,6 +52,7 @@ import {
   type ApprenticeEntry,
   type JobSnapshot,
   type LeadData,
+  type MfmRates,
   type MoreForMore,
   type OfficeData,
   type Qty,
@@ -60,6 +69,8 @@ interface Props {
   onClose: () => void;
   onSaved: (sheet: MoreForMore) => void;
   onDeleted?: (id: string) => void;
+  /** Dev harness only: suggest these people instead of the saved list. */
+  previewPeople?: MfmPerson[];
 }
 
 function fmtDay(iso: string | null | undefined): string {
@@ -120,22 +131,98 @@ function Stepper({ value, onChange }: { value: number; onChange: (n: number) => 
   );
 }
 
+/**
+ * A name box that suggests people from the settings list as you type (and
+ * when it's tapped empty). Tapping a suggestion fills the name AND that
+ * person's tier. Anything typed that isn't on the list is kept as is; the
+ * tier is then picked by hand.
+ */
+function NameInput({
+  value,
+  onChange,
+  onPick,
+  people,
+  prefer,
+  placeholder,
+}: {
+  value: string;
+  onChange: (name: string) => void;
+  onPick: (p: MfmPerson) => void;
+  people: MfmPerson[];
+  prefer: "lead" | "apprentice";
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const q = value.trim().toLowerCase();
+  const matches = people
+    .filter((p) => p.active && (!q || p.name.toLowerCase().includes(q)) && p.name.toLowerCase() !== q)
+    // This box's kind first (leads for the lead box), then everyone else.
+    .sort((a, b) => {
+      const rank = (p: MfmPerson) => (p.kind === prefer ? 0 : p.kind === "either" ? 1 : 2);
+      return rank(a) - rank(b) || a.name.localeCompare(b.name);
+    })
+    .slice(0, 6);
+
+  return (
+    <div className="relative flex-1 min-w-0">
+      <input
+        className={inputCls}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        // Long enough for a tap on a suggestion to land first.
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder={placeholder}
+        autoComplete="off"
+      />
+      {open && matches.length > 0 && (
+        <ul className="absolute z-20 left-0 right-0 mt-1 rounded-lg border border-border bg-background shadow-lg overflow-hidden">
+          {matches.map((p) => (
+            <li key={p.id}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onPick(p);
+                  setOpen(false);
+                }}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left text-sm hover:bg-surface active:bg-surface"
+              >
+                <span className="truncate">{p.name}</span>
+                <span className="shrink-0 text-xs text-muted">
+                  {p.tier ? `Tier ${p.tier}` : "no tier"}
+                  {p.kind !== "either" ? ` · ${p.kind}` : ""}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function UnitsEditor({
   qty,
   onChange,
   isLead,
   tier,
+  rates,
 }: {
   qty: Qty;
   onChange: (q: Qty) => void;
   isLead: boolean;
   tier: Tier | null;
+  rates: MfmRates;
 }) {
   return (
     <div className="divide-y divide-border rounded-lg border border-border">
       {UNIT_ITEMS.map((item) => {
         const n = Number(qty[item.key]) || 0;
-        const rate = rateFor(item, isLead, tier);
+        const rate = rateFor(rates, item.key, isLead, tier);
         return (
           <div key={item.key} className="flex items-center gap-2 px-3 py-2">
             <div className="flex-1 min-w-0">
@@ -168,12 +255,26 @@ function Section({ title, children, right }: { title: string; children: React.Re
 const inputCls =
   "w-full rounded-lg border border-border bg-surface px-3 py-2 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary";
 
-export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSaved, onDeleted }: Props) {
+export default function MoreForMoreForm({
+  mode,
+  job,
+  order,
+  sheet,
+  onClose,
+  onSaved,
+  onDeleted,
+  previewPeople,
+}: Props) {
   const { name: myName, user } = useAuth();
   const isOffice = mode === "office";
 
   const [lead, setLead] = useState<LeadData>(() => {
-    if (sheet) return normalizeLead(sheet.lead_data);
+    if (sheet) {
+      // Sheets saved before leads filled Additional Jobs / JIP kept them on
+      // the office side; bring them across so they show where leads edit them.
+      const l = normalizeLead(sheet.lead_data);
+      return { ...l, ...extrasOf(l, sheet.office_data) };
+    }
     const s = suggestQty(order ?? null);
     return { ...emptyLeadData(myName), leadQty: s.qty, qtySource: s.source };
   });
@@ -184,13 +285,28 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
     }
     return o;
   });
-  const [saving, setSaving] = useState<"" | "save" | "complete" | "submit" | "delete">("");
+  const [saving, setSaving] = useState<"" | "save" | "complete" | "submit" | "draft" | "reject" | "delete">("");
   const [busyFile, setBusyFile] = useState<"" | "pdf" | "xlsx" | "print">("");
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState<MoreForMore | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Payroll's "Send back": the reason box is open while this is a string.
+  const [rejectReason, setRejectReason] = useState<string | null>(null);
 
-  const calc = useMemo(() => calcSheet(lead, isOffice ? office : null), [lead, office, isOffice]);
+  // Today's rates and the people list from More for More settings.
+  const { rates: liveRates, people: savedRoster } = useMfmSettings();
+  const roster = previewPeople ?? savedRoster;
+  // The lead always works at today's rates (their save stamps them on the
+  // sheet). Payroll sees the rates the sheet was saved with, so a rate change
+  // since then doesn't move a sheet they're checking.
+  const rates = useMemo(
+    () => (isOffice ? normalizeRates(lead.rates ?? liveRates) : liveRates),
+    [isOffice, lead.rates, liveRates]
+  );
+  const calc = useMemo(
+    () => calcSheet({ ...lead, rates }, isOffice ? office : null),
+    [lead, rates, office, isOffice]
+  );
 
   function setApp(i: number, patch: Partial<ApprenticeEntry>) {
     setLead((l) => ({
@@ -222,33 +338,84 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
     return null;
   }
 
-  async function handleSubmit() {
-    const v = validate();
-    if (v) return setError(v);
+  /**
+   * "draft" saves progress (no checks — it's half done by definition) and
+   * closes the form; "submitted" checks the sheet, sends it to payroll and
+   * shows the lead their total.
+   */
+  async function handleSubmit(status: "draft" | "submitted") {
+    if (status === "submitted") {
+      const v = validate();
+      if (v) return setError(v);
+    }
     setError("");
-    setSaving("submit");
+    setSaving(status === "draft" ? "draft" : "submit");
     try {
       const saved = await submitLeadSheet({
         id: sheet?.id,
         job,
         lead,
+        status,
         createdByName: sheet?.created_by_name || myName || user?.email || "",
+        currentRates: liveRates,
       });
-      setSubmitted(saved);
       onSaved(saved);
+      if (status === "draft") onClose();
+      else setSubmitted(saved);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not submit.");
+      setError(e instanceof Error ? e.message : "Could not save.");
     } finally {
       setSaving("");
     }
   }
 
+  async function handleReject() {
+    if (!sheet || rejectReason === null) return;
+    if (!rejectReason.trim()) return setError("Say why it's being sent back.");
+    setError("");
+    setSaving("reject");
+    try {
+      const saved = await rejectSheet({
+        sheet,
+        lead,
+        office,
+        reason: rejectReason,
+        byName: myName,
+        currentRates: liveRates,
+      });
+      onSaved(saved);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not send it back.");
+      setSaving("");
+    }
+  }
+
   async function handleOffice(complete: boolean) {
-    if (!sheet) return;
     const v = validate();
     if (v) return setError(v);
     setError("");
     setSaving(complete ? "complete" : "save");
+    // No sheet yet in office mode = payroll typing in a paper sheet.
+    if (!sheet) {
+      try {
+        const created = await createOfficeSheet({
+          job,
+          lead,
+          office,
+          complete,
+          byEmail: user?.email?.toLowerCase() || "",
+          byName: myName,
+          currentRates: liveRates,
+        });
+        onSaved(created);
+        onClose();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not save.");
+        setSaving("");
+      }
+      return;
+    }
     try {
       const saved = await saveOfficeSheet({
         sheet,
@@ -257,6 +424,7 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
         complete,
         byEmail: user?.email?.toLowerCase() || "",
         byName: myName,
+        currentRates: liveRates,
       });
       onSaved(saved);
       if (complete || sheet.status === "completed") onClose();
@@ -326,7 +494,9 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
                       {i === 0 ? "Lead" : "Apprentice"} · Tier {p.tier}
                     </p>
                   </div>
-                  <span className="text-sm font-semibold tabular-nums">{money(p.subtotal)}</span>
+                  <span className="text-sm font-semibold tabular-nums">
+                    {money(p.subtotal + p.additionalJobs + p.jip)}
+                  </span>
                 </div>
               ))}
               <div className="flex items-center justify-between px-4 py-3 bg-surface">
@@ -334,9 +504,7 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
                 <span className="text-lg font-bold tabular-nums text-rba-green">{money(done.leadTotal)}</span>
               </div>
             </div>
-            <p className="text-[11px] text-muted">
-              Before deductions, additional jobs and JIP bonus, which payroll adds.
-            </p>
+            <p className="text-[11px] text-muted">Before any deductions payroll applies.</p>
           </div>
         </div>
         <div className="border-t border-border p-3 safe-area-bottom">
@@ -352,7 +520,8 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
   }
 
   const people = calc.people;
-  const wasCompleted = sheet?.status === "completed";
+  const status = sheet?.status;
+  const wasCompleted = status === "completed";
 
   return (
     <div className="fixed inset-0 z-50 bg-background flex flex-col">
@@ -409,12 +578,54 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
             {job.address && <p className="text-muted truncate">{job.address}</p>}
             {sheet && (
               <p className="text-[11px] text-muted pt-1">
-                Submitted by {sheet.created_by_name || sheet.created_by} {fmtDay(sheet.submitted_at)}
+                {status === "draft" && sheet.submit_count === 0
+                  ? `Started by ${sheet.created_by_name || sheet.created_by} · in progress`
+                  : `Submitted by ${sheet.created_by_name || sheet.created_by} ${fmtDay(sheet.submitted_at)}`}
                 {sheet.submit_count > 1 ? ` · resubmitted ${sheet.submit_count - 1}×` : ""}
                 {wasCompleted && sheet.completed_at ? ` · completed ${fmtDay(sheet.completed_at)}` : ""}
               </p>
             )}
           </div>
+
+          {/* Sent back: the lead sees why; payroll sees what they asked. */}
+          {status === "rejected" && sheet?.reject_reason && (
+            <div className="flex gap-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2.5 text-sm">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-danger" />
+              <div className="min-w-0">
+                <p className="font-semibold text-danger">
+                  {isOffice ? "Sent back to the lead" : "Payroll sent this back"}
+                  {sheet.rejected_by_name ? ` · ${sheet.rejected_by_name}` : ""}
+                  {sheet.rejected_at ? ` · ${fmtDay(sheet.rejected_at)}` : ""}
+                </p>
+                <p className="whitespace-pre-wrap break-words">{sheet.reject_reason}</p>
+                {!isOffice && <p className="text-xs text-muted mt-1">Fix it below, then submit again.</p>}
+              </div>
+            </div>
+          )}
+          {isOffice && status === "submitted" && sheet?.reject_reason && (
+            <div className="flex gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted">
+              <Undo2 className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Sent back earlier{sheet.rejected_at ? ` (${fmtDay(sheet.rejected_at)})` : ""}: {sheet.reject_reason}
+              </span>
+            </div>
+          )}
+          {isOffice && (!sheet || sheet.on_paper) && (
+            <div className="flex gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted">
+              <Info className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                {sheet
+                  ? "Typed in by the office from a paper sheet."
+                  : "Typing in a paper sheet. Fill in the lead's part as written, then the office part."}
+              </span>
+            </div>
+          )}
+          {isOffice && status === "draft" && (
+            <div className="flex gap-2 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+              <Info className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>Still in progress. The lead hasn&apos;t submitted this yet.</span>
+            </div>
+          )}
 
           {!isOffice && wasCompleted && (
             <div className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
@@ -425,12 +636,13 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
 
           {/* Lead */}
           <Section title="Lead">
-            <input
-              className={inputCls}
+            <NameInput
               value={lead.leadName}
-              onChange={(e) => setLead({ ...lead, leadName: e.target.value })}
+              onChange={(name) => setLead({ ...lead, leadName: name })}
+              onPick={(p) => setLead({ ...lead, leadName: p.name, leadTier: p.tier ?? lead.leadTier })}
+              people={roster}
+              prefer="lead"
               placeholder="Lead name"
-              autoComplete="name"
             />
             <TierPicker value={lead.leadTier} onChange={(t) => setLead({ ...lead, leadTier: t })} />
           </Section>
@@ -451,6 +663,7 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
               onChange={(q) => setLead({ ...lead, leadQty: q })}
               isLead
               tier={lead.leadTier}
+              rates={rates}
             />
           </Section>
 
@@ -480,10 +693,12 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
             {lead.apprentices.map((a, i) => (
               <div key={i} className="rounded-xl border border-border p-3 space-y-2">
                 <div className="flex items-center gap-2">
-                  <input
-                    className={inputCls}
+                  <NameInput
                     value={a.name}
-                    onChange={(e) => setApp(i, { name: e.target.value })}
+                    onChange={(name) => setApp(i, { name })}
+                    onPick={(p) => setApp(i, { name: p.name, tier: p.tier ?? a.tier })}
+                    people={roster}
+                    prefer="apprentice"
                     placeholder={`Apprentice ${i + 1} name`}
                   />
                   <button
@@ -511,13 +726,83 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
                   Did the same units as the lead
                 </label>
                 {!a.sameAsLead && (
-                  <UnitsEditor qty={a.qty} onChange={(q) => setApp(i, { qty: q })} isLead={false} tier={a.tier} />
+                  <UnitsEditor
+                    qty={a.qty}
+                    onChange={(q) => setApp(i, { qty: q })}
+                    isLead={false}
+                    tier={a.tier}
+                    rates={rates}
+                  />
                 )}
                 <p className="text-xs text-muted text-right tabular-nums">
                   Subtotal {money(people[i + 1]?.subtotal)}
                 </p>
               </div>
             ))}
+          </Section>
+
+          <Section
+            title="Additional jobs"
+            right={
+              <button
+                type="button"
+                onClick={() => setLead({ ...lead, additionalJobs: [...lead.additionalJobs, ""] })}
+                className="flex items-center gap-1 text-xs font-medium text-rba-green"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add job
+              </button>
+            }
+          >
+            <p className="text-[11px] text-muted">
+              {money(rates.additionalJob.lead)} lead · {money(rates.additionalJob.apprentice)} each apprentice, per job.
+            </p>
+            {lead.additionalJobs.length === 0 && <p className="text-sm text-muted">None.</p>}
+            {lead.additionalJobs.map((j, k) => (
+              <div key={k} className="flex items-center gap-2">
+                <input
+                  className={inputCls}
+                  value={j}
+                  onChange={(e) => {
+                    const next = [...lead.additionalJobs];
+                    next[k] = e.target.value;
+                    setLead({ ...lead, additionalJobs: next });
+                  }}
+                  placeholder="Job name"
+                />
+                <button
+                  type="button"
+                  onClick={() => setLead({ ...lead, additionalJobs: lead.additionalJobs.filter((_, x) => x !== k) })}
+                  className="p-2 rounded-full text-muted hover:text-danger hover:bg-danger/10"
+                  aria-label="Remove job"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </Section>
+
+          <Section title="JIP bonus">
+            <div className="rounded-xl border border-border divide-y divide-border">
+              {(
+                [
+                  ["jipInstallRelated", "Install Related", rates.jip.installRelated],
+                  ["jipLittle", "Little JIP", rates.jip.little],
+                ] as const
+              ).map(([key, label, amt]) => (
+                <label key={key} className="flex items-center gap-3 px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={lead[key]}
+                    onChange={(e) => setLead({ ...lead, [key]: e.target.checked })}
+                    className="w-4 h-4"
+                  />
+                  <span className="flex-1 text-sm">{label}</span>
+                  <span className="text-xs text-muted tabular-nums">
+                    Lead {money(amt.lead)} · App {money(amt.apprentice)}
+                  </span>
+                </label>
+              ))}
+            </div>
           </Section>
 
           <Section title={isOffice ? "Installer note" : "Notes"}>
@@ -537,7 +822,9 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
                   {p.name || (i === 0 ? "Lead" : `Apprentice ${i}`)}
                   <span className="text-muted"> · {i === 0 ? "Lead" : "Apprentice"}{p.tier ? ` T${p.tier}` : ""}</span>
                 </span>
-                <span className="text-sm font-medium tabular-nums">{money(p.subtotal)}</span>
+                <span className="text-sm font-medium tabular-nums">
+                  {money(p.subtotal + p.additionalJobs + p.jip)}
+                </span>
               </div>
             ))}
             <div className="flex items-center justify-between px-4 py-2.5 bg-surface">
@@ -625,71 +912,6 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
                     </div>
                   );
                 })}
-              </Section>
-
-              <Section
-                title="Additional jobs"
-                right={
-                  <button
-                    type="button"
-                    onClick={() => setOffice({ ...office, additionalJobs: [...office.additionalJobs, ""] })}
-                    className="flex items-center gap-1 text-xs font-medium text-rba-green"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Add job
-                  </button>
-                }
-              >
-                <p className="text-[11px] text-muted">
-                  {money(ADDITIONAL_JOB_RATE.lead)} lead · {money(ADDITIONAL_JOB_RATE.apprentice)} each apprentice, per job.
-                </p>
-                {office.additionalJobs.map((j, k) => (
-                  <div key={k} className="flex items-center gap-2">
-                    <input
-                      className={inputCls}
-                      value={j}
-                      onChange={(e) => {
-                        const next = [...office.additionalJobs];
-                        next[k] = e.target.value;
-                        setOffice({ ...office, additionalJobs: next });
-                      }}
-                      placeholder="Job name"
-                    />
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setOffice({ ...office, additionalJobs: office.additionalJobs.filter((_, x) => x !== k) })
-                      }
-                      className="p-2 rounded-full text-muted hover:text-danger hover:bg-danger/10"
-                      aria-label="Remove job"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-              </Section>
-
-              <Section title="JIP bonus">
-                <div className="rounded-xl border border-border divide-y divide-border">
-                  {(
-                    [
-                      ["jipInstallRelated", "Install Related", JIP_BONUS.installRelated],
-                      ["jipLittle", "Little JIP", JIP_BONUS.little],
-                    ] as const
-                  ).map(([key, label, amt]) => (
-                    <label key={key} className="flex items-center gap-3 px-3 py-2.5">
-                      <input
-                        type="checkbox"
-                        checked={office[key]}
-                        onChange={(e) => setOffice({ ...office, [key]: e.target.checked })}
-                        className="w-4 h-4"
-                      />
-                      <span className="flex-1 text-sm">{label}</span>
-                      <span className="text-xs text-muted tabular-nums">
-                        Lead {money(amt.lead)} · App {money(amt.apprentice)}
-                      </span>
-                    </label>
-                  ))}
-                </div>
               </Section>
 
               <Section title="Office only">
@@ -804,8 +1026,58 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
       <footer className="border-t border-border bg-background px-3 py-2.5 safe-area-bottom">
         <div className="max-w-2xl mx-auto space-y-2">
           {error && <p className="text-sm text-danger">{error}</p>}
-          {isOffice ? (
+          {isOffice && rejectReason !== null ? (
+            <div className="space-y-2">
+              <label className="block space-y-1">
+                <span className="text-sm font-medium">Why is it going back?</span>
+                <textarea
+                  autoFocus
+                  className={`${inputCls} min-h-[70px]`}
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="The lead sees this. Say what to fix."
+                />
+              </label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setRejectReason(null);
+                    setError("");
+                  }}
+                  disabled={!!saving}
+                  className="flex-1 rounded-lg border border-border py-3 font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleReject}
+                  disabled={!!saving || !rejectReason.trim()}
+                  className="flex-[2] rounded-lg bg-danger py-3 text-white font-semibold disabled:opacity-50"
+                >
+                  {saving === "reject" ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : "Send back to lead"}
+                </button>
+              </div>
+            </div>
+          ) : isOffice && (status === "draft" || status === "rejected") ? (
+            <p className="text-sm text-muted text-center py-2">
+              {status === "draft"
+                ? "Waiting on the lead to submit it."
+                : "Waiting on the lead to fix it and submit again."}
+            </p>
+          ) : isOffice ? (
             <div className="flex gap-2">
+              {/* A paper sheet payroll typed in has no lead login to send it back to. */}
+              {sheet && !sheet.on_paper && (
+                <button
+                  onClick={() => setRejectReason("")}
+                  disabled={!!saving}
+                  className="flex items-center justify-center gap-1 rounded-lg border border-danger/50 px-3 py-3 font-semibold text-danger disabled:opacity-60"
+                  title="Send it back to the lead with a reason"
+                >
+                  <Undo2 className="w-4 h-4" />
+                  <span className="hidden min-[400px]:inline">Send back</span>
+                </button>
+              )}
               {wasCompleted ? (
                 <button
                   onClick={() => handleOffice(false)}
@@ -838,17 +1110,27 @@ export default function MoreForMoreForm({ mode, job, order, sheet, onClose, onSa
               )}
             </div>
           ) : (
-            <button
-              onClick={handleSubmit}
-              disabled={!!saving}
-              className="w-full rounded-lg bg-rba-green py-3 text-white font-semibold disabled:opacity-60"
-            >
-              {saving === "submit" ? (
-                <Loader2 className="w-5 h-5 animate-spin mx-auto" />
-              ) : (
-                `${sheet ? "Resubmit" : "Submit"} · ${money(calc.leadTotal)}`
-              )}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleSubmit("draft")}
+                disabled={!!saving}
+                className="flex-1 rounded-lg border border-border py-3 font-semibold disabled:opacity-60"
+                title="Save what you have and finish it later"
+              >
+                {saving === "draft" ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : "Save progress"}
+              </button>
+              <button
+                onClick={() => handleSubmit("submitted")}
+                disabled={!!saving}
+                className="flex-[2] rounded-lg bg-rba-green py-3 text-white font-semibold disabled:opacity-60"
+              >
+                {saving === "submit" ? (
+                  <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+                ) : (
+                  `${sheet && sheet.submit_count > 0 ? "Resubmit" : "Submit"} · ${money(calc.leadTotal)}`
+                )}
+              </button>
+            </div>
           )}
         </div>
       </footer>

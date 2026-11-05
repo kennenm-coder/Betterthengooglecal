@@ -23,6 +23,7 @@ import {
 } from "@/lib/roles";
 import { ordersForCrews } from "@/lib/format-utils";
 import FloatersBanner from "@/components/FloatersBanner";
+import MoreForMoreNotices from "@/components/MoreForMoreNotices";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO } from "date-fns";
@@ -292,6 +293,10 @@ function CalendarPage() {
           )}
         </div>
       </header>
+
+      {/* A lead's More for More news: sent back (fix it) or approved. Draws
+          nothing for anyone who doesn't fill out More for Mores. */}
+      <MoreForMoreNotices />
 
       <TimeOffBanner requests={timeOffRequests} date={currentDate} />
 

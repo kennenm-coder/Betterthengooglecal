@@ -5,7 +5,10 @@
 // UNIT_ITEMS and DEDUCTIONS below matches its rows. Change one, change both.
 //
 // The database side is migration 045: lead_data and office_data are the two
-// JSON halves, and a trigger stops a lead from touching office_data.
+// JSON halves, and a trigger stops a lead from touching office_data. The
+// numbers in UNIT_ITEMS are only the defaults now: payroll edits the live
+// rates on the settings page (047), and each sheet keeps the copy it was
+// saved with (lead_data.rates).
 
 import { getSupabase } from "./supabase";
 import type { WorkOrder } from "./types";
@@ -45,19 +48,92 @@ export const UNIT_ITEMS: UnitItem[] = [
   { key: "stormDoor", label: "Storm Door", lead: [10, 10, 10], apprentice: [10, 10, 10] },
 ];
 
+// ─── Rates (editable on the More for More settings page, 047) ───────────────
+
+/** Tier 1, 2, 3. `null` = blank on the sheet. */
+export type RateRow = [number | null, number | null, number | null];
+
+export interface MfmRates {
+  items: Record<UnitKey, { lead: RateRow; apprentice: RateRow }>;
+  /** Additional Jobs pay, per job. */
+  additionalJob: { lead: number; apprentice: number };
+  /** JIP Bonus amounts. */
+  jip: {
+    installRelated: { lead: number; apprentice: number };
+    little: { lead: number; apprentice: number };
+  };
+}
+
+/** The paper sheet's numbers: what applies until payroll changes them. */
+export const DEFAULT_RATES: MfmRates = {
+  items: Object.fromEntries(
+    UNIT_ITEMS.map((i) => [i.key, { lead: [...i.lead] as RateRow, apprentice: [...i.apprentice] as RateRow }])
+  ) as MfmRates["items"],
+  additionalJob: { lead: 50, apprentice: 25 },
+  jip: {
+    installRelated: { lead: 100, apprentice: 50 },
+    little: { lead: 25, apprentice: 0 },
+  },
+};
+
+function num(v: unknown, fallback: number): number {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function rateRow(v: unknown, fallback: RateRow): RateRow {
+  if (!Array.isArray(v)) return [...fallback] as RateRow;
+  return [0, 1, 2].map((i) => {
+    const x = v[i];
+    if (x === null || x === "") return null;
+    const n = typeof x === "number" ? x : Number(x);
+    return Number.isFinite(n) && n >= 0 ? n : fallback[i];
+  }) as RateRow;
+}
+
+/**
+ * A complete, sane rate table from whatever was stored: anything missing or
+ * not a number falls back to the paper sheet's value, key by key.
+ */
+export function normalizeRates(r: unknown): MfmRates {
+  const src = (r && typeof r === "object" ? r : {}) as Partial<MfmRates>;
+  const items = {} as MfmRates["items"];
+  for (const it of UNIT_ITEMS) {
+    const d = DEFAULT_RATES.items[it.key];
+    const s = src.items?.[it.key];
+    items[it.key] = { lead: rateRow(s?.lead, d.lead), apprentice: rateRow(s?.apprentice, d.apprentice) };
+  }
+  const aj = src.additionalJob || ({} as Partial<MfmRates["additionalJob"]>);
+  const ji = src.jip || ({} as Partial<MfmRates["jip"]>);
+  const D = DEFAULT_RATES;
+  return {
+    items,
+    additionalJob: { lead: num(aj.lead, D.additionalJob.lead), apprentice: num(aj.apprentice, D.additionalJob.apprentice) },
+    jip: {
+      installRelated: {
+        lead: num(ji.installRelated?.lead, D.jip.installRelated.lead),
+        apprentice: num(ji.installRelated?.apprentice, D.jip.installRelated.apprentice),
+      },
+      little: {
+        lead: num(ji.little?.lead, D.jip.little.lead),
+        apprentice: num(ji.little?.apprentice, D.jip.little.apprentice),
+      },
+    },
+  };
+}
+
 /**
  * The rate a person earns per unit at their tier.
  *
- * Some lead rates are blank on the paper sheet for tiers 2 and 3 (Bay/Bow has
- * only a Tier 1 rate). Until payroll says otherwise, a blank falls back to the
- * nearest rate to its left — the same tier-1 number a lead would have read off
- * the sheet. Apprentice rates are never blank.
+ * Some lead rates are blank (on the paper sheet, Bay/Bow has only a Tier 1
+ * rate). A blank falls back to the nearest rate to its left — the same tier-1
+ * number a lead would have read off the sheet.
  */
-export function rateFor(item: UnitItem, isLead: boolean, tier: Tier | null): number {
+export function rateFor(rates: MfmRates, key: UnitKey, isLead: boolean, tier: Tier | null): number {
   if (!tier) return 0;
-  const rates = isLead ? item.lead : item.apprentice;
+  const row = isLead ? rates.items[key].lead : rates.items[key].apprentice;
   for (let i = tier - 1; i >= 0; i--) {
-    const r = rates[i];
+    const r = row[i];
     if (r != null) return r;
   }
   return 0;
@@ -86,15 +162,6 @@ export const DEDUCTIONS: Deduction[] = [
   { key: "disciplinary", label: "Any Disciplinary Measures", pct: null },
 ];
 
-/** Additional Jobs pay, per job: lead, then each apprentice. */
-export const ADDITIONAL_JOB_RATE = { lead: 50, apprentice: 25 };
-
-/** JIP Bonus amounts from the sheet. */
-export const JIP_BONUS = {
-  installRelated: { lead: 100, apprentice: 50 },
-  little: { lead: 25, apprentice: 0 },
-};
-
 export type Qty = Partial<Record<UnitKey, number>>;
 
 export interface ApprenticeEntry {
@@ -112,18 +179,32 @@ export interface LeadData {
   leadQty: Qty;
   apprentices: ApprenticeEntry[];
   installerNote: string;
+  /** Additional Jobs: one job name per extra job (lead fills, office may fix). */
+  additionalJobs: string[];
+  /** JIP Bonus lines that apply (lead fills, office may fix). */
+  jipInstallRelated: boolean;
+  jipLittle: boolean;
   /** Where the starting quantities came from, so the form can say so. */
   qtySource?: "material-list" | "rforce" | null;
+  /**
+   * The rates in effect when the lead last saved this sheet. Pay is always
+   * worked out from these, so changing a rate in settings never changes a
+   * sheet already filled in. Absent on sheets saved before 047.
+   */
+  rates?: MfmRates;
 }
 
 /** The office's half. Index 0 = lead, 1 and 2 = apprentices. */
 export interface OfficeData {
   /** Per person: deduction key → percent. */
   deductions: Record<string, number>[];
-  /** Job names for the Additional Jobs line, one per extra job. */
-  additionalJobs: string[];
-  jipInstallRelated: boolean;
-  jipLittle: boolean;
+  /**
+   * Legacy: Additional Jobs and JIP were office fields before leads filled
+   * them (046). Read only as a fallback for sheets saved that way.
+   */
+  additionalJobs?: string[];
+  jipInstallRelated?: boolean;
+  jipLittle?: boolean;
   nps: string;
   dateReceived: string;
   entered8020: boolean;
@@ -132,7 +213,13 @@ export interface OfficeData {
   officeNote: string;
 }
 
-export type MfmStatus = "submitted" | "completed";
+/**
+ * draft     — the lead saved it in progress; not with payroll yet.
+ * submitted — waiting on payroll.
+ * rejected  — payroll sent it back with a reason; the lead must fix it.
+ * completed — payroll finished it.
+ */
+export type MfmStatus = "draft" | "submitted" | "rejected" | "completed";
 
 export interface MoreForMore {
   id: string;
@@ -157,18 +244,34 @@ export interface MoreForMore {
   completed_at: string | null;
   completed_by: string | null;
   completed_by_name: string | null;
+  /** Set when payroll sends it back (046). Kept after a resubmit, as history. */
+  reject_reason?: string | null;
+  rejected_at?: string | null;
+  rejected_by?: string | null;
+  rejected_by_name?: string | null;
+  /** When the lead dismissed the "completed" notice. */
+  lead_ack_at?: string | null;
+  /** Typed in by payroll from a paper sheet (048). */
+  on_paper?: boolean;
 }
 
 export function emptyLeadData(leadName = ""): LeadData {
-  return { leadName, leadTier: null, leadQty: {}, apprentices: [], installerNote: "", qtySource: null };
+  return {
+    leadName,
+    leadTier: null,
+    leadQty: {},
+    apprentices: [],
+    installerNote: "",
+    additionalJobs: [],
+    jipInstallRelated: false,
+    jipLittle: false,
+    qtySource: null,
+  };
 }
 
 export function emptyOfficeData(): OfficeData {
   return {
     deductions: [{}, {}, {}],
-    additionalJobs: [],
-    jipInstallRelated: false,
-    jipLittle: false,
     nps: "",
     dateReceived: "",
     entered8020: false,
@@ -184,7 +287,6 @@ export function normalizeOffice(o: Partial<OfficeData> | null | undefined): Offi
   const merged = { ...base, ...(o || {}) } as OfficeData;
   const d = Array.isArray(merged.deductions) ? merged.deductions : [];
   merged.deductions = [0, 1, 2].map((i) => ({ ...(d[i] || {}) }));
-  merged.additionalJobs = Array.isArray(merged.additionalJobs) ? merged.additionalJobs : [];
   return merged;
 }
 
@@ -192,6 +294,9 @@ export function normalizeLead(l: Partial<LeadData> | null | undefined): LeadData
   const base = emptyLeadData();
   const merged = { ...base, ...(l || {}) } as LeadData;
   merged.leadQty = { ...(merged.leadQty || {}) };
+  merged.additionalJobs = Array.isArray(merged.additionalJobs) ? merged.additionalJobs : [];
+  merged.jipInstallRelated = !!merged.jipInstallRelated;
+  merged.jipLittle = !!merged.jipLittle;
   merged.apprentices = (Array.isArray(merged.apprentices) ? merged.apprentices : [])
     .slice(0, 2)
     .map((a) => ({
@@ -230,18 +335,46 @@ function personQty(lead: LeadData, appIdx: number | null): Qty {
 }
 
 /**
- * Everyone on the sheet with their totals. Units × tier rate gives each row,
- * rows add to a subtotal (what the lead sees on submit). The office side then
- * takes the deduction % off that subtotal and adds Additional Jobs and the
- * JIP bonus on top.
+ * Additional Jobs and JIP for a sheet: the lead's answers, or the office's on
+ * sheets saved before leads filled them.
  */
-export function calcSheet(leadIn: LeadData, officeIn?: Partial<OfficeData> | null): {
+export function extrasOf(leadIn: LeadData, officeIn?: Partial<OfficeData> | null) {
+  const lead = normalizeLead(leadIn);
+  const office = officeIn || {};
+  const legacyJobs = Array.isArray(office.additionalJobs) ? office.additionalJobs : [];
+  return {
+    additionalJobs: (lead.additionalJobs.length ? lead.additionalJobs : legacyJobs).filter((j) => j.trim()),
+    jipInstallRelated: lead.jipInstallRelated || !!office.jipInstallRelated,
+    jipLittle: lead.jipLittle || !!office.jipLittle,
+  };
+}
+
+/**
+ * Everyone on the sheet with their totals. Units × tier rate gives each row,
+ * rows add to a subtotal. Additional Jobs and the JIP bonus (both filled by
+ * the lead) add on top, so the lead's total includes them. Payroll's
+ * deduction % comes off the unit subtotal only.
+ *
+ * Rates: the sheet's own saved copy when it has one; otherwise `currentRates`
+ * (today's settings) — a sheet being filled in for the first time, or one
+ * saved before rates were saved on sheets; otherwise the paper sheet's.
+ */
+export function calcSheet(
+  leadIn: LeadData,
+  officeIn?: Partial<OfficeData> | null,
+  currentRates?: MfmRates | null
+): {
   people: PersonCalc[];
+  /** What the lead is submitting: units + additional jobs + JIP, before deductions. */
   leadTotal: number;
   finalTotal: number;
+  /** The rates this sheet was worked out with. */
+  rates: MfmRates;
 } {
   const lead = normalizeLead(leadIn);
   const office = normalizeOffice(officeIn);
+  const extras = extrasOf(lead, officeIn);
+  const rates = normalizeRates(lead.rates ?? currentRates ?? null);
   const people: PersonCalc[] = [];
   const entries: { role: "lead" | "apprentice"; name: string; tier: Tier | null; appIdx: number | null }[] = [
     { role: "lead", name: lead.leadName, tier: lead.leadTier, appIdx: null },
@@ -254,7 +387,7 @@ export function calcSheet(leadIn: LeadData, officeIn?: Partial<OfficeData> | nul
     let subtotal = 0;
     for (const item of UNIT_ITEMS) {
       const q = Number(qty[item.key]) || 0;
-      const v = round2(q * rateFor(item, isLead, e.tier));
+      const v = round2(q * rateFor(rates, item.key, isLead, e.tier));
       lines[item.key] = v;
       subtotal += v;
     }
@@ -265,11 +398,12 @@ export function calcSheet(leadIn: LeadData, officeIn?: Partial<OfficeData> | nul
       Object.values(ded).reduce((s, v) => s + (Number(v) || 0), 0)
     );
     const deductionAmt = round2((subtotal * deductionPct) / 100);
-    const jobs = office.additionalJobs.filter((j) => j.trim()).length;
-    const additionalJobs = jobs * (isLead ? ADDITIONAL_JOB_RATE.lead : ADDITIONAL_JOB_RATE.apprentice);
+    const jobs = extras.additionalJobs.length;
+    const who = isLead ? "lead" : "apprentice";
+    const additionalJobs = jobs * rates.additionalJob[who];
     const jip =
-      (office.jipInstallRelated ? (isLead ? JIP_BONUS.installRelated.lead : JIP_BONUS.installRelated.apprentice) : 0) +
-      (office.jipLittle ? (isLead ? JIP_BONUS.little.lead : JIP_BONUS.little.apprentice) : 0);
+      (extras.jipInstallRelated ? rates.jip.installRelated[who] : 0) +
+      (extras.jipLittle ? rates.jip.little[who] : 0);
     people.push({
       role: e.role,
       name: e.name,
@@ -286,8 +420,9 @@ export function calcSheet(leadIn: LeadData, officeIn?: Partial<OfficeData> | nul
   });
   return {
     people,
-    leadTotal: round2(people.reduce((s, p) => s + p.subtotal, 0)),
+    leadTotal: round2(people.reduce((s, p) => s + p.subtotal + p.additionalJobs + p.jip, 0)),
     finalTotal: round2(people.reduce((s, p) => s + p.pay, 0)),
+    rates,
   };
 }
 
@@ -411,18 +546,27 @@ export function snapshotOf(order: WorkOrder, crew: string | null): JobSnapshot {
   };
 }
 
-/** The lead submits (new) or resubmits (existing). */
+/**
+ * The lead saves progress ("draft") or submits to payroll ("submitted"), new
+ * or existing. The database trigger keeps payroll's answers and does the
+ * bookkeeping (submit count, dates) — see migration 046.
+ */
 export async function submitLeadSheet(input: {
   id?: string | null;
   job: JobSnapshot;
   lead: LeadData;
   createdByName: string;
+  status: "draft" | "submitted";
+  /** Today's rates from settings. Every lead save stamps them on the sheet. */
+  currentRates: MfmRates;
 }): Promise<MoreForMore> {
-  const { leadTotal } = calcSheet(input.lead);
+  const lead: LeadData = { ...input.lead, rates: normalizeRates(input.currentRates) };
+  const { leadTotal } = calcSheet(lead);
   const row = {
     ...input.job,
-    lead_data: input.lead,
+    lead_data: lead,
     lead_total: leadTotal,
+    status: input.status,
     created_by_name: input.createdByName || null,
   };
   const q = input.id
@@ -446,10 +590,13 @@ export async function saveOfficeSheet(input: {
   complete: boolean;
   byEmail: string;
   byName: string;
+  currentRates: MfmRates;
 }): Promise<MoreForMore> {
-  const { leadTotal, finalTotal } = calcSheet(input.lead, input.office);
+  // Payroll keeps the sheet's own rates; an older sheet without any gets today's.
+  const lead: LeadData = { ...input.lead, rates: input.lead.rates ?? normalizeRates(input.currentRates) };
+  const { leadTotal, finalTotal } = calcSheet(lead, input.office);
   const patch: Record<string, unknown> = {
-    lead_data: input.lead,
+    lead_data: lead,
     office_data: input.office,
     lead_total: leadTotal,
     final_total: finalTotal,
@@ -463,6 +610,151 @@ export async function saveOfficeSheet(input: {
   const { data, error } = await db().from(TABLE).update(patch).eq("id", input.sheet.id).select("*").single();
   if (error) throw new Error(error.message);
   return fromRow(data);
+}
+
+/**
+ * Payroll types in a sheet a lead handed in on paper. It is saved under
+ * payroll's login (the database sets created_by), so created_by_name carries
+ * the lead's name — that's what lists and the Excel group by.
+ */
+export async function createOfficeSheet(input: {
+  job: JobSnapshot;
+  lead: LeadData;
+  office: OfficeData;
+  complete: boolean;
+  byEmail: string;
+  byName: string;
+  currentRates: MfmRates;
+}): Promise<MoreForMore> {
+  const lead: LeadData = { ...input.lead, rates: normalizeRates(input.currentRates) };
+  const { leadTotal, finalTotal } = calcSheet(lead, input.office);
+  const row: Record<string, unknown> = {
+    ...input.job,
+    sheet_type: "bonus",
+    lead_data: lead,
+    office_data: input.office,
+    lead_total: leadTotal,
+    final_total: finalTotal,
+    status: input.complete ? "completed" : "submitted",
+    created_by_name: lead.leadName.trim() || input.byName || null,
+    on_paper: true,
+  };
+  if (input.complete) {
+    row.completed_at = new Date().toISOString();
+    row.completed_by = input.byEmail;
+    row.completed_by_name = input.byName || null;
+  }
+  const { data, error } = await db().from(TABLE).insert(row).select("*").single();
+  if (error) {
+    if (/duplicate key|uq_mfm_job_per_lead/i.test(error.message)) {
+      throw new Error("You already typed in a sheet for this job. Open it from the list to edit it.");
+    }
+    throw new Error(error.message);
+  }
+  return fromRow(data);
+}
+
+// ─── Per-job flags (048) ────────────────────────────────────────────────────
+
+/** Payroll's marks on a job: a paper sheet came in; (admin) excluded. */
+export interface JobFlag {
+  order_number: string;
+  paper: boolean;
+  excluded: boolean;
+}
+
+/** Every flagged job, keyed by order number. Empty before 048 runs. */
+export async function fetchJobFlags(): Promise<Map<string, JobFlag>> {
+  const out = new Map<string, JobFlag>();
+  const s = getSupabase();
+  if (!s) return out;
+  // Paged: once old deals are excluded in bulk there can be thousands.
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await s
+      .from("more_for_more_jobs")
+      .select("order_number, paper, excluded")
+      .range(from, from + 999);
+    if (error || !data) break;
+    for (const r of data) out.set(r.order_number, { order_number: r.order_number, paper: !!r.paper, excluded: !!r.excluded });
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+
+/**
+ * Set flags on one or many jobs. `excluded` only sticks for an admin (the
+ * database ignores it from anyone else).
+ */
+export async function setJobFlags(
+  orderNumbers: string[],
+  patch: Partial<Pick<JobFlag, "paper" | "excluded">>,
+  current: Map<string, JobFlag>
+): Promise<JobFlag[]> {
+  const rows = orderNumbers.map((n) => {
+    const cur = current.get(n);
+    return {
+      order_number: n,
+      paper: patch.paper ?? cur?.paper ?? false,
+      excluded: patch.excluded ?? cur?.excluded ?? false,
+    };
+  });
+  const saved: JobFlag[] = [];
+  for (let i = 0; i < rows.length; i += 500) {
+    const { data, error } = await db()
+      .from("more_for_more_jobs")
+      .upsert(rows.slice(i, i + 500), { onConflict: "order_number" })
+      .select("order_number, paper, excluded");
+    if (error) throw new Error(error.message);
+    for (const r of data || []) saved.push({ order_number: r.order_number, paper: !!r.paper, excluded: !!r.excluded });
+  }
+  return saved;
+}
+
+/** Payroll sends a sheet back to the lead with a reason. */
+export async function rejectSheet(input: {
+  sheet: MoreForMore;
+  lead: LeadData;
+  office: OfficeData;
+  reason: string;
+  byName: string;
+  currentRates: MfmRates;
+}): Promise<MoreForMore> {
+  const lead: LeadData = { ...input.lead, rates: input.lead.rates ?? normalizeRates(input.currentRates) };
+  const { leadTotal, finalTotal } = calcSheet(lead, input.office);
+  const { data, error } = await db()
+    .from(TABLE)
+    .update({
+      lead_data: lead,
+      office_data: input.office,
+      lead_total: leadTotal,
+      final_total: finalTotal,
+      status: "rejected",
+      reject_reason: input.reason.trim(),
+      rejected_by_name: input.byName || null,
+    })
+    .eq("id", input.sheet.id)
+    .select("*")
+    .single();
+  if (error) throw new Error(error.message);
+  return fromRow(data);
+}
+
+/** The lead dismisses a "completed" notice. Changes nothing else (046 trigger). */
+export async function ackSheet(id: string): Promise<void> {
+  const { error } = await db().from(TABLE).update({ lead_ack_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * Does this sheet have a notice its lead hasn't dealt with? Sent back: until
+ * they resubmit. Completed: until they dismiss it.
+ */
+export function noticeKind(s: MoreForMore): "rejected" | "completed" | null {
+  if (s.status === "rejected") return "rejected";
+  if (s.status === "completed" && s.completed_at && (!s.lead_ack_at || s.lead_ack_at < s.completed_at)) {
+    return "completed";
+  }
+  return null;
 }
 
 export async function deleteMoreForMore(id: string): Promise<void> {

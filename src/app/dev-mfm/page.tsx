@@ -93,6 +93,9 @@ const mockSheet: MoreForMore = {
     leadQty: { insert: 7, fullFrame: 2, bayBow: 1, pdGlider: 1, entryDoor: 1 },
     apprentices: [{ name: "Tim Fitz", tier: 1, sameAsLead: true, qty: {} }],
     installerNote: "Hauled away old storms.",
+    additionalJobs: ["Jones service call"],
+    jipInstallRelated: true,
+    jipLittle: false,
   },
   office_data: {},
   lead_total: 0,
@@ -108,9 +111,27 @@ const mockSheet: MoreForMore = {
   completed_by_name: null,
 };
 
+const mockRejected: MoreForMore = {
+  ...mockSheet,
+  id: "dev-rejected",
+  status: "rejected",
+  reject_reason: "Bay was a bow, not a bay. Also add the second apprentice (Sam).",
+  rejected_at: "2026-11-05T15:00:00Z",
+  rejected_by_name: "Payroll Pat",
+};
+
+type Mode = "lead" | "office" | "lead-rejected" | "office-rejected" | "office-paper";
+
 export default function DevMfmPage() {
-  const [mode, setMode] = useState<"lead" | "office" | null>(null);
+  const [mode, setMode] = useState<Mode | null>(null);
   if (process.env.NODE_ENV === "production") return null;
+  const sheetFor: Record<Mode, MoreForMore | null> = {
+    lead: null,
+    office: mockSheet,
+    "lead-rejected": mockRejected,
+    "office-rejected": mockRejected,
+    "office-paper": null,
+  };
   return (
     <div className="p-4 space-y-3">
       <h1 className="text-lg font-semibold">More for More harness</h1>
@@ -119,6 +140,15 @@ export default function DevMfmPage() {
       </button>
       <button className="block rounded-lg bg-primary px-4 py-2 text-white" onClick={() => setMode("office")}>
         Office: resubmitted sheet
+      </button>
+      <button className="block rounded-lg bg-danger px-4 py-2 text-white" onClick={() => setMode("lead-rejected")}>
+        Lead: sent-back sheet
+      </button>
+      <button className="block rounded-lg border border-danger px-4 py-2 text-danger" onClick={() => setMode("office-rejected")}>
+        Office: sent-back sheet
+      </button>
+      <button className="block rounded-lg border border-border px-4 py-2" onClick={() => setMode("office-paper")}>
+        Office: type in a paper sheet
       </button>
       <div className="space-y-2 pt-4">
         {[
@@ -135,12 +165,19 @@ export default function DevMfmPage() {
       </div>
       {mode && (
         <MoreForMoreForm
-          mode={mode}
+          mode={mode.startsWith("office") ? "office" : "lead"}
           job={snapshotOf(mockOrder, "Keith Morris")}
-          order={mode === "lead" ? mockOrder : null}
-          sheet={mode === "office" ? mockSheet : null}
+          order={mode === "lead" || mode === "office-paper" ? mockOrder : null}
+          sheet={sheetFor[mode]}
           onClose={() => setMode(null)}
           onSaved={() => {}}
+          previewPeople={[
+            { id: "p1", name: "Keith Morris", kind: "lead", tier: 2, active: true },
+            { id: "p2", name: "Kevin Hart", kind: "lead", tier: 1, active: true },
+            { id: "p3", name: "Tim Fitz", kind: "apprentice", tier: 1, active: true },
+            { id: "p4", name: "Sam Lee", kind: "apprentice", tier: 3, active: true },
+            { id: "p5", name: "Kyle Old", kind: "either", tier: 2, active: false },
+          ]}
         />
       )}
     </div>

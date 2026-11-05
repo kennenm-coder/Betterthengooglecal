@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Calendar, Search, ScrollText, Wrench, Ruler, BadgeDollarSign } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useMfmNotices } from "@/hooks/useMfmNotices";
 import { canSeeWriteUps, isAdmin, isInstaller, isInstallerLead, isMeasureTech } from "@/lib/roles";
 
 // Settings lives in the top-right of the calendar header, not the bottom nav.
@@ -35,6 +36,8 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
   const pathname = usePathname();
   const auth = useAuth();
   const roles = previewRoles ?? auth.roles;
+  // Sheets payroll sent back that this lead still has to fix.
+  const { rejectedCount } = useMfmNotices();
   // Hide the Write-Ups tab from regular members during the soft rollout.
   const items = NAV_ITEMS.filter(
     (i) =>
@@ -63,7 +66,17 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
               active ? "text-primary" : "text-muted"
             }`}
           >
-            <Icon className="w-6 h-6 shrink-0" />
+            <span className="relative shrink-0">
+              <Icon className="w-6 h-6" />
+              {href === "/more-for-more" && rejectedCount > 0 && (
+                <span
+                  className="absolute -top-1.5 -right-2 min-w-[18px] h-[18px] rounded-full bg-danger text-white text-[10px] font-bold leading-[18px] text-center px-1"
+                  aria-label={`${rejectedCount} sent back to fix`}
+                >
+                  {rejectedCount}
+                </span>
+              )}
+            </span>
             {/* Wraps to a second line rather than cutting off ("More for More"
                 on a five- or six-tab bar); icons stay lined up across the top. */}
             <span className="text-xs font-medium leading-tight text-center line-clamp-2 break-words max-w-full px-0.5">

@@ -16,6 +16,7 @@ import { format } from "date-fns";
 import {
   calcSheet,
   DEDUCTIONS,
+  extrasOf,
   normalizeLead,
   normalizeOffice,
   UNIT_ITEMS,
@@ -56,12 +57,31 @@ interface SheetValues {
 export function sheetValues(rec: MoreForMore): SheetValues {
   const lead = normalizeLead(rec.lead_data);
   const office = normalizeOffice(rec.office_data);
-  const { people, finalTotal } = calcSheet(lead, office);
+  const { people, finalTotal, rates } = calcSheet(lead, office);
   const v: Record<string, CellValue> = {};
   const put = (ref: string, val: CellValue | null | undefined) => {
     if (val === null || val === undefined || val === "") return;
     v[ref] = val;
   };
+
+  // The printed rates: the ones THIS sheet was worked out with, which may
+  // differ from the paper sheet's if payroll has changed them. A blank rate
+  // clears the cell ("" writes an empty cell, keeping its borders).
+  UNIT_ROWS.forEach((start, block) => {
+    UNIT_ITEMS.forEach((item, j) => {
+      const row = block === 0 ? rates.items[item.key].lead : rates.items[item.key].apprentice;
+      ["D", "E", "F"].forEach((col, t) => {
+        v[`${col}${start + j}`] = row[t] ?? "";
+      });
+    });
+  });
+  v.L21 = rates.additionalJob.lead;
+  v.N21 = rates.additionalJob.apprentice;
+  v.P21 = rates.additionalJob.apprentice;
+  v.K25 = rates.jip.installRelated.lead;
+  v.K26 = rates.jip.installRelated.apprentice;
+  v.K27 = rates.jip.little.lead;
+  v.K28 = rates.jip.little.apprentice;
 
   put("A3", rec.job_name);
   put("D3", rec.order_number);
@@ -86,18 +106,18 @@ export function sheetValues(rec: MoreForMore): SheetValues {
     });
   });
 
-  const jobs = office.additionalJobs.filter((j) => j.trim());
-  if (jobs.length) {
-    put("I21", jobs.join(", "));
+  const extras = extrasOf(lead, rec.office_data);
+  if (extras.additionalJobs.length) {
+    put("I21", extras.additionalJobs.join(", "));
     people.forEach((p, i) => put(`${PERSON_COLS[i]}22`, p.additionalJobs));
   }
 
   // JIP Bonus: tick the lines that apply beside the sheet's printed amounts.
-  if (office.jipInstallRelated) {
+  if (extras.jipInstallRelated) {
     put("L25", "✓");
     if (people.length > 1) put("L26", "✓");
   }
-  if (office.jipLittle) {
+  if (extras.jipLittle) {
     put("L27", "✓");
     if (people.length > 1) put("L28", "✓");
   }
@@ -144,7 +164,9 @@ function setCell(xml: string, ref: string, value: CellValue): string {
   if (!m) throw new Error(`Bonus sheet template has no cell ${ref}`);
   const attrs = m[1].replace(/\s+t="[^"]*"/, "").replace(/\s*\/$/, "");
   const cell =
-    typeof value === "number"
+    value === ""
+      ? `<c r="${ref}"${attrs}/>`
+      : typeof value === "number"
       ? `<c r="${ref}"${attrs}><v>${value}</v></c>`
       : `<c r="${ref}"${attrs} t="inlineStr"><is><t xml:space="preserve">${xmlEscape(value)}</t></is></c>`;
   return xml.replace(m[0], cell);
@@ -213,8 +235,40 @@ function colLetter(n: number): string {
   return s;
 }
 
-/** A plain Summary tab: a header row, then one row per sheet. */
-function summarySheetXml(recs: MoreForMore[]): string {
+const STATUS_LABEL: Record<string, string> = {
+  draft: "In progress",
+  submitted: "Needs office",
+  rejected: "Sent back",
+  completed: "Completed",
+};
+
+/** Who sent a sheet in: the installer the export groups by. */
+function installerName(rec: MoreForMore): string {
+  return (rec.created_by_name || rec.lead_data?.leadName || rec.created_by || "").trim();
+}
+
+/**
+ * Sheets grouped by installer name — not by login, because a paper sheet
+ * payroll typed in is saved under payroll's login but belongs to the lead
+ * named on it. Groups A→Z, each installer's sheets oldest submission first.
+ */
+function groupByInstaller(recs: MoreForMore[]): { name: string; sheets: MoreForMore[] }[] {
+  const groups = new Map<string, { name: string; sheets: MoreForMore[] }>();
+  for (const r of recs) {
+    const key = installerName(r).toLowerCase().replace(/\s+/g, " ") || r.created_by;
+    if (!groups.has(key)) groups.set(key, { name: installerName(r), sheets: [] });
+    groups.get(key)!.sheets.push(r);
+  }
+  const out = Array.from(groups.values());
+  out.forEach((g) => g.sheets.sort((a, b) => a.submitted_at.localeCompare(b.submitted_at)));
+  return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+}
+
+/**
+ * The Summary tab: a header row, then each installer's sheets one per row,
+ * followed by a TOTAL row for that installer and a blank line.
+ */
+function summarySheetXml(groups: { name: string; sheets: MoreForMore[] }[]): string {
   const header = [
     "Created", "Submitted", "Status", "Completed", "Job #", "Job Name", "Install Date", "Crew", "Submitted By",
     ...[0, 1, 2].flatMap((i) => {
@@ -225,26 +279,47 @@ function summarySheetXml(recs: MoreForMore[]): string {
     "Total Submitted", "Total Pay", "NPS", "Additional Jobs", "Date Received", "80/20 Entered", "Payroll Date",
     "Reviewed with Lead", "Times Submitted", "Installer Note", "Office Note",
   ];
-  const rows: CellValue[][] = recs.map((rec) => {
-    const lead = normalizeLead(rec.lead_data);
-    const office = normalizeOffice(rec.office_data);
-    const { people, leadTotal, finalTotal } = calcSheet(lead, office);
-    const personCols = [0, 1, 2].flatMap((i) => {
-      const p = people[i];
-      if (!p) return ["", "", "", "", "", "", "", ""];
-      return [p.name, p.tier ?? "", p.subtotal, p.deductionPct, p.deductionAmt, p.additionalJobs, p.jip, p.pay];
-    });
-    return [
-      fmtDate(rec.created_at), fmtDate(rec.submitted_at), rec.status === "completed" ? "Completed" : "Needs office",
-      fmtDate(rec.completed_at), rec.order_number, rec.job_name, fmtDate(rec.install_date), rec.crew_name || "",
-      rec.created_by_name || rec.created_by,
-      ...personCols,
-      ...UNIT_ITEMS.map((u) => Number(lead.leadQty[u.key]) || ""),
-      leadTotal, finalTotal, office.nps, office.additionalJobs.filter((j) => j.trim()).join(", "),
-      fmtDate(office.dateReceived), office.entered8020 ? "Yes" : "", fmtDate(office.payrollDate),
-      office.reviewedWithLead ? "Yes" : "", rec.submit_count, lead.installerNote, office.officeNote,
-    ];
-  });
+  const COL_SUBMITTED_BY = header.indexOf("Submitted By");
+  const COL_LEAD_PAY = header.indexOf("Lead Pay");
+  const COL_TOTAL_SUBMITTED = header.indexOf("Total Submitted");
+  const COL_TOTAL_PAY = header.indexOf("Total Pay");
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
+  const rows: CellValue[][] = [];
+  for (const g of groups) {
+    let submittedSum = 0;
+    let paySum = 0;
+    let leadPaySum = 0;
+    for (const rec of g.sheets) {
+      const lead = normalizeLead(rec.lead_data);
+      const office = normalizeOffice(rec.office_data);
+      const { people, leadTotal, finalTotal } = calcSheet(lead, office);
+      submittedSum += leadTotal;
+      paySum += finalTotal;
+      leadPaySum += people[0]?.pay || 0;
+      const personCols = [0, 1, 2].flatMap((i) => {
+        const p = people[i];
+        if (!p) return ["", "", "", "", "", "", "", ""];
+        return [p.name, p.tier ?? "", p.subtotal, p.deductionPct, p.deductionAmt, p.additionalJobs, p.jip, p.pay];
+      });
+      rows.push([
+        fmtDate(rec.created_at), fmtDate(rec.submitted_at), STATUS_LABEL[rec.status] || rec.status,
+        fmtDate(rec.completed_at), rec.order_number, rec.job_name, fmtDate(rec.install_date), rec.crew_name || "",
+        installerName(rec),
+        ...personCols,
+        ...UNIT_ITEMS.map((u) => Number(lead.leadQty[u.key]) || ""),
+        leadTotal, finalTotal, office.nps, extrasOf(lead, rec.office_data).additionalJobs.join(", "),
+        fmtDate(office.dateReceived), office.entered8020 ? "Yes" : "", fmtDate(office.payrollDate),
+        office.reviewedWithLead ? "Yes" : "", rec.submit_count, lead.installerNote, office.officeNote,
+      ]);
+    }
+    const total: CellValue[] = header.map(() => "");
+    total[COL_SUBMITTED_BY] = `TOTAL ${g.name} (${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"})`;
+    total[COL_LEAD_PAY] = round2(leadPaySum);
+    total[COL_TOTAL_SUBMITTED] = round2(submittedSum);
+    total[COL_TOTAL_PAY] = round2(paySum);
+    rows.push(total, []);
+  }
   const cell = (v: CellValue, r: number, c: number) => {
     const ref = `${colLetter(c)}${r}`;
     if (v === "" || v === null || v === undefined) return "";
@@ -262,14 +337,15 @@ function summarySheetXml(recs: MoreForMore[]): string {
     `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
     `<sheetViews><sheetView workbookViewId="0" tabSelected="1"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>` +
     `<cols>${cols}</cols><sheetData>${data}</sheetData>` +
-    (rows.length ? `<autoFilter ref="A1:${colLetter(header.length - 1)}${rows.length + 1}"/>` : "") +
     `</worksheet>`
   );
 }
 
 /** Excel tab names: 31 characters, none of []:*?/\ and unique. */
 function tabName(rec: MoreForMore, used: Set<string>): string {
-  const base = `${rec.order_number} ${rec.job_name}`.replace(/[\[\]:*?/\\']/g, " ").replace(/\s+/g, " ").trim().slice(0, 28) || "Sheet";
+  // Installer's last name first, so a group's tabs read as one run.
+  const who = installerName(rec).split(/\s+/).pop() || "";
+  const base = `${who} ${rec.order_number} ${rec.job_name}`.replace(/[\[\]:*?/\\']/g, " ").replace(/\s+/g, " ").trim().slice(0, 28) || "Sheet";
   let name = base;
   let n = 2;
   while (used.has(name.toLowerCase())) name = `${base.slice(0, 26)} ${n++}`;
@@ -279,7 +355,7 @@ function tabName(rec: MoreForMore, used: Set<string>): string {
 
 /**
  * A date range of sheets: Summary first, then each sheet as its own filled
- * bonus-sheet tab, oldest first.
+ * bonus-sheet tab — grouped by installer, in the same order as the Summary.
  */
 export async function downloadRangeXlsx(recs: MoreForMore[], from: string, to: string): Promise<void> {
   const zip = await loadTemplate();
@@ -288,12 +364,13 @@ export async function downloadRangeXlsx(recs: MoreForMore[], from: string, to: s
   // settings part (pageSetup keeps scale/orientation without it).
   const plainXml = templateXml.replace(/\s*r:id="rId1"/, "").replace('tabSelected="1"', 'tabSelected="0"');
 
-  const ordered = [...recs].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const groups = groupByInstaller(recs);
+  const ordered = groups.flatMap((g) => g.sheets);
   const used = new Set<string>(["summary"]);
   let sheetsXml = `<sheet name="Summary" sheetId="1" r:id="rIdSum"/>`;
   let rels = `<Relationship Id="rIdSum" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/summary.xml"/>`;
   let types = `<Override PartName="/xl/worksheets/summary.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`;
-  zip.file("xl/worksheets/summary.xml", summarySheetXml(ordered));
+  zip.file("xl/worksheets/summary.xml", summarySheetXml(groups));
 
   ordered.forEach((rec, i) => {
     const name = xmlEscape(tabName(rec, used));
