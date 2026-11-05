@@ -726,7 +726,7 @@ export default function WorkOrdersPage() {
                         </p>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {sections.map((s) => (
-                            <StatusPill key={s.key} status={s.status} />
+                            <StatusPill key={s.key} status={s.status} done={isSectionDone(s)} />
                           ))}
                           {sections.map((s) => {
                             const n = nudgeFor(s);
@@ -895,9 +895,12 @@ function isSectionDone(section: WriteUpSection): boolean {
   return all.length > 0 && all.every((i) => i.completed);
 }
 
-function StatusPill({ status }: { status: WriteUpStatus }) {
+function StatusPill({ status, done }: { status: WriteUpStatus; done?: boolean }) {
+  // A done write-up that is still marked Open/In Review would otherwise keep its
+  // amber/blue pill beside a green row, so it goes green with the rest.
+  const style = done && status !== "closed" ? STATUS_STYLE.closed : STATUS_STYLE[status];
   return (
-    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${STATUS_STYLE[status]}`}>
+    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${style}`}>
       {STATUS_LABEL[status]}
     </span>
   );
@@ -1052,7 +1055,7 @@ function ReviewSection({
               ✓ Completed
             </span>
           )}
-          <StatusPill status={section.status} />
+          <StatusPill status={section.status} done={done} />
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-[11px] text-muted text-right truncate">
@@ -1159,7 +1162,7 @@ function ReviewSection({
       {responsibility && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[10px] font-bold uppercase tracking-wide text-muted">Responsibility</span>
-          <span className="inline-flex items-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 px-2.5 py-0.5 text-xs font-semibold">
+          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${done ? "bg-green-600/15 text-green-700 dark:text-green-400" : "bg-amber-500/15 text-amber-700 dark:text-amber-400"}`}>
             {responsibilityLabel(responsibility)}
           </span>
           {defectCode && (
@@ -1209,7 +1212,7 @@ function ReviewSection({
             <div className="flex flex-wrap items-start gap-2">
               <span className="text-[10px] font-bold uppercase tracking-wide text-muted pt-0.5">Who could do this</span>
               {crewText ? (
-                <span className="text-sm whitespace-pre-wrap text-amber-700 dark:text-amber-400 font-medium">{crewText}</span>
+                <span className={`text-sm whitespace-pre-wrap font-medium ${done ? "text-green-700 dark:text-green-400" : "text-amber-700 dark:text-amber-400"}`}>{crewText}</span>
               ) : (
                 <span className="text-xs text-muted">Nothing written yet</span>
               )}
@@ -1281,7 +1284,7 @@ function ReviewSection({
                       <span className="text-muted">{c.field}:</span>{" "}
                       <span className="line-through text-muted">{c.oldValue || "—"}</span>
                       {" → "}
-                      <span className="font-semibold text-amber-600">{c.newValue}</span>
+                      <span className={`font-semibold ${done ? "text-green-700" : "text-amber-600"}`}>{c.newValue}</span>
                     </div>
                   ))}
                 </div>
