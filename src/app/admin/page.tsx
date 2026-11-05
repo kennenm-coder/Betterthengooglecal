@@ -42,6 +42,7 @@ import {
   ROLE_LABELS,
   isAdmin,
   installerRoleConflict,
+  needsCrew,
 } from "@/lib/roles";
 import { getWriteUpPresets, setWriteUpPresets } from "@/lib/work-order-store";
 import { format, parseISO } from "date-fns";
@@ -206,7 +207,7 @@ function removalPerson(p: PendingRemoval): { email: string; name: string | null 
 // `installer` sits last: it is exclusive, so it only ever wins when it is the
 // only role held — but it must win then, so the stored `role` describes the
 // account rather than reading as a plain member.
-const CALENDAR_ROLE_PRIORITY = ["admin", "payroll-admin", "member", "installer"] as const;
+const CALENDAR_ROLE_PRIORITY = ["admin", "payroll-admin", "member", "installer", "installer-lead"] as const;
 function primaryRole(roles: string[]): string {
   for (const r of CALENDAR_ROLE_PRIORITY) if (roles.includes(r)) return r;
   return "member";
@@ -389,7 +390,7 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
   // scheduling resource, so it stays with admins alongside every other role
   // change (migration 014).
   const availableRoles = isPayrollAdmin
-    ? ROLE_OPTIONS.filter((r) => r.value !== "admin" && r.value !== "installer")
+    ? ROLE_OPTIONS.filter((r) => r.value !== "admin" && r.value !== "installer" && r.value !== "installer-lead")
     : ROLE_OPTIONS;
 
   /**
@@ -412,9 +413,11 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
    */
   function roleSetupError(roles: string[], crewId: string | null): string | null {
     if (installerRoleConflict(roles)) {
-      return "Installer restricts access rather than granting it, so it cannot be combined with another role. Untick the others, or untick Installer.";
+      return roles.includes("installer-lead") && !roles.includes("installer")
+        ? "Installer Lead can only be paired with Field Manager. Untick the others, or untick Installer Lead."
+        : "Installer restricts access rather than granting it, so it cannot be combined with another role. Untick the others, or untick Installer.";
     }
-    if (roles.includes("installer") && !crewId) {
+    if (needsCrew(roles) && !crewId) {
       return "Pick which scheduling resource this installer is — without it they would see nothing at all.";
     }
     return null;
@@ -500,7 +503,7 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
         name: trimmedName || null,
         role: primaryRole(roles),
         roles,
-        sched_crew_id: roles.includes("installer") ? newCrewId : null,
+        sched_crew_id: needsCrew(roles) ? newCrewId : null,
       });
 
     if (insertError) {
@@ -573,7 +576,7 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
     const role = primaryRole(roles);
     // Dropping the installer role clears the resource too, so a later
     // re-tick cannot silently reuse a stale crew.
-    const schedCrewId = roles.includes("installer") ? editCrewId : null;
+    const schedCrewId = needsCrew(roles) ? editCrewId : null;
     const supabase = createAuthClient();
     const { data: updated, error: updateError } = await supabase
       .from("allowed_emails")
@@ -897,7 +900,7 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                     options={availableRoles}
                   />
                 </div>
-                {editRoles.includes("installer") && (
+                {needsCrew(editRoles) && (
                   <ResourcePicker
                     crews={crews}
                     value={editCrewId}
@@ -983,7 +986,7 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                       No name — this account sees no measure appointments
                     </span>
                   )}
-                  {rowRoles(entry).includes("installer") && (
+                  {needsCrew(rowRoles(entry)) && (
                     <span
                       className={`text-[10px] mt-0.5 block truncate ${
                         entry.sched_crew_id ? "text-muted" : "text-danger"
@@ -1088,7 +1091,7 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
               />
             </div>
           )}
-          {!isPayrollAdmin && newRoles.includes("installer") && (
+          {!isPayrollAdmin && needsCrew(newRoles) && (
             <ResourcePicker crews={crews} value={newCrewId} onChange={setNewCrewId} />
           )}
           {error && (

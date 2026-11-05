@@ -33,7 +33,10 @@ export type UserRole =
   // so unlike every other role here it does not stack. Sees their own crew's
   // jobs in full and every other job trimmed. Requires sched_crew_id to be set
   // — see supabase/migrations/033_installer_role.sql.
-  | "installer";
+  | "installer"
+  // Install lead: restricted like installer (unless also field-manager), and
+  // fills out More for More bonus sheets. See migration 045.
+  | "installer-lead";
 
 interface AuthState {
   user: User | null;
@@ -102,11 +105,11 @@ export function useAuth(): AuthState {
             ? [data.role as string]
             : [];
 
-        // Only installers need their crew names, and only they pay for the
+        // Only installers and install leads need their crew names, and only they pay for the
         // extra round trip. my_crew_names() resolves the login through
         // sched_crews, which they cannot read directly (019).
         let crewNames: string[] = [];
-        if (roles.includes("installer")) {
+        if (roles.includes("installer") || roles.includes("installer-lead")) {
           const { data: names } = await supabase.rpc("my_crew_names");
           crewNames = Array.isArray(names) ? names : [];
         }

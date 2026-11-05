@@ -51,7 +51,42 @@ export function isAdmin(roles: RoleInput): boolean {
  */
 export function isInstaller(roles: RoleInput): boolean {
   if (isAdmin(roles)) return false;
-  return toList(roles).includes("installer");
+  const held = toList(roles);
+  if (held.includes("installer")) return true;
+  // An install lead is restricted the same way, unless they also run the
+  // field as a field manager — then field-manager access wins.
+  return held.includes("installer-lead") && !held.includes("field-manager");
+}
+
+/**
+ * Does this login hold the installer-lead role? (Admins who tick it for
+ * testing count too.) Drives the More for More tab and hides Changes.
+ */
+export function isInstallerLead(roles: RoleInput): boolean {
+  return toList(roles).includes("installer-lead");
+}
+
+/** Does this login need its scheduling crew resolved (installer or lead)? */
+export function needsCrew(roles: RoleInput): boolean {
+  const held = toList(roles);
+  return held.includes("installer") || held.includes("installer-lead");
+}
+
+/**
+ * Who fills out a More for More: install leads (and admins, to test).
+ * Mirrors the mfm_insert policy in migration 045.
+ */
+export function canFillMoreForMore(roles: RoleInput): boolean {
+  return hasAny(roles, ["installer-lead", "admin"]);
+}
+
+/**
+ * Who does the office part of a More for More — deductions, JIP, final pay,
+ * completing, PDF and Excel. Payroll admins and admins only, by decision.
+ * Mirrors has_any_role(['admin','payroll-admin']) in migration 045.
+ */
+export function canProcessMoreForMore(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "payroll-admin"]);
 }
 
 /**
@@ -64,7 +99,14 @@ export function isInstaller(roles: RoleInput): boolean {
  * the checkboxes appear to say.
  */
 export function installerRoleConflict(roles: string[]): boolean {
-  return roles.includes("installer") && roles.length > 1;
+  if (roles.includes("installer") && roles.length > 1) return true;
+  // An install lead may also be a field manager (that lifts the restriction
+  // and adds Write-Ups); any other pairing would be ignored by the
+  // restriction, so it is refused for the same reason as above.
+  if (roles.includes("installer-lead")) {
+    return roles.some((r) => r !== "installer-lead" && r !== "field-manager");
+  }
+  return false;
 }
 
 /**
@@ -261,6 +303,10 @@ export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   // with any other role (see installerRoleConflict). Needs a scheduling
   // resource assigned alongside it.
   { value: "installer", label: "Installer (restricted)" },
+  // Install lead — restricted like Installer, plus the More for More tab.
+  // May be paired with Field Manager only, which lifts the restriction.
+  // Needs a scheduling resource assigned alongside it.
+  { value: "installer-lead", label: "Installer Lead (More for More)" },
 ];
 
 export const ROLE_LABELS: Record<string, string> = Object.fromEntries(
@@ -283,4 +329,5 @@ export const ROLE_STYLES: Record<string, string> = {
   "standalone-trim": "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
   "inventory-specialist": "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
   installer: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
+  "installer-lead": "bg-stone-500/15 text-stone-700 dark:text-stone-300",
 };

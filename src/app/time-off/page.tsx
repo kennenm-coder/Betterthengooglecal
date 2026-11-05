@@ -30,7 +30,8 @@ import {
   FileSignature,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { canManageTimeOff } from "@/lib/roles";
+import { canManageTimeOff, canProcessMoreForMore } from "@/lib/roles";
+import MoreForMoreOffice from "@/components/MoreForMoreOffice";
 import { format } from "date-fns";
 
 interface DraftRow {
@@ -137,6 +138,19 @@ function TimeOffContent() {
   const searchParams = useSearchParams();
   const fromScheduler = searchParams.get("from") === "scheduler";
   const { roles, user, loading: authLoading } = useAuth();
+  // Payroll's second job on this screen: finishing More for More sheets.
+  const showMfm = canProcessMoreForMore(roles);
+  const [tab, setTab] = useState<"timeoff" | "mfm">(
+    searchParams.get("tab") === "mfm" ? "mfm" : "timeoff"
+  );
+  const activeTab = showMfm ? tab : "timeoff";
+  function pickTab(next: "timeoff" | "mfm") {
+    setTab(next);
+    const url = new URL(window.location.href);
+    if (next === "mfm") url.searchParams.set("tab", "mfm");
+    else url.searchParams.delete("tab");
+    window.history.replaceState(null, "", url.toString());
+  }
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -388,8 +402,30 @@ function TimeOffContent() {
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h1 className="text-lg font-semibold flex-1">Time Off Requests</h1>
-        {!loading && (
+        {showMfm ? (
+          <div className="flex-1 min-w-0 flex items-center gap-1 rounded-lg bg-surface p-0.5 max-w-xs">
+            {(
+              [
+                ["timeoff", "Time Off"],
+                ["mfm", "More for More"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => pickTab(key)}
+                className={`flex-1 min-w-0 truncate rounded-md px-2 py-1.5 text-sm font-medium transition-colors ${
+                  activeTab === key ? "bg-background shadow-sm text-foreground" : "text-muted"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <h1 className="text-lg font-semibold flex-1">Time Off Requests</h1>
+        )}
+        {showMfm && <div className="flex-1" />}
+        {!loading && activeTab === "timeoff" && (
           <div className="flex items-center gap-1.5">
             {filteredRequests.length > 0 && (
               <button
@@ -420,6 +456,9 @@ function TimeOffContent() {
         )}
       </header>
 
+      {activeTab === "mfm" ? (
+        <MoreForMoreOffice />
+      ) : (
       <div className="flex-1 overflow-auto">
         {loading ? (
           <div className="flex items-center justify-center py-20">
@@ -832,6 +871,7 @@ function TimeOffContent() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

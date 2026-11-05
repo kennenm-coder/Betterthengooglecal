@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Calendar, Search, ScrollText, Wrench, Ruler } from "lucide-react";
+import { Calendar, Search, ScrollText, Wrench, Ruler, BadgeDollarSign } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { canSeeWriteUps, isInstaller, isMeasureTech } from "@/lib/roles";
+import { canSeeWriteUps, isAdmin, isInstaller, isInstallerLead, isMeasureTech } from "@/lib/roles";
 
 // Settings lives in the top-right of the calendar header, not the bottom nav.
 const NAV_ITEMS = [
@@ -16,7 +16,11 @@ const NAV_ITEMS = [
   // Changes lists every job that moved, on every crew, with customer names —
   // and it is served with the service-role key, so none of the installer
   // restrictions reach it. Hidden here; the route refuses them outright.
+  // Also hidden from install leads (even a lead who is a field manager): their
+  // More for More tab takes its place.
   { href: "/log", label: "Changes", icon: ScrollText, notInstaller: true },
+  // Install leads' bonus sheets. Sits where Changes was, left of Write-Ups.
+  { href: "/more-for-more", label: "More for More", icon: BadgeDollarSign, installerLead: true },
   // Write-Ups is gated below (admin + field-manager only for now).
   { href: "/work-orders", label: "Write-Ups", icon: Wrench, writeUps: true },
 ];
@@ -28,7 +32,8 @@ export default function BottomNav() {
   const items = NAV_ITEMS.filter(
     (i) =>
       (!i.writeUps || canSeeWriteUps(roles)) &&
-      (!i.notInstaller || !isInstaller(roles)) &&
+      (!i.notInstaller || !(isInstaller(roles) || (isInstallerLead(roles) && !isAdmin(roles)))) &&
+      (!i.installerLead || isInstallerLead(roles)) &&
       (!i.measureTech || isMeasureTech(roles))
   );
 
