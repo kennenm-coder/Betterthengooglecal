@@ -31,6 +31,7 @@ import WriteUpPicker from "@/components/WriteUpPicker";
 import JobReferencePanel, { referenceJobFromWriteUp } from "@/components/JobReferencePanel";
 import { useData } from "@/components/DataProvider";
 import ServicePartsCard from "@/components/ServicePartsCard";
+import LinkedTrimOrders from "@/components/LinkedTrimOrders";
 import {
   fetchServicePartsIndex,
   servicePartsAt,
@@ -790,6 +791,12 @@ export default function WorkOrdersPage() {
                         </button>
                         <span className="text-[11px] text-muted">Opens your mail app</span>
                       </div>
+                    )}
+                    {isOpen && (
+                      <LinkedTrimOrders
+                        orderNumber={orderNumber}
+                        materials={items.flatMap((w) => w.materialItems)}
+                      />
                     )}
                     {sections.map((sec) => (
                       <div key={sec.key} className="border-t-2 border-border">

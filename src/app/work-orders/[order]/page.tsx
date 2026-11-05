@@ -6,7 +6,7 @@ import { FieldWorkOrder } from "@/lib/types";
 import { fetchWriteUpsForOrder, getSignedPhotoUrl } from "@/lib/work-order-store";
 import WriteUpDocView from "@/components/WriteUpDocView";
 import { useAuth } from "@/hooks/useAuth";
-import { canSeeWriteUps } from "@/lib/roles";
+import { canViewWriteUpDoc } from "@/lib/roles";
 import { Loader2 } from "lucide-react";
 
 export default function WorkOrderDocPage() {
@@ -18,8 +18,9 @@ export default function WorkOrderDocPage() {
   const [loading, setLoading] = useState(true);
 
   const orderNumber = decodeURIComponent(String(params.order || ""));
-  // Soft rollout: only admin + field-manager can view a write-up doc.
-  const canView = canSeeWriteUps(roles);
+  // Admin, field-manager and scheduling, plus the trim-ordering roles (view
+  // only) so "Look at write-up" works from the material list app.
+  const canView = canViewWriteUpDoc(roles);
 
   useEffect(() => {
     if (!orderNumber || authLoading || !canView) return;

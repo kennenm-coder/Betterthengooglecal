@@ -48,7 +48,7 @@ import type { MaterialCatalog } from "@/lib/nwo-builder";
 import { familyMatcher, isUniversalType } from "@/lib/product-family";
 import { autoVendorFor, isInHouse, isOrderable } from "@/lib/trim-vendor";
 import {
-  sendTrimToOrdering, newlyAddedTrim, handoffFailed,
+  sendTrimToOrdering, syncEditedTrim, handoffFailed,
   TrimHandoff,
 } from "@/lib/trim-order-handoff";
 import {
@@ -465,12 +465,15 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   async function handOffEditedTrim(
     nextMaterials: WriteUpMaterialItem[]
   ): Promise<TrimHandoff | null> {
-    const added = newlyAddedTrim(materialsBeforeEdit, nextMaterials);
-    if (!added.length) return null;
-    const handoff = await sendTrimToOrdering({
+    // Only a change to the TRIM does anything here: syncEditedTrim returns null
+    // without touching the database when the trim lines are the same, so an
+    // edit to notes, photos, units, work items or parts leaves the order alone.
+    // When the job already has an unplaced order it is updated in place.
+    const handoff = await syncEditedTrim({
       orderNumber: order.orderNumber,
       customerName: order.customerName,
-      materials: added,
+      before: materialsBeforeEdit,
+      after: nextMaterials,
     });
     if (handoff) setTrimOrder(handoff);
     return handoff;
@@ -1941,11 +1944,30 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 checked for overlap before anyone orders twice. */}
             {trimOrder && !handoffFailed(trimOrder) && (
               <div className="mt-3 pt-3 border-t border-border text-left">
-                <p className="text-xs">
-                  <strong>{trimOrder.lineCount}</strong> trim line
-                  {trimOrder.lineCount === 1 ? "" : "s"} sent to trim ordering as{" "}
-                  <span className="font-mono font-semibold">{trimOrder.po}</span>.
-                </p>
+                {trimOrder.updated ? (
+                  <p className="text-xs">
+                    Trim order <span className="font-mono font-semibold">{trimOrder.po}</span> was
+                    updated
+                    {[
+                      trimOrder.updated.added ? `${trimOrder.updated.added} added` : "",
+                      trimOrder.updated.removed ? `${trimOrder.updated.removed} removed` : "",
+                      trimOrder.updated.changed ? `${trimOrder.updated.changed} changed` : "",
+                    ].filter(Boolean).length
+                      ? ` (${[
+                          trimOrder.updated.added ? `${trimOrder.updated.added} added` : "",
+                          trimOrder.updated.removed ? `${trimOrder.updated.removed} removed` : "",
+                          trimOrder.updated.changed ? `${trimOrder.updated.changed} changed` : "",
+                        ].filter(Boolean).join(", ")})`
+                      : " — nothing needed to change"}
+                    . It was not placed yet, so no second order was opened.
+                  </p>
+                ) : (
+                  <p className="text-xs">
+                    <strong>{trimOrder.lineCount}</strong> trim line
+                    {trimOrder.lineCount === 1 ? "" : "s"} sent to trim ordering as{" "}
+                    <span className="font-mono font-semibold">{trimOrder.po}</span>.
+                  </p>
+                )}
                 {trimOrder.sequence > 1 && (
                   <div className="mt-2 rounded-lg bg-amber-500/10 border border-amber-500/40 p-2.5">
                     <p className="text-xs font-semibold text-amber-700 dark:text-amber-500 flex items-start gap-1.5">
@@ -2972,8 +2994,14 @@ function MaterialRowEditor({
   useEffect(() => {
     if (!autoVendor || filledKey.current === vendorKey) return;
     filledKey.current = vendorKey;
+    // A vendor somebody chose is theirs: changing the colour or species must not
+    // swap it for the catalog's pick (that is how RBA SHOP kept flipping back to
+    // an outside vendor). The catalog only fills a box that is empty, or one it
+    // filled itself.
+    if (vendor.trim() && !vendorWasAuto) return;
     setVendor(autoVendor);
     setVendorWasAuto(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoVendor, vendorKey]);
   function editVendor(v: string) {
     setVendor(v);
@@ -4148,8 +4176,14 @@ function MaterialAdder({
   useEffect(() => {
     if (!autoVendor || filledKey.current === vendorKey) return;
     filledKey.current = vendorKey;
+    // A vendor somebody chose is theirs: changing the colour or species must not
+    // swap it for the catalog's pick (that is how RBA SHOP kept flipping back to
+    // an outside vendor). The catalog only fills a box that is empty, or one it
+    // filled itself.
+    if (vendor.trim() && !vendorWasAuto) return;
     setVendor(autoVendor);
     setVendorWasAuto(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoVendor, vendorKey]);
   function editVendor(v: string) {
     setVendor(v);

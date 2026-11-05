@@ -37,6 +37,9 @@ interface StandaloneOrderLine {
   vendor: string;
   qty: number;
   lengths: string;
+  /** Came from the write-up (as opposed to a line the office added on the
+   *  order). Only these are touched when the write-up's trim changes. */
+  fromWriteup?: boolean;
 }
 
 /** An earlier write-up trim order on the same job. */
@@ -75,6 +78,9 @@ export interface TrimOrderResult {
   lineCount: number;
   /** Non-empty when this job already had write-up trim orders. */
   priorOrders: PriorTrimOrder[];
+  /** Set when an edit changed the trim on an order that was already open, in
+   *  place of opening a second one. */
+  updated?: { added: number; removed: number; changed: number };
 }
 
 /** Write-up trim orders are numbered per job, so the PO number itself says
@@ -129,6 +135,7 @@ export function orderableTrimLines(materials: WriteUpMaterialItem[]): Standalone
       vendor: (m.vendor || "").trim(),
       qty: m.qty > 0 ? m.qty : 1,
       lengths: m.lengths || "",
+      fromWriteup: true,
     };
     // The unit of measure joins the key even though a line doesn't carry one:
     // 2 tubes and 2 pieces of the same thing are not 4 of anything.
@@ -314,6 +321,10 @@ export async function sendTrimToOrdering(args: {
         status: "ready_to_order",
         lines,
         updated_at: now,
+        // Ties the order to its write-up by column, not by name, so a rename
+        // in the material-list app (which deletes the WU- row and re-saves it
+        // under the real number) cannot orphan it. See migration 044.
+        writeup_job: String(orderNumber).trim(),
       };
 
       // The companion columns the material-list app writes. They arrived in
@@ -328,7 +339,11 @@ export async function sendTrimToOrdering(args: {
         send_log: [],
       });
       if (error && isMissingColumn(error)) {
-        ({ error } = await supabase.from("standalone_trim_orders").insert(base));
+        // Older database: drop the link column first, then the later
+        // companion columns, rather than losing the order.
+        const { writeup_job: _link, ...noLink } = base;
+        void _link;
+        ({ error } = await supabase.from("standalone_trim_orders").insert(noLink));
       }
 
       if (!error) return { po, sequence, lineCount: lines.length, priorOrders };
@@ -338,6 +353,254 @@ export async function sendTrimToOrdering(args: {
   } catch (e) {
     console.warn("sendTrimToOrdering failed:", e);
     return { failed: true, lineCount: lines.length, reason: failureReason(e) };
+  }
+}
+
+// ─── EDITING A WRITE-UP WHOSE TRIM IS ALREADY ON AN ORDER ──────────────────
+//
+// An edit that changes the write-up's TRIM updates the order it already opened
+// (while that order is still unplaced) instead of opening a second one. An edit
+// that changes anything else -- notes, photos, units, work items, parts -- never
+// reaches this code's database calls at all: trimChanged() is the gate.
+
+/** True only when the write-up's trim lines (parts excluded) are different
+ *  between the two lists: added, removed, or any field of a line changed -- the
+ *  vendor included, since moving a line to another vendor is a materials change.
+ *  The order of the lines does not matter. */
+export function trimChanged(
+  previous: WriteUpMaterialItem[],
+  next: WriteUpMaterialItem[]
+): boolean {
+  const count = (list: WriteUpMaterialItem[]) => {
+    const map = new Map<string, number>();
+    for (const m of list) {
+      if (m.kind === "part") continue;
+      const k = lineSignature(m);
+      map.set(k, (map.get(k) || 0) + 1);
+    }
+    return map;
+  };
+  const a = count(previous);
+  const b = count(next);
+  if (a.size !== b.size) return true;
+  for (const [k, n] of a) if (b.get(k) !== n) return true;
+  return false;
+}
+
+/** What identifies "the same trim" across an edit, vendor and quantity aside. */
+function lineKey(l: {
+  profileId?: string;
+  profile?: string;
+  item?: string;
+  species?: string;
+  color?: string;
+}): string {
+  return [
+    l.profileId || "",
+    String(l.profile ?? l.item ?? "").trim().toLowerCase(),
+    String(l.species || "").trim().toLowerCase(),
+    String(l.color || "").trim().toLowerCase(),
+  ].join("|");
+}
+
+/** The vendor the write-up itself carried for each trim line, by key. */
+function writeupVendors(list: WriteUpMaterialItem[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of list) {
+    if (m.kind === "part") continue;
+    out.set(lineKey(m), (m.vendor || "").trim());
+  }
+  return out;
+}
+
+/** The newest unplaced order this write-up opened, or null. Found by the link
+ *  column, so it still works after the office renamed it. */
+async function findOpenLinkedOrder(orderNumber: string): Promise<{
+  po: string;
+  note: string | null;
+  lines: StandaloneOrderLine[];
+} | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("standalone_trim_orders")
+    .select("po, note, lines, status, created_at")
+    .eq("writeup_job", String(orderNumber).trim())
+    .in("status", ["ready_to_order", "on_hold"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  const row = data?.[0];
+  if (!row) return null;
+  return {
+    po: row.po,
+    note: row.note ?? null,
+    lines: Array.isArray(row.lines) ? (row.lines as StandaloneOrderLine[]) : [],
+  };
+}
+
+/**
+ * Hand a saved edit's trim to ordering.
+ *
+ *  - Nothing in the TRIM changed  -> null. No query is made.
+ *  - The job has an order that isn't placed yet -> that order is UPDATED:
+ *    lines the write-up added are added, lines it dropped are removed, and a
+ *    changed quantity or length is carried over. The vendor already on an
+ *    order line is KEPT (whoever is ordering owns it) unless this edit changed
+ *    that line's vendor on the write-up. Lines the office added by hand are
+ *    never removed.
+ *  - No open order (never opened, or already placed) -> a new order with just
+ *    what was added, exactly as before.
+ *
+ * Like sendTrimToOrdering this never throws.
+ */
+export async function syncEditedTrim(args: {
+  orderNumber: string;
+  customerName: string;
+  before: WriteUpMaterialItem[];
+  after: WriteUpMaterialItem[];
+}): Promise<TrimHandoff | null> {
+  const { orderNumber, customerName, before, after } = args;
+  if (!trimChanged(before, after)) return null;
+
+  const desired = orderableTrimLines(after);
+  let open: Awaited<ReturnType<typeof findOpenLinkedOrder>> = null;
+  try {
+    open = await findOpenLinkedOrder(orderNumber);
+  } catch (e) {
+    console.warn("findOpenLinkedOrder failed:", e);
+    // Fall through to opening a new order rather than dropping the trim.
+  }
+
+  if (!open) {
+    const added = newlyAddedTrim(before, after);
+    if (!added.length) return null;
+    return sendTrimToOrdering({ orderNumber, customerName, materials: added });
+  }
+
+  const supabase = getSupabase();
+  if (!supabase) {
+    return { failed: true, lineCount: desired.length, reason: "no connection to the database" };
+  }
+
+  try {
+    const vendorBefore = writeupVendors(before);
+    const vendorAfter = writeupVendors(after);
+    const wanted = new Map<string, StandaloneOrderLine>();
+    for (const d of desired) wanted.set(lineKey(d), d);
+
+    let added = 0;
+    let removed = 0;
+    let changed = 0;
+    const used = new Set<string>();
+    const lines: StandaloneOrderLine[] = [];
+
+    for (const existing of open.lines) {
+      const k = lineKey(existing);
+      const want = wanted.get(k);
+      if (!want || used.has(k)) {
+        // The write-up no longer wants it. Only lines it put there are removed;
+        // anything the office typed in themselves stays.
+        if (existing.fromWriteup && !want) {
+          removed++;
+          continue;
+        }
+        lines.push(existing);
+        continue;
+      }
+      used.add(k);
+      const next: StandaloneOrderLine = { ...existing };
+      if (existing.qty !== want.qty || (existing.lengths || "") !== (want.lengths || "")) {
+        next.qty = want.qty;
+        next.lengths = want.lengths;
+        changed++;
+      }
+      // Vendor: the order's choice wins unless THIS edit moved the line.
+      if (vendorBefore.get(k) !== vendorAfter.get(k) && want.vendor !== existing.vendor) {
+        next.vendor = want.vendor;
+        changed++;
+      }
+      next.fromWriteup = true;
+      lines.push(next);
+    }
+    for (const [k, want] of wanted) {
+      if (used.has(k)) continue;
+      lines.push(want);
+      added++;
+    }
+
+    const result: TrimOrderResult = {
+      po: open.po,
+      sequence: 1,
+      lineCount: lines.length,
+      priorOrders: [],
+      updated: { added, removed, changed },
+    };
+    if (!added && !removed && !changed) return result;
+
+    const now = new Date().toISOString();
+    const stamp = new Date().toLocaleDateString("en-US", { month: "numeric", day: "numeric" });
+    const bits = [
+      added ? `${added} added` : "",
+      removed ? `${removed} removed` : "",
+      changed ? `${changed} changed` : "",
+    ].filter(Boolean);
+    const note = [open.note || "", `Write-up edited ${stamp} — trim ${bits.join(", ")}. Review before ordering.`]
+      .filter(Boolean)
+      .join("\n");
+
+    const { error } = await supabase
+      .from("standalone_trim_orders")
+      .update({ lines, note, updated_at: now, writeup_changed_at: now })
+      .eq("po", open.po);
+    if (error) throw error;
+    return result;
+  } catch (e) {
+    console.warn("syncEditedTrim failed:", e);
+    return { failed: true, lineCount: desired.length, reason: failureReason(e) };
+  }
+}
+
+/** One trim order tied to a write-up, for showing on the write-up. */
+export interface LinkedTrimOrder {
+  po: string;
+  status: string;
+  updatedAt: string;
+  orderedAt: string | null;
+  lines: { profile: string; species: string; color: string; vendor: string; qty: number; lengths: string }[];
+}
+
+/** Every trim order opened for this job's write-up, newest first. Read-only. */
+export async function fetchLinkedTrimOrders(orderNumber: string): Promise<LinkedTrimOrder[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from("standalone_trim_orders")
+      .select("po, status, lines, updated_at, ordered_at")
+      .eq("writeup_job", String(orderNumber).trim())
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return (data || []).map((row: any) => ({
+      po: row.po,
+      status: row.status || "",
+      updatedAt: row.updated_at || "",
+      orderedAt: row.ordered_at || null,
+      lines: (Array.isArray(row.lines) ? row.lines : [])
+        .filter((l: any) => l && (l.profile || l.profileId))
+        .map((l: any) => ({
+          profile: String(l.profile || ""),
+          species: String(l.species || ""),
+          color: String(l.color || ""),
+          vendor: String(l.vendor || ""),
+          qty: Number(l.qty) || 0,
+          lengths: String(l.lengths || ""),
+        })),
+    }));
+  } catch (e) {
+    // Includes "column does not exist" before migration 044 is applied.
+    console.warn("fetchLinkedTrimOrders failed:", e);
+    return [];
   }
 }
 

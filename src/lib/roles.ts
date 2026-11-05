@@ -121,6 +121,21 @@ export function canSeeWriteUps(roles: RoleInput): boolean {
 }
 
 /**
+ * Who can open ONE write-up's document page (/work-orders/<job>), which is where
+ * the material list app's "Look at write-up" button lands. The people placing
+ * trim orders (configuring, configuring-editing, standalone-trim) need to read
+ * the write-up while they work the order, but they do not get the Write-Ups tab
+ * or any ability to change one -- this is view-only and only for that page. The
+ * database already lets any signed-in, allowlisted user read the table.
+ */
+export function canViewWriteUpDoc(roles: RoleInput): boolean {
+  return (
+    canSeeWriteUps(roles) ||
+    hasAny(roles, ["configuring", "configuring-editing", "standalone-trim"])
+  );
+}
+
+/**
  * Who can APPROVE or deny a time-off request.
  *
  * Payroll approvers are managers given a say over time off and nothing else:
