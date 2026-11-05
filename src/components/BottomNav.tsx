@@ -26,9 +26,15 @@ const NAV_ITEMS = [
   { href: "/work-orders", label: "Write-Ups", icon: Wrench, writeUps: true },
 ];
 
-export default function BottomNav() {
+/**
+ * `previewRoles` draws the bar as if signed in with those roles. Only the
+ * /dev-* harness pages pass it (to check how a role's tabs fit on a phone);
+ * it decides what is DRAWN, never what anyone may open.
+ */
+export default function BottomNav({ previewRoles }: { previewRoles?: string[] } = {}) {
   const pathname = usePathname();
-  const { roles } = useAuth();
+  const auth = useAuth();
+  const roles = previewRoles ?? auth.roles;
   // Hide the Write-Ups tab from regular members during the soft rollout.
   const items = NAV_ITEMS.filter(
     (i) =>
@@ -53,12 +59,14 @@ export default function BottomNav() {
           <Link
             key={href}
             href={href}
-            className={`flex-1 min-w-0 flex flex-col items-center justify-center py-2.5 gap-1 transition-colors ${
+            className={`flex-1 min-w-0 flex flex-col items-center justify-start py-2.5 gap-1 transition-colors ${
               active ? "text-primary" : "text-muted"
             }`}
           >
             <Icon className="w-6 h-6 shrink-0" />
-            <span className="text-xs font-medium leading-none truncate max-w-full px-0.5">
+            {/* Wraps to a second line rather than cutting off ("More for More"
+                on a five- or six-tab bar); icons stay lined up across the top. */}
+            <span className="text-xs font-medium leading-tight text-center line-clamp-2 break-words max-w-full px-0.5">
               {label}
             </span>
           </Link>

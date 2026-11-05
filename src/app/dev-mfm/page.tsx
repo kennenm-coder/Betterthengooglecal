@@ -8,6 +8,7 @@
 
 import { useState } from "react";
 import MoreForMoreForm from "@/components/MoreForMoreForm";
+import BottomNav from "@/components/BottomNav";
 import type { WorkOrder } from "@/lib/types";
 import { snapshotOf, type MoreForMore } from "@/lib/more-for-more";
 
@@ -119,6 +120,19 @@ export default function DevMfmPage() {
       <button className="block rounded-lg bg-primary px-4 py-2 text-white" onClick={() => setMode("office")}>
         Office: resubmitted sheet
       </button>
+      <div className="space-y-2 pt-4">
+        {[
+          ["Admin", ["admin"]],
+          ["Admin + measure tech", ["admin", "measure-tech"]],
+          ["Lead + field manager", ["installer-lead", "field-manager"]],
+          ["Lead", ["installer-lead"]],
+        ].map(([label, roles]) => (
+          <div key={label as string} data-nav-preview={label as string}>
+            <p className="text-xs text-muted">{label as string}</p>
+            <BottomNav previewRoles={roles as string[]} />
+          </div>
+        ))}
+      </div>
       {mode && (
         <MoreForMoreForm
           mode={mode}
