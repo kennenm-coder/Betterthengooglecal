@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from "react";
 import { WorkOrder, MaterialJobData } from "@/lib/types";
 import {
   saveBoundedCache,
@@ -17,6 +17,7 @@ import {
   fetchLegacyLinks,
   deleteLegacyLink,
   yieldToMain,
+  isCancelledAppointment,
 } from "@/lib/store";
 import {
   fetchActiveWriteUpAddressIndex,
@@ -460,10 +461,19 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
 
+  // Cancelled appointments stay in state (the next import can flip one back)
+  // but never reach a screen. Filtering here covers every load path at once —
+  // fresh fetch, offline cache, and incremental merges — so a cached row that
+  // an import just turned "Cancelled" disappears without a special case.
+  const visibleOrders = useMemo(
+    () => orders.filter((o) => !isCancelledAppointment(o)),
+    [orders]
+  );
+
   return (
     <DataContext.Provider
       value={{
-        orders,
+        orders: visibleOrders,
         materialJobs,
         loading,
         loadingBackground,

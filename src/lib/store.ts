@@ -25,6 +25,17 @@ const WORK_ORDERS_READ = "work_orders_visible";
 const PAGE_SIZE = 1000;
 const WINDOW_DAYS = 90;
 
+/**
+ * True when rForce reports this appointment as cancelled ("Cancelled",
+ * "Canceled", "Cancel Pending"... free text, so a pattern). Looks at the
+ * APPOINTMENT status only — the order-level status can say "Pending
+ * Cancellation" while the appointment is still on, and that must stay visible
+ * until the appointment itself is cancelled.
+ */
+export function isCancelledAppointment(wo: Pick<WorkOrder, "appointmentStatus">): boolean {
+  return /cancel/i.test(wo.appointmentStatus || "");
+}
+
 // --- Date utilities ---
 
 function toISODate(d: Date): string {
