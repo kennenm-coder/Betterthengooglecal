@@ -692,7 +692,14 @@ export default function WorkOrdersPage() {
               const partsRows = servicePartsAt(partsIndex, first.address);
               const partsTag = partsTagFor(partsRows);
               return (
-                <div key={orderNumber} className="rounded-xl border border-border bg-surface overflow-hidden">
+                <div
+                  key={orderNumber}
+                  className={`rounded-xl border overflow-hidden ${
+                    sections.length > 0 && sections.every(isSectionDone)
+                      ? "border-green-600/50 bg-green-600/10"
+                      : "border-border bg-surface"
+                  }`}
+                >
                   <div className="flex items-stretch no-print">
                     <button
                       onClick={() =>
@@ -879,6 +886,15 @@ const STATUS_LABEL: Record<WriteUpStatus, string> = {
   archived: "Archived",
 };
 
+/** A write-up is done when it is Closed, or when every work item on it is
+ *  checked off installed. Either way there is nothing left for the field to do. */
+function isSectionDone(section: WriteUpSection): boolean {
+  if (section.status === "closed") return true;
+  if (section.status === "archived" || section.status === "draft") return false;
+  const all = [...section.outstanding, ...section.completed];
+  return all.length > 0 && all.every((i) => i.completed);
+}
+
 function StatusPill({ status }: { status: WriteUpStatus }) {
   return (
     <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${STATUS_STYLE[status]}`}>
@@ -1017,8 +1033,13 @@ function ReviewSection({
   const canDeletePhotos =
     canEdit && (section.status === "closed" || section.status === "archived") && section.photos.length > 0;
 
+  const done = isSectionDone(section);
   return (
-    <div className="px-4 py-3 bg-background/40 space-y-3">
+    <div
+      className={`px-4 py-3 space-y-3 ${
+        done ? "bg-green-600/10 border-l-4 border-green-600" : "bg-background/40"
+      }`}
+    >
       {/* Header */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
@@ -1026,6 +1047,11 @@ function ReviewSection({
             Write-up {section.index}
             {total > 1 ? ` of ${total}` : ""}
           </span>
+          {done && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-green-600 text-white">
+              ✓ Completed
+            </span>
+          )}
           <StatusPill status={section.status} />
         </div>
         <div className="flex items-center gap-2 shrink-0">

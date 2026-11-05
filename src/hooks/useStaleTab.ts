@@ -130,8 +130,9 @@ export function useStaleTab(): StaleTabState {
     // SSR guard
     if (typeof window === "undefined") return;
 
-    // Desktop-only: coarse pointer = touch device, skip
-    if (!window.matchMedia("(pointer: fine)").matches) return;
+    // Runs on phones too now. A phone tab that sat in the background has its
+    // timer throttled, but the visibilitychange check below catches the moment
+    // it comes back, which is when it matters.
     desktopRef.current = true;
     setIsDesktopState(true);
 

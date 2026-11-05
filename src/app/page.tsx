@@ -251,11 +251,28 @@ function CalendarPage() {
 
           <div className="flex-1" />
 
+          {/* Phone version of the header's "Next update" tag (that one is hidden
+              below md). Sits right beside the refresh button so the two read
+              together; the button glows amber once new data is waiting. Never
+              refreshes on its own — tapping is still the user's call. */}
+          {isDesktop && (isStale || nextUpdate) && (
+            <span
+              className={`md:hidden text-[11px] font-medium shrink-0 ${
+                isStale ? "text-amber-600" : "text-muted"
+              }`}
+            >
+              {isStale ? "Update ready" : `Next ${nextUpdate}`}
+            </span>
+          )}
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="p-2 rounded-full hover:bg-surface disabled:opacity-50 shrink-0"
-            title="Refresh data"
+            className={`p-2 rounded-full disabled:opacity-50 shrink-0 transition-colors ${
+              isStale && !refreshing
+                ? "bg-amber-500/20 text-amber-600 ring-2 ring-amber-500/60 shadow-[0_0_10px_2px_rgba(245,158,11,0.55)] animate-pulse"
+                : "hover:bg-surface"
+            }`}
+            title={isStale ? `New data available since ${staleAfter}` : "Refresh data"}
           >
             <RefreshCw className={`w-4.5 h-4.5 ${refreshing ? "animate-spin" : ""}`} />
           </button>
