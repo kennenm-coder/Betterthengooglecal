@@ -119,7 +119,7 @@ export function describeParts(rollup: PurchaseOrderRollup | null | undefined): P
       : null;
     return {
       stage: "received",
-      label: "On the dock",
+      label: "Received",
       detail: `All ${poLabel} received${seen ? ` · seen ${seen}` : ""}${costNote}`,
     };
   }

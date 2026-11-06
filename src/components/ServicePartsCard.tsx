@@ -39,7 +39,7 @@ export default function ServicePartsCard({
   const parts = describeParts(row.rollup);
   if (!parts) return null;
 
-  // "On the dock" is what a job tile says. Here it says what rForce actually
+  // "Received" is what a job tile says. Here it says what rForce actually
   // told us, which is narrower and true: received on the order, not sighted on
   // our floor.
   const label = parts.stage === "received" ? "Received in rForce" : parts.label;
