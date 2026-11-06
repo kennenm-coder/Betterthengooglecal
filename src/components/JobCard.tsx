@@ -114,7 +114,11 @@ export default function JobCard({
   const [showWriteUp, setShowWriteUp] = useState(false);
   const { user, roles } = useAuth();
   const { applyLegacyLink, activeWriteUpsAt, refreshActiveWriteUps, partsFor } = useData();
-  const fieldWorker = canDoFieldWork(roles);
+  // A Tech Measure is a visit to measure, not work to write up or install
+  // from: no write-up / log-action buttons, no install-document or product
+  // status, no legacy install link on it.
+  const isMeasure = order.workOrderType === "Tech Measure";
+  const fieldWorker = canDoFieldWork(roles) && !isMeasure;
   const canEditLegacy = canEditLegacyLink(roles);
   const router = useRouter();
   const typeBg = typeColor(order.workOrderType);
@@ -144,7 +148,7 @@ export default function JobCard({
   // readily as for an install — and it is the question people walk to the dock
   // to settle. Null when the feed knows nothing, which leaves the tile as it
   // was; installers can't read the table at all, so it is null for them too.
-  const parts = describeParts(partsFor(order.orderNumber));
+  const parts = isMeasure ? null : describeParts(partsFor(order.orderNumber));
   const partsLabel = order.workOrderType === "Service" ? "Parts" : "Product";
 
   const writeUpRefs = order.workOrderType === "Service" ? activeWriteUpsAt(order.address) : [];
@@ -555,7 +559,7 @@ export default function JobCard({
 
           {/* Legacy install instructions — only when there's no real material
               job. Anyone can open the link; only scheduling/admin can edit it. */}
-          {!mat && !showWriteUps && (legacyUrl || canEditLegacy) && (
+          {!isMeasure && !mat && !showWriteUps && (legacyUrl || canEditLegacy) && (
             <div className="mt-3">
               {legacyUrl && !editingLegacy && (
                 <>

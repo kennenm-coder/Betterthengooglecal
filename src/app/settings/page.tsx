@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createAuthClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork, canEditLegacyLink } from "@/lib/roles";
+import { canDoFieldWork, canEditLegacyLink, canSeeMeasureTiles } from "@/lib/roles";
 import BottomNav from "@/components/BottomNav";
 import LoadingScheduleModal from "@/components/LoadingScheduleModal";
 import CatalogModal from "@/components/CatalogModal";
@@ -34,6 +34,7 @@ const COLOR_FIELDS: { key: keyof WorkOrderColors; label: string }[] = [
   { key: "install", label: "Install" },
   { key: "service", label: "Service" },
   { key: "jsv", label: "Job Site Visit" },
+  { key: "measure", label: "Tech Measure" },
 ];
 
 export default function SettingsPage() {
@@ -128,7 +129,9 @@ export default function SettingsPage() {
           </div>
 
           <div className="space-y-3">
-            {COLOR_FIELDS.map(({ key, label }) => (
+            {/* Tech Measure tiles only exist for admins and measure techs, so
+                nobody else is offered a colour for them. */}
+            {COLOR_FIELDS.filter(({ key }) => key !== "measure" || canSeeMeasureTiles(roles)).map(({ key, label }) => (
               <div
                 key={key}
                 className="flex items-center justify-between px-3 py-3 rounded-lg border border-border bg-surface"

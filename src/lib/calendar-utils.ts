@@ -116,6 +116,8 @@ export function typeColor(type: WorkOrder["workOrderType"]): string {
       return "bg-service";
     case "Job Site Visit":
       return "bg-jsv";
+    case "Tech Measure":
+      return "bg-measure";
     default:
       return "bg-primary";
   }
@@ -131,6 +133,8 @@ export function typeTileText(type: WorkOrder["workOrderType"]): string {
       return "text-service-text";
     case "Job Site Visit":
       return "text-jsv-text";
+    case "Tech Measure":
+      return "text-measure-text";
     default:
       return "text-white";
   }
@@ -144,6 +148,8 @@ export function typeColorText(type: WorkOrder["workOrderType"]): string {
       return "text-service";
     case "Job Site Visit":
       return "text-jsv";
+    case "Tech Measure":
+      return "text-measure";
     default:
       return "text-primary";
   }

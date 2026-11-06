@@ -18,8 +18,8 @@ export type UserRole =
   // Change-order-app role (no calendar capabilities; member-level in calendar).
   | "sales"
   // TrimGauge (measure tech tool) + job audio notes. Member-level in the
-  // calendar, plus the Measures screen (their own Tech Measure appointments —
-  // see measureScope in lib/roles). Admin or measure-tech can sign in to TrimGauge.
+  // calendar, plus Tech Measure tiles on the calendar and in Search (see
+  // canSeeMeasureTiles in lib/roles). Admin or measure-tech can sign in to TrimGauge.
   | "measure-tech"
   // Cut-list-app roles (no calendar capabilities on their own). Managed here so
   // the shared allowed_emails table + Team UI stay the single source of truth.

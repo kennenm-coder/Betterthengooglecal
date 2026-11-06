@@ -223,22 +223,6 @@ function displayName(entry: { email: string; name: string | null }): string {
   return entry.name?.trim() || entry.email;
 }
 
-/**
- * A measure tech's Measures screen finds their appointments by NAME: rForce
- * writes the assigned tech as free text, and this Name is the only thing that
- * ties a login to it. So for that role the box matters — say so where it is typed.
- */
-function MeasureNameHint({ name }: { name: string }) {
-  const blank = !name.trim();
-  return (
-    <p className={`text-[10px] -mt-1 ${blank ? "text-danger" : "text-muted"}`}>
-      {blank && "Measure techs need a name — without one they see no appointments. "}
-      Type it exactly as rForce spells the tech (First Last). Their Measures screen lists the
-      Tech Measure appointments assigned to that name.
-    </p>
-  );
-}
-
 /** The two things on this page that cannot be undone. */
 type RemovalVerb = "delete" | "deny";
 
@@ -882,7 +866,6 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
                   placeholder="Name"
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
                 />
-                {editRoles.includes("measure-tech") && <MeasureNameHint name={editName} />}
                 <input
                   type="email"
                   value={editEmail}
@@ -1054,7 +1037,6 @@ function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boo
             placeholder="Name (optional)"
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
-          {!isPayrollAdmin && newRoles.includes("measure-tech") && <MeasureNameHint name={newName} />}
           <div className="flex gap-2">
             <input
               type="email"

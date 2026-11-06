@@ -10,6 +10,12 @@ import {
   loadUnscheduled,
   loadFutureExtended,
   loadMonth,
+  loadMeasureTiles,
+  loadMeasureMonth,
+  saveMeasureCache,
+  loadMeasureCache,
+  clearMeasureCache,
+  getInitialWindow,
   mergeOrders,
   fetchMaterialJobsWithSignature,
   fetchJobsSignature,
@@ -30,13 +36,20 @@ import {
 } from "@/lib/purchase-orders";
 import { addressKey } from "@/lib/address-match";
 import { useAuth } from "@/hooks/useAuth";
-import { canEditLegacyLink, canSeeWriteUps } from "@/lib/roles";
+import { canEditLegacyLink, canSeeMeasureTiles, canSeeWriteUps } from "@/lib/roles";
 import { getSupabase } from "@/lib/supabase";
 
 const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"]);
 
 interface DataContextType {
   orders: WorkOrder[];
+  /**
+   * Tech Measure appointments, kept apart from orders on purpose: only admins
+   * and measure techs get them (empty for everyone else), and they must never
+   * reach a count, report or list that reads orders. The calendar and Search
+   * merge them in for display.
+   */
+  measureOrders: WorkOrder[];
   /** All submitted material jobs, loaded once and shared across views. */
   materialJobs: MaterialJobData[];
   loading: boolean;
@@ -73,6 +86,7 @@ interface DataContextType {
 
 const DataContext = createContext<DataContextType>({
   orders: [],
+  measureOrders: [],
   materialJobs: [],
   loading: true,
   loadingBackground: false,
@@ -111,6 +125,7 @@ function getMonthsInRange(start: string, end: string): Set<string> {
 export default function DataProvider({ children }: { children: ReactNode }) {
   const { roles } = useAuth();
   const [orders, setOrders] = useState<WorkOrder[]>([]);
+  const [measureOrders, setMeasureOrders] = useState<WorkOrder[]>([]);
   const [materialJobs, setMaterialJobs] = useState<MaterialJobData[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingBackground, setLoadingBackground] = useState(false);
@@ -125,6 +140,45 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const jobByPORef = useRef<Map<string, any>>(new Map());
   const jobsSigRef = useRef<string>("");
   const purgedLegacyRef = useRef<Set<string>>(new Set());
+  const canMeasure = canSeeMeasureTiles(roles);
+  const canMeasureRef = useRef(false);
+  const measureLoadingRef = useRef(false);
+
+  // Tech Measure tiles: admins and measure techs only. Fetched on their own so
+  // nothing else that reads orders ever sees them. The fresh pull replaces
+  // everything inside the calendar's window; months someone paged back to
+  // (older than the window) are kept as they were.
+  const refreshMeasures = useCallback(async () => {
+    if (!canMeasureRef.current || measureLoadingRef.current) return;
+    measureLoadingRef.current = true;
+    try {
+      const fresh = await loadMeasureTiles();
+      if (!canMeasureRef.current) return;
+      const { start } = getInitialWindow();
+      setMeasureOrders((prev) => {
+        const older = prev.filter((o) => o.scheduledStart && o.scheduledStart < start);
+        const next = mergeOrders(older, fresh);
+        saveMeasureCache(next);
+        return next;
+      });
+    } catch {
+      // Keep showing what we have (the saved copy, if that is all there is).
+    } finally {
+      measureLoadingRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    canMeasureRef.current = canMeasure;
+    if (!canMeasure) {
+      setMeasureOrders([]);
+      clearMeasureCache();
+      return;
+    }
+    const cached = loadMeasureCache();
+    if (cached.length > 0) setMeasureOrders(cached);
+    refreshMeasures();
+  }, [canMeasure, refreshMeasures]);
 
   const refresh = useCallback(async () => {
     abortRef.current?.abort();
@@ -145,6 +199,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         /* proceed — each request will refresh on its own if needed */
       }
       if (stale()) return;
+
+      // The Refresh button re-pulls the Tech Measure tiles along with the rest.
+      void refreshMeasures();
 
       // Kick off the material-jobs and legacy-link pulls immediately so they run
       // alongside Phase 1 instead of queuing behind it. Neither blocks anything:
@@ -286,7 +343,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [refreshMeasures]);
 
   const ensureDateLoaded = useCallback((date: Date) => {
     const key = monthKey(date.getFullYear(), date.getMonth() + 1);
@@ -295,6 +352,18 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
     monthLoadingRef.current.add(key);
     const ac = abortRef.current;
+
+    // Same trip for the Tech Measure tiles, when this login gets them.
+    if (canMeasureRef.current) {
+      loadMeasureMonth(date.getFullYear(), date.getMonth() + 1, ac?.signal)
+        .then((rows) => {
+          if (ac?.signal.aborted || !canMeasureRef.current) return;
+          setMeasureOrders((prev) => mergeOrders(prev, rows));
+        })
+        .catch(() => {
+          // Retried the next time this month is opened.
+        });
+    }
 
     loadMonth(date.getFullYear(), date.getMonth() + 1, ac?.signal)
       .then((monthOrders) => {
@@ -470,10 +539,16 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     [orders]
   );
 
+  const visibleMeasureOrders = useMemo(
+    () => measureOrders.filter((o) => !isCancelledAppointment(o)),
+    [measureOrders]
+  );
+
   return (
     <DataContext.Provider
       value={{
         orders: visibleOrders,
+        measureOrders: visibleMeasureOrders,
         materialJobs,
         loading,
         loadingBackground,

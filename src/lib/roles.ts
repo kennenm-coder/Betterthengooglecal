@@ -205,55 +205,20 @@ export function canManageTimeOff(roles: RoleInput): boolean {
 
 // ─── Measure techs ──────────────────────────────────────────────────────────
 //
-// `measure-tech` is a TrimGauge role first: it opens the measuring app. Here it
-// adds exactly one thing — the Measures screen, the Tech Measure appointments
-// assigned to that tech. It does not change what the rest of the app shows them
-// (they still read the calendar as a plain member), and it grants nothing else.
+// `measure-tech` is a TrimGauge role first: it opens the measuring app. In the
+// calendar it adds exactly one thing — Tech Measure appointments, drawn as their
+// own colour of tile on the calendar and listed in Search. Admins get the same
+// tiles without ticking the role. Nobody else's calendar changes, and a
+// restricted installer never gets them.
 //
 // This is UI scoping, not access control. work_orders' read policy lets every
-// allowlisted non-installer read every row (035), so a measure tech's login CAN
-// query other techs' appointments; the screen simply does not ask for them.
+// allowlisted non-installer read every row (035), so any other login CAN query
+// Tech Measure rows; the calendar simply does not ask for them.
 
-/** Roles that already see every crew's work, so the Measures screen offers them everyone's, not just their own. */
-export const MEASURE_SEE_ALL_ROLES: UserRole[] = ["admin", "field-manager", "scheduling", "scheduling_manager"];
-
-/**
- * Which appointments the Measures screen may show this login.
- *   "mine" — only the ones assigned to them (a measure tech and nothing broader)
- *   "all"  — every tech's (admin, or a measure tech who also runs the schedule)
- *   "none" — the screen is not for them
- * Restricted installers are never given it: they cannot read work_orders at all.
- */
-export type MeasureScope = "none" | "mine" | "all";
-
-export function measureScope(roles: RoleInput): MeasureScope {
-  if (isInstaller(roles)) return "none";
-  if (isAdmin(roles)) return "all";
-  if (!hasAny(roles, ["measure-tech"])) return "none";
-  return hasAny(roles, MEASURE_SEE_ALL_ROLES) ? "all" : "mine";
-}
-
-/** May open /measures at all. */
-export function canSeeMeasureAppointments(roles: RoleInput): boolean {
-  return measureScope(roles) !== "none";
-}
-
-/**
- * Does this login hold the measure-tech role (and is not a restricted installer)?
- * Drives the Measures tab, so an admin who never ticked the role keeps the nav
- * exactly as it was.
- */
-export function isMeasureTech(roles: RoleInput): boolean {
-  return !isInstaller(roles) && hasAny(roles, ["measure-tech"]);
-}
-
-/**
- * Should the calendar's front door send this login to Measures first? Only a
- * measure tech with nothing broader: anyone who also runs the schedule keeps
- * landing on the calendar as before.
- */
-export function landsOnMeasures(roles: RoleInput): boolean {
-  return isMeasureTech(roles) && measureScope(roles) === "mine";
+/** Does this login's calendar and search include Tech Measure tiles? */
+export function canSeeMeasureTiles(roles: RoleInput): boolean {
+  if (isInstaller(roles)) return false;
+  return isAdmin(roles) || hasAny(roles, ["measure-tech"]);
 }
 
 /** Roles allowed to set/edit/clear the legacy install-instructions link. */
@@ -288,9 +253,8 @@ export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   // is plain member-level).
   { value: "sales", label: "Sales (Change Orders)" },
   // TrimGauge role. Admin or measure-tech can sign in to TrimGauge and
-  // record/listen to job audio notes. In the calendar it adds one screen —
-  // Measures, their own Tech Measure appointments — and nothing else (see
-  // measureScope). The tech's Name below must match rForce's spelling of it.
+  // record/listen to job audio notes. In the calendar it adds one thing —
+  // Tech Measure tiles on the calendar and in Search (see canSeeMeasureTiles).
   { value: "measure-tech", label: "Measure Tech (TrimGauge)" },
   // Cut-list-app roles (no calendar capabilities on their own).
   { value: "configuring", label: "Configuring (Cut List)" },

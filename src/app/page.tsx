@@ -39,7 +39,7 @@ export default function CalendarPageWrapper() {
 }
 
 function CalendarPage() {
-  const { orders, loading, loadingBackground, refresh, ensureDateLoaded, linkedJobsStale, resyncLinkedJobs } = useData();
+  const { orders, measureOrders, loading, loadingBackground, refresh, ensureDateLoaded, linkedJobsStale, resyncLinkedJobs } = useData();
   const [resyncingJobs, setResyncingJobs] = useState(false);
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -139,9 +139,18 @@ function CalendarPage() {
     [orders, roles, crewNames]
   );
 
+  // Tech Measure tiles join the calendar views (and the filters) here and
+  // nowhere else: they are empty unless this login is an admin or measure tech,
+  // and the unscheduled list keeps reading scopedOrders so a measure can never
+  // make an install look scheduled.
+  const calendarOrders = useMemo(
+    () => (measureOrders.length > 0 ? [...scopedOrders, ...measureOrders] : scopedOrders),
+    [scopedOrders, measureOrders]
+  );
+
   const filteredOrders = useMemo(
-    () => applyFilters(scopedOrders, filters),
-    [scopedOrders, filters]
+    () => applyFilters(calendarOrders, filters),
+    [calendarOrders, filters]
   );
 
   const goToday = () => setCurrentDate(new Date());
@@ -278,7 +287,7 @@ function CalendarPage() {
             <RefreshCw className={`w-4.5 h-4.5 ${refreshing ? "animate-spin" : ""}`} />
           </button>
 
-          <FilterPanel orders={scopedOrders} filters={filters} onChange={setFilters} />
+          <FilterPanel orders={calendarOrders} filters={filters} onChange={setFilters} />
 
           {isAdmin(roles) && (
             <button

@@ -16,7 +16,7 @@ const MAX_RESULTS = 50;
 
 export default function SearchPage() {
   // Use material jobs already loaded by DataProvider — no extra fetch.
-  const { orders, materialJobs, loading, loadingBackground } = useData();
+  const { orders, measureOrders, materialJobs, loading, loadingBackground } = useData();
   const jobsLoading = loadingBackground && materialJobs.length === 0;
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -35,9 +35,18 @@ export default function SearchPage() {
 
   const trimmed = query.trim();
 
+  // Tech Measure appointments are searchable too (admins and measure techs
+  // only - measureOrders is empty for everyone else). They are searched apart
+  // from scheduledPOs above on purpose: a measure on the calendar must not make
+  // its job's material list look scheduled.
+  const searchable = useMemo(
+    () => (measureOrders.length > 0 ? [...orders, ...measureOrders] : orders),
+    [orders, measureOrders]
+  );
+
   const orderResults = useMemo(
-    () => (trimmed.length >= 2 ? searchOrders(orders, trimmed).slice(0, MAX_RESULTS) : []),
-    [orders, trimmed]
+    () => (trimmed.length >= 2 ? searchOrders(searchable, trimmed).slice(0, MAX_RESULTS) : []),
+    [searchable, trimmed]
   );
   const jobResults = useMemo(
     () => (trimmed.length >= 2 ? searchMaterialJobs(unscheduledJobs, trimmed).slice(0, MAX_RESULTS) : []),

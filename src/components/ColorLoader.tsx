@@ -6,6 +6,7 @@ const DEFAULTS = {
   install: "#1a73e8",
   service: "#e8710a",
   jsv: "#9334e6",
+  measure: "#00897b",
 };
 
 export type WorkOrderColors = typeof DEFAULTS;
@@ -54,9 +55,11 @@ function applyColors(colors: WorkOrderColors) {
   root.style.setProperty("--install", colors.install);
   root.style.setProperty("--service", colors.service);
   root.style.setProperty("--jsv", colors.jsv);
+  root.style.setProperty("--measure", colors.measure);
   root.style.setProperty("--install-text", contrastText(colors.install));
   root.style.setProperty("--service-text", contrastText(colors.service));
   root.style.setProperty("--jsv-text", contrastText(colors.jsv));
+  root.style.setProperty("--measure-text", contrastText(colors.measure));
 }
 
 export { DEFAULTS as DEFAULT_COLORS };

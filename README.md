@@ -32,11 +32,6 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 # Upload API key — required for Power Automate / external upload integrations
 UPLOAD_API_KEY=a-secret-key-you-generate
 
-# Measure Tools (TrimGauge) — optional. When set, each appointment on the Measures
-# screen gets an "Open in Measure Tools" link to this address; unset hides the link.
-# Absolute http(s) URL, baked in at build time (so redeploy after changing it).
-NEXT_PUBLIC_TRIMGAUGE_URL=https://your-trimgauge-deployment.example
-
 # GitHub — optional, used for /api/orders fallback
 GITHUB_TOKEN=ghp_...
 
@@ -60,7 +55,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | **admin** | Full access: calendar, search, uploads, team management, action config, dev panel |
 | **payroll-admin** | Calendar, search, time-off management |
 | **member** | Calendar, search, settings |
-| **measure-tech** | Member-level calendar, plus **Measures** (`/measures`): the Tech Measure appointments assigned to them. Read-only. See below. |
+| **measure-tech** | Member-level calendar, plus Tech Measure tiles on the calendar and in Search (admins get these too). See below. |
 
 Roles are stored in the `allowed_emails` table in Supabase. Only users whose email appears in this table can sign up or sign in.
 
@@ -146,24 +141,18 @@ Material jobs are read through `calendar_jobs()` (migration 022), which strips t
 `originalImport` key and pages by keyset — a plain `select id, data` on `jobs` exceeds the
 database's 8 s statement timeout.
 
-## Measure techs (the Measures screen)
+## Tech Measure tiles
 
-A login holding `measure-tech` gets a **Measures** tab (`src/app/measures/page.tsx`) listing the
-`work_orders` rows with `work_order_type = 'Tech Measure'` assigned to them, grouped Today / This
-week / Later / Date passed, still open (plus Not scheduled yet). Each shows date, customer,
-address (tap for maps), order number and status, and — when `NEXT_PUBLIC_TRIMGAUGE_URL` is set —
-an "Open in Measure Tools" link. A tech with nothing broader on their account lands there first
-each session; admins and anyone who also holds a scheduling/field-manager role get a Mine /
-Everyone toggle and keep landing on the calendar.
+Admins and logins holding `measure-tech` see `work_orders` rows with
+`work_order_type = 'Tech Measure'` as their own colour of tile on the calendar (day and week
+views) and in Search, alongside Installs, Services and Job Site Visits. Nobody else's calendar
+changes, and restricted installers never get them. The colour is set per person under Settings,
+like the other three.
 
-- **How "assigned to them" works.** There is no id link: rForce writes the tech as free text in
-  `work_orders.tech_measure` (and the booked resource in `primary_resource`), and the only name a
-  login has is `allowed_emails.name`, typed on the Team page. The match is that name, case and
-  spacing folded, whole name only. Blank name = sees nothing. So the Team-page name of a measure
-  tech must be spelled as rForce spells them.
+- **They are kept apart from the rest of the data.** `DataProvider` loads them into their own
+  list (`measureOrders`), so they never reach counts, More for More, the loading schedule,
+  Changes or the unscheduled list. The calendar and Search merge them in for display only.
+- **Scheduled ones only.** An unscheduled Tech Measure has no day to sit on, so it is not loaded.
 - **This is UI scoping, not access control.** `work_orders`' read policy lets every allowlisted
-  non-installer read every row (migration 035), so a measure tech's login can still query other
-  techs' appointments; the screen just doesn't. Tightening that is a separate decision.
-- Logic that decides things lives in `src/lib/measure-appointments.ts` (imports nothing) and the
-  role gates in `src/lib/roles.ts`; `npm run check:measures` exercises both. `/dev-measures`
-  (development only) renders the screen with `ZZ DEMO` fixtures.
+  non-installer read every row (migration 035); the calendar just doesn't ask for them unless the
+  role is there (`canSeeMeasureTiles` in `src/lib/roles.ts`).

@@ -401,6 +401,100 @@ export async function loadMonth(
   return rows.map(rowToWorkOrder);
 }
 
+// --- Tech Measure tiles ---
+//
+// Tech Measure appointments are NOT part of VISIBLE_TYPES: they are drawn only
+// for admins and measure techs (canSeeMeasureTiles), so they are fetched on
+// their own and kept in their own list. That keeps them out of every count,
+// export and report that reads the main order list. Scheduled rows only - an
+// unscheduled measure has no day to sit on.
+
+const MEASURE_TYPE = "Tech Measure";
+const MEASURE_CACHE_KEY = "rba-field-cal-measures";
+
+/** Every scheduled Tech Measure from the start of the calendar's window onward. */
+export async function loadMeasureTiles(signal?: AbortSignal): Promise<WorkOrder[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+
+  const { start } = getInitialWindow();
+  const rows = await paginatedQuery(
+    () =>
+      supabase
+        .from(WORK_ORDERS_READ)
+        .select("*")
+        .eq("work_order_type", MEASURE_TYPE)
+        .gte("scheduled_start", start)
+        .order("scheduled_start", { ascending: true })
+        .order("id", { ascending: true }),
+    signal
+  );
+  return rows.map(rowToWorkOrder);
+}
+
+/** One month of Tech Measures, for when someone pages back past the window. */
+export async function loadMeasureMonth(
+  year: number,
+  month: number,
+  signal?: AbortSignal
+): Promise<WorkOrder[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const start = `${year}-${pad(month)}-01T00:00:00`;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  const end = `${nextYear}-${pad(nextMonth)}-01T00:00:00`;
+
+  const rows = await paginatedQuery(
+    () =>
+      supabase
+        .from(WORK_ORDERS_READ)
+        .select("*")
+        .eq("work_order_type", MEASURE_TYPE)
+        .gte("scheduled_start", start)
+        .lt("scheduled_start", end)
+        .order("scheduled_start", { ascending: true })
+        .order("id", { ascending: true }),
+    signal
+  );
+  return rows.map(rowToWorkOrder);
+}
+
+/** A measure tech in a basement has no signal; keep the last list on the phone. */
+export function saveMeasureCache(measures: WorkOrder[]): void {
+  if (typeof window === "undefined") return;
+  const { start, end } = getInitialWindow();
+  const bounded = measures.filter(
+    (o) => o.scheduledStart && o.scheduledStart >= start && o.scheduledStart <= end
+  );
+  try {
+    localStorage.setItem(MEASURE_CACHE_KEY, JSON.stringify(bounded));
+  } catch {
+    /* storage full or blocked - no offline copy, nothing else lost */
+  }
+}
+
+export function loadMeasureCache(): WorkOrder[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MEASURE_CACHE_KEY) || "null");
+    return Array.isArray(parsed) ? (parsed as WorkOrder[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function clearMeasureCache(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(MEASURE_CACHE_KEY);
+  } catch {
+    /* nothing to clear */
+  }
+}
+
 // --- Merge utility ---
 
 export function mergeOrders(existing: WorkOrder[], incoming: WorkOrder[]): WorkOrder[] {
