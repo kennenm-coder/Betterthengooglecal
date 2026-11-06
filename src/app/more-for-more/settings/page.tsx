@@ -369,8 +369,9 @@ export default function MoreForMoreSettingsPage() {
                 )}
               </div>
               <p className="text-xs text-muted">
-                Per unit, by tier. Leave a box blank to use the tier to its left (like Bay/Bow on the paper
-                sheet). Sheets already saved keep the rates they were saved with.
+                Per unit, by tier. Leave a box blank when that tier doesn&apos;t get that kind of job, so there&apos;s
+                no bonus for it (like Bay/Bow, which only Tier 1 leads do). Sheets already saved keep the rates
+                they were saved with.
               </p>
 
               <div className="flex items-center gap-1.5 px-3 text-[11px] font-medium text-muted">

@@ -50,7 +50,7 @@ export const UNIT_ITEMS: UnitItem[] = [
 
 // ─── Rates (editable on the More for More settings page, 047) ───────────────
 
-/** Tier 1, 2, 3. `null` = blank on the sheet. */
+/** Tier 1, 2, 3. `null` = blank on the sheet = that tier doesn't get this job (no bonus). */
 export type RateRow = [number | null, number | null, number | null];
 
 export interface MfmRates {
@@ -125,18 +125,27 @@ export function normalizeRates(r: unknown): MfmRates {
 /**
  * The rate a person earns per unit at their tier.
  *
- * Some lead rates are blank (on the paper sheet, Bay/Bow has only a Tier 1
- * rate). A blank falls back to the nearest rate to its left — the same tier-1
- * number a lead would have read off the sheet.
+ * A blank rate means leads at that tier don't get that kind of job, so there
+ * is no bonus for it (Kennen, 2026-11-06). On the paper sheet only Tier 1
+ * leads are sent on bays/bows: a Tier 1 lead earns $150 a bay, a Tier 2 or 3
+ * lead $0. Never borrow another tier's rate.
  */
 export function rateFor(rates: MfmRates, key: UnitKey, isLead: boolean, tier: Tier | null): number {
   if (!tier) return 0;
   const row = isLead ? rates.items[key].lead : rates.items[key].apprentice;
-  for (let i = tier - 1; i >= 0; i--) {
-    const r = row[i];
-    if (r != null) return r;
-  }
-  return 0;
+  return row[tier - 1] ?? 0;
+}
+
+/**
+ * The tiers that DO have a rate for this unit, when this person's tier has
+ * none — e.g. [1] for a Tier 2 lead looking at Bay/Bow. Empty when their tier
+ * has a rate (or no tier is picked yet). Drives the "Tier 1 leads only" note.
+ */
+export function tiersWithRate(rates: MfmRates, key: UnitKey, isLead: boolean, tier: Tier | null): Tier[] {
+  if (!tier) return [];
+  const row = isLead ? rates.items[key].lead : rates.items[key].apprentice;
+  if (row[tier - 1] != null) return [];
+  return ([1, 2, 3] as Tier[]).filter((t) => row[t - 1] != null);
 }
 
 export interface Deduction {

@@ -44,6 +44,7 @@ import {
   normalizeOffice,
   normalizeRates,
   rateFor,
+  tiersWithRate,
   rejectSheet,
   saveOfficeSheet,
   submitLeadSheet,
@@ -223,13 +224,26 @@ function UnitsEditor({
       {UNIT_ITEMS.map((item) => {
         const n = Number(qty[item.key]) || 0;
         const rate = rateFor(rates, item.key, isLead, tier);
+        // This tier has no rate: that kind of job goes to other tiers only.
+        const only = tiersWithRate(rates, item.key, isLead, tier);
+        const noRate = !!tier && (isLead ? rates.items[item.key].lead : rates.items[item.key].apprentice)[tier - 1] == null;
+        const who = isLead ? "leads" : "apprentices";
         return (
           <div key={item.key} className="flex items-center gap-2 px-3 py-2">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium leading-tight">{item.label}</p>
               <p className="text-[11px] text-muted tabular-nums">
-                {tier ? `${money(rate)} each` : "pick a tier"}
-                {n > 0 && tier ? <span className="text-foreground"> · {money(n * rate)}</span> : null}
+                {!tier
+                  ? "pick a tier"
+                  : noRate
+                    ? only.length
+                      ? `Tier ${only.join(" & ")} ${who} only`
+                      : "no bonus"
+                    : `${money(rate)} each`}
+                {n > 0 && tier && !noRate ? <span className="text-foreground"> · {money(n * rate)}</span> : null}
+                {n > 0 && noRate ? (
+                  <span className="text-amber-700 dark:text-amber-400"> · not paid at Tier {tier}</span>
+                ) : null}
               </p>
             </div>
             <Stepper value={n} onChange={(v) => onChange({ ...qty, [item.key as UnitKey]: v })} />
