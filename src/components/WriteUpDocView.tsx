@@ -4,7 +4,7 @@ import { ReactNode, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FieldWorkOrder } from "@/lib/types";
 import { writeUpsToPlainText } from "@/lib/work-order-store";
-import { groupWriteUpSections, openUnitsOf, padSeq } from "@/lib/writeup-sections";
+import { groupWriteUpSections, isSectionDone, openUnitsOf, padSeq } from "@/lib/writeup-sections";
 import { downloadWriteUpZip } from "@/lib/writeup-export";
 import { ArrowLeft, Loader2, Printer, Wrench, Download, Copy, Check } from "lucide-react";
 import { format, parseISO } from "date-fns";
@@ -13,6 +13,10 @@ import { format, parseISO } from "date-fns";
 // to gold so the doc reads as "issues to fix", not a new install.
 const ACCENT = "#EAB308"; // borders / badges / fills
 const ACCENT_TEXT = "#A16207"; // small text (vendor, etc.) for print contrast
+// A completed write-up swaps the gold for green, so a finished one can't be
+// mistaken for work still to do — on screen, printed, and in the PDF.
+const DONE = "#16A34A";
+const DONE_TEXT = "#15803D";
 
 export interface WriteUpDocContext {
   orderNumber: string;
@@ -51,7 +55,13 @@ export default function WriteUpDocView({
   const [copied, setCopied] = useState(false);
 
   const sections = groupWriteUpSections(writeUps);
-  const openCount = writeUps.filter((w) => w.status !== "closed").length;
+  // Issues still to fix: rows that aren't closed AND aren't on a finished write-up.
+  const openCount = sections
+    .filter((s) => !isSectionDone(s))
+    .reduce((n, s) => n + s.rows.filter((r) => r.status !== "closed").length, 0);
+  const allDone = sections.length > 0 && sections.every(isSectionDone);
+  const headAccent = allDone ? DONE : ACCENT;
+  const headAccentText = allDone ? DONE_TEXT : ACCENT_TEXT;
 
   async function handleCopy() {
     const text = writeUpsToPlainText(writeUps);
@@ -141,22 +151,22 @@ export default function WriteUpDocView({
         {caveat}
 
         {/* Header */}
-        <div className="pb-4 mb-6" style={{ borderBottom: `3px solid ${ACCENT}` }}>
+        <div className="pb-4 mb-6" style={{ borderBottom: `3px solid ${headAccent}` }}>
           <div className="flex justify-between items-start">
             <div>
               <div
                 className="inline-flex items-center gap-1.5 text-white text-xs font-bold tracking-widest uppercase px-2 py-1 rounded"
-                style={{ background: ACCENT_TEXT }}
+                style={{ background: headAccentText }}
               >
-                <Wrench className="w-3.5 h-3.5" />
+                {allDone ? <Check className="w-3.5 h-3.5" /> : <Wrench className="w-3.5 h-3.5" />}
                 Field Work Order
               </div>
               <div className="text-xs text-muted mt-2">
-                {openCount} open issue{openCount !== 1 ? "s" : ""} · {sections.length} write-up
+                {allDone ? "No open issues" : `${openCount} open issue${openCount !== 1 ? "s" : ""}`} · {sections.length} write-up
                 {sections.length !== 1 ? "s" : ""}
               </div>
-              <div className="text-[11px] font-semibold mt-1" style={{ color: ACCENT_TEXT }}>
-                ISSUES TO FIX — NOT A NEW INSTALL
+              <div className="text-[11px] font-semibold mt-1" style={{ color: headAccentText }}>
+                {allDone ? "ALL WORK COMPLETED ✓" : "ISSUES TO FIX — NOT A NEW INSTALL"}
               </div>
             </div>
             <div className="text-right text-sm leading-relaxed">{header}</div>
@@ -186,16 +196,31 @@ export default function WriteUpDocView({
           }
           const lbl = "text-[10px] font-bold uppercase tracking-wide text-muted mb-1";
           const secOrder = sec.rows[0]?.orderNumber || "";
+          // A finished write-up goes green; the others on the same order stay gold.
+          const done = isSectionDone(sec);
+          const accent = done ? DONE : ACCENT;
+          const accentText = done ? DONE_TEXT : ACCENT_TEXT;
           return (
           <div key={sec.key} className="mb-8">
             {/* Section header */}
             <div
               className="text-white text-[11px] font-bold tracking-wider uppercase px-3.5 py-1.5 flex items-center justify-between"
-              style={{ background: "#1a1a1a" }}
+              style={{ background: "#1a1a1a", borderLeft: done ? `5px solid ${DONE}` : undefined }}
             >
-              <span>
-                Write-up {sec.index} of {sections.length}
-                {showSectionOrder && secOrder ? ` · PO# ${secOrder}` : ""}
+              <span className="flex items-center gap-2">
+                <span>
+                  Write-up {sec.index} of {sections.length}
+                  {showSectionOrder && secOrder ? ` · PO# ${secOrder}` : ""}
+                </span>
+                {done && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-white"
+                    style={{ background: DONE }}
+                  >
+                    <Check className="w-3 h-3" />
+                    Completed
+                  </span>
+                )}
               </span>
               <span className="opacity-80 normal-case font-medium">
                 {sec.createdByName} · {format(parseISO(sec.createdAt), "M/d/yy")}
@@ -203,7 +228,7 @@ export default function WriteUpDocView({
                 {sec.status === "closed" ? " · CLOSED" : ""}
               </span>
             </div>
-            <div className="border-b-2 px-3.5 py-3 space-y-3" style={{ borderColor: ACCENT }}>
+            <div className="border-b-2 px-3.5 py-3 space-y-3" style={{ borderColor: accent }}>
               {/* 1. What's wrong + financing/paint + unit notes */}
               {background && (
                 <div>
@@ -264,7 +289,7 @@ export default function WriteUpDocView({
                       </span>{" "}
                       <span className="line-through text-muted">{c.oldValue || "—"}</span>
                       {" → "}
-                      <span className="font-semibold" style={{ color: ACCENT_TEXT }}>
+                      <span className="font-semibold" style={{ color: accentText }}>
                         {c.newValue}
                       </span>
                     </div>
@@ -284,7 +309,7 @@ export default function WriteUpDocView({
                         const left = openUnitsOf(it);
                         return (
                         <li key={it.seq} className="text-sm flex items-start gap-2">
-                          <span className="font-mono text-xs font-bold shrink-0 mt-0.5" style={{ color: ACCENT_TEXT }}>
+                          <span className="font-mono text-xs font-bold shrink-0 mt-0.5" style={{ color: accentText }}>
                             {padSeq(it.seq)}
                           </span>
                           <span className="flex-1">
@@ -380,7 +405,7 @@ export default function WriteUpDocView({
                           <td className={`${tdStyle} text-muted${strike}`}>{m.color || "—"}</td>
                           <td className={`${tdStyle} text-muted${strike}`}>{m.species || "—"}</td>
                           <td className={`${tdStyle} text-muted font-mono text-[11px]${strike}`}>{m.lengths || "—"}</td>
-                          <td className={`${tdStyle} font-bold text-[11px]${strike}`} style={{ color: ACCENT_TEXT }}>
+                          <td className={`${tdStyle} font-bold text-[11px]${strike}`} style={{ color: accentText }}>
                             {m.vendor || "—"}
                           </td>
                         </tr>,
@@ -388,7 +413,7 @@ export default function WriteUpDocView({
                     })}
                   </tbody>
                 </table>
-                <div className="border-b-2" style={{ borderColor: ACCENT }} />
+                <div className="border-b-2" style={{ borderColor: accent }} />
               </div>
             )}
 

@@ -405,3 +405,13 @@ export function openUnitsOf(it: NumberedWorkItem): { units: string[]; done: numb
 export function padSeq(n: number): string {
   return String(n).padStart(3, "0");
 }
+
+/** A write-up is done when it is Closed, or when every work item on it is
+ *  checked off installed. Either way there is nothing left for the field to do.
+ *  One rule for the Write-Ups list, the doc page and the PDF, so they agree. */
+export function isSectionDone(section: WriteUpSection): boolean {
+  if (section.status === "closed") return true;
+  if (section.status === "archived" || section.status === "draft") return false;
+  const all = [...section.outstanding, ...section.completed];
+  return all.length > 0 && all.every((i) => i.completed);
+}

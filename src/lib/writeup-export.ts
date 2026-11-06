@@ -3,7 +3,7 @@
 // are dynamically imported so they only load when the user hits Download.
 
 import type { FieldWorkOrder } from "./types";
-import { groupWriteUpSections, openUnitsOf, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine } from "./writeup-sections";
+import { groupWriteUpSections, isSectionDone, openUnitsOf, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine } from "./writeup-sections";
 
 export interface WriteUpExportInput {
   orderNumber: string;
@@ -100,12 +100,20 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
   }
 
   // ── Header ──
+  const sections = groupWriteUpSections(input.writeUps);
+  // When every write-up on the order is finished the whole header goes green,
+  // so a completed order can't be mistaken for one with issues still to fix.
+  const allDone = sections.length > 0 && sections.every(isSectionDone);
   setFill(DARK);
   doc.rect(M, y, contentW, 22, "F");
+  if (allDone) {
+    setFill(GREEN);
+    doc.rect(M, y, 5, 22, "F");
+  }
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   setColor([255, 255, 255]);
-  doc.text("FIELD WORK ORDER — ISSUES TO FIX", M + 8, y + 15);
+  doc.text(allDone ? "FIELD WORK ORDER — ALL WORK COMPLETED" : "FIELD WORK ORDER — ISSUES TO FIX", M + 8 + (allDone ? 4 : 0), y + 15);
   y += 32;
 
   line(input.customerName || "—", M, { size: 14, bold: true });
@@ -115,14 +123,17 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     M,
     { size: 10, color: MUTED }
   );
-  const sections = groupWriteUpSections(input.writeUps);
-  const openCount = input.writeUps.filter((w) => w.status !== "closed").length;
+  // Issues still to fix: rows not closed AND not on a finished write-up.
+  const openCount = sections
+    .filter((s) => !isSectionDone(s))
+    .reduce((n, s) => n + s.rows.filter((r) => r.status !== "closed").length, 0);
   line(
-    `${openCount} open issue${openCount !== 1 ? "s" : ""} · ${sections.length} write-up${sections.length !== 1 ? "s" : ""}`,
+    `${allDone ? "No open issues" : `${openCount} open issue${openCount !== 1 ? "s" : ""}`} · ${sections.length} write-up${sections.length !== 1 ? "s" : ""}`,
     M,
     { size: 9, color: MUTED, gap: 14 }
   );
-  doc.setDrawColor(GOLD[0], GOLD[1], GOLD[2]);
+  const rule = allDone ? GREEN : GOLD;
+  doc.setDrawColor(rule[0], rule[1], rule[2]);
   doc.setLineWidth(2);
   doc.line(M, y, M + contentW, y);
   y += 16;
@@ -266,12 +277,31 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
   // ── One block per write-up submission ──
   for (const sec of sections) {
     ensure(40);
+    // A finished write-up gets a green edge and a green Completed tag; the
+    // others on the same order are left as they were.
+    const done = isSectionDone(sec);
     setFill(DARK);
     doc.rect(M, y, contentW, 18, "F");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
     setColor([255, 255, 255]);
-    doc.text(`WRITE-UP ${sec.index} OF ${sections.length}`, M + 6, y + 12.5);
+    let titleX = M + 6;
+    if (done) {
+      setFill(GREEN);
+      doc.rect(M, y, 5, 18, "F");
+      titleX = M + 11;
+    }
+    const title = `WRITE-UP ${sec.index} OF ${sections.length}`;
+    doc.text(title, titleX, y + 12.5);
+    if (done) {
+      const tagX = titleX + doc.getTextWidth(title) + 8;
+      doc.setFontSize(8);
+      const tagW = doc.getTextWidth("COMPLETED") + 10;
+      setFill(GREEN);
+      doc.rect(tagX, y + 3.5, tagW, 11, "F");
+      setColor([255, 255, 255]);
+      doc.text("COMPLETED", tagX + 5, y + 11.5);
+    }
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     const edited = sec.updatedByName ? ` · edited by ${sec.updatedByName}` : "";
@@ -323,7 +353,7 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
       line("SPEC CORRECTIONS", M, { size: 8, bold: true, color: MUTED, gap: 12 });
       for (const c of sec.specChanges) {
         const u = c.unitLabel ? `${c.unitLabel} · ` : "";
-        wrapped(`${u}${c.field}:  ${c.oldValue || "—"}  →  ${c.newValue}`, M + 4, contentW - 4, { size: 10 });
+        wrapped(`${u}${c.field}:  ${c.oldValue || "—"}  →  ${c.newValue}`, M + 4, contentW - 4, { size: 10, color: done ? GREEN : undefined });
       }
     }
 
@@ -337,6 +367,9 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
         const done = left.done > 0 ? `  (${left.done} of ${left.total} units done)` : "";
         const note = it.notes ? ` (${it.notes})` : "";
         wrapped(`${padSeq(it.seq)}   ${it.label}${units}${done}${note}`, M + 4, contentW - 4, { size: 10 });
+      }
+      if (sec.outstanding.length === 0) {
+        line("All work completed [x]", M + 4, { size: 10, bold: true, color: GREEN });
       }
       if (sec.completed.length > 0) {
         line("COMPLETED", M, { size: 8, bold: true, color: GREEN, gap: 12 });

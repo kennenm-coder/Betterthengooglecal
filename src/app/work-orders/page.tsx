@@ -24,7 +24,7 @@ import {
 import { fetchMaterialJobs } from "@/lib/store";
 import { getWriteUpEmails } from "@/lib/action-settings";
 import { dedupeRecipients } from "@/lib/email-recipients";
-import { groupWriteUpSections, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
+import { groupWriteUpSections, isSectionDone, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
 import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibility";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
@@ -892,15 +892,6 @@ const STATUS_LABEL: Record<WriteUpStatus, string> = {
   closed: "Closed",
   archived: "Archived",
 };
-
-/** A write-up is done when it is Closed, or when every work item on it is
- *  checked off installed. Either way there is nothing left for the field to do. */
-function isSectionDone(section: WriteUpSection): boolean {
-  if (section.status === "closed") return true;
-  if (section.status === "archived" || section.status === "draft") return false;
-  const all = [...section.outstanding, ...section.completed];
-  return all.length > 0 && all.every((i) => i.completed);
-}
 
 function StatusPill({ status, done }: { status: WriteUpStatus; done?: boolean }) {
   // A done write-up that is still marked Open/In Review would otherwise keep its
