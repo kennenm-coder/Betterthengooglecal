@@ -4,13 +4,13 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { MaterialJobData, MaterialUnit, FieldWorkOrder } from "@/lib/types";
 import { getSupabase } from "@/lib/supabase";
-import { buildNwoRows, buildBoardSummaryByUnit, fetchCatalogAndOffsets, fetchPOsForJob, NwoRow, BoardSummaryEntry, PurchaseOrder } from "@/lib/nwo-builder";
+import { buildNwoRows, buildBoardSummaryByUnit, fetchCatalogAndOffsets, NwoRow, BoardSummaryEntry } from "@/lib/nwo-builder";
 import { fetchInstallDoc, dash } from "@/lib/install-doc";
 import { fetchWriteUpsForOrder, applySpecChangesToUnits, unitAbbrevOf } from "@/lib/work-order-store";
 import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork, isInstaller } from "@/lib/roles";
 import WriteUpModal from "@/components/WriteUpModal";
-import { ArrowLeft, Loader2, AlertTriangle, Package, CheckCircle2, Clock, AlertCircle, Printer, Hammer } from "lucide-react";
+import { ArrowLeft, Loader2, AlertTriangle, Printer, Hammer } from "lucide-react";
 
 function fracToString(frac: number): string {
   if (frac === 0.125) return "1/8";
@@ -110,7 +110,6 @@ export default function InstallInstructionsPage() {
   const [job, setJob] = useState<MaterialJobData | null>(null);
   const [nwoRows, setNwoRows] = useState<NwoRow[]>([]);
   const [boardSummary, setBoardSummary] = useState<(BoardSummaryEntry & { label?: string })[]>([]);
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
   const [showWriteUp, setShowWriteUp] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -162,12 +161,9 @@ export default function InstallInstructionsPage() {
           setBoardSummary(d.boardSummary);
           setDocSource({ kind: "handoff", builtAt: docRec.builtAt, builtBy: docRec.builtBy });
           const orderNum = (header.poNumber || "").trim();
-          const [pos, wus] = await Promise.all([
-            fetchPOsForJob(docRec.jobId),
-            orderNum ? fetchWriteUpsForOrder(orderNum) : Promise.resolve([] as FieldWorkOrder[]),
-          ]);
-          setPurchaseOrders(pos);
-          setWriteUps(wus);
+          // Write-ups are fetched only to overlay their spec corrections onto
+          // the units below; the write-ups themselves live on their own page.
+          if (orderNum) setWriteUps(await fetchWriteUpsForOrder(orderNum));
           setLoading(false);
           return;
         }
@@ -194,10 +190,6 @@ export default function InstallInstructionsPage() {
           setJob(jobData);
           setNwoRows(buildNwoRows(d.job || {}, d.units || [], catalogData.catalog, catalogData.offsets));
           setBoardSummary(buildBoardSummaryByUnit(d.job || {}, d.units || [], catalogData.catalog, catalogData.offsets));
-
-          // Fetch PO tracking data for this job
-          const pos = await fetchPOsForJob(jobRes.data.id);
-          setPurchaseOrders(pos);
 
           // Fetch field write-ups (spec corrections overlay onto the display)
           const orderNum = (d.job?.poNumber || "").trim();
@@ -249,10 +241,6 @@ export default function InstallInstructionsPage() {
 
   // Overlay field spec corrections so the calendar shows verified values.
   const displayUnits = applySpecChangesToUnits(job.units, writeUps);
-  // Submitted write-ups only. A draft hasn't been sent in yet, so showing it
-  // here would put unfinished field notes on the install sheet looking exactly
-  // like an approved one.
-  const openWriteUps = writeUps.filter((w) => w.status !== "closed" && w.status !== "draft");
   const summaryRows = buildSummaryRows(displayUnits);
   const miscUnits = displayUnits.filter((u) => u.isMisc && u.approved);
   const totalQty =
@@ -358,65 +346,6 @@ export default function InstallInstructionsPage() {
           </div>
         </div>
 
-        {/* Write-Ups */}
-        {openWriteUps.length > 0 && (
-          <div className="mb-5">
-            <div className="bg-amber-500 text-white text-[11px] font-bold tracking-wider uppercase px-3.5 py-1.5 flex items-center gap-2">
-              <Hammer className="w-3.5 h-3.5" />
-              Write-Ups ({openWriteUps.length})
-            </div>
-            <div className="border border-amber-500/30 rounded-b-lg divide-y divide-border">
-              {openWriteUps.map((w) => (
-                <div key={w.id} className="px-3.5 py-2.5 text-sm">
-                  <div className="font-semibold">{w.unitLabel || "Whole job"}</div>
-                  {w.newProduct && (
-                    <div className="text-xs">
-                      <span className="font-semibold text-amber-600">+ {w.newProduct.type}</span>
-                      {w.newProduct.size ? ` ${w.newProduct.size}` : ""}
-                      {[w.newProduct.exteriorColor, w.newProduct.interiorColor, w.newProduct.intFinish]
-                        .filter(Boolean)
-                        .map((s) => ` · ${s}`)
-                        .join("")}
-                    </div>
-                  )}
-                  {w.lineItems.length > 0 && (
-                    <div className="text-muted">
-                      {w.lineItems.map((li) => li.label).join(" · ")}
-                    </div>
-                  )}
-                  {w.specChanges.map((c, i) => (
-                    <div key={i} className="text-xs">
-                      {c.field}: <span className="line-through text-muted">{c.oldValue || "—"}</span>{" → "}
-                      <span className="font-semibold text-amber-600">{c.newValue}</span>
-                    </div>
-                  ))}
-                  {w.materialItems.length > 0 && (
-                    <div className="mt-1 text-xs">
-                      {w.materialItems.map((m, i) => (
-                        <div key={i} className="flex gap-1.5">
-                          <span className="font-semibold whitespace-nowrap">{m.qty} {m.unit}</span>
-                          <span>{m.item}</span>
-                          {/* A part's useful details are its variant and part
-                              number; trim's are its specs and vendor. */}
-                          <span className="text-muted">
-                            {(m.kind === "part"
-                              ? [m.color, m.size, m.partNumber ? `Part# ${m.partNumber}` : ""]
-                              : [m.color, m.species, m.lengths, m.vendor]
-                            )
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {w.notes && <div className="text-xs text-muted mt-0.5">{w.notes}</div>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Install Notes */}
         {(job.job.installNotes || job.job.leadPaint) && (
           <div className="mb-5">
@@ -439,72 +368,6 @@ export default function InstallInstructionsPage() {
           </div>
         )}
 
-        {/* PO Tracking Status */}
-        {purchaseOrders.length > 0 && (
-          <div className="mb-5">
-            <div className="bg-[#1a1a1a] text-white text-[11px] font-bold tracking-wider uppercase px-3.5 py-1.5 flex items-center gap-2">
-              <Package className="w-3.5 h-3.5" />
-              Purchase Orders
-            </div>
-            <div className="border border-border rounded-b-lg overflow-hidden">
-              {purchaseOrders.map((po) => {
-                const isReceived = po.status === "received";
-                const isPartial = po.status === "partial";
-                const isOrdered = po.status === "ordered";
-                const isOverdue = po.estimated_arrival_max && new Date(po.estimated_arrival_max) < new Date();
-                const itemCount = (po.line_items || []).length;
-                const totalLF = (po.line_items || []).reduce((s: number, it: any) => s + (it.total_lf || 0), 0);
-
-                return (
-                  <div
-                    key={po.id}
-                    className={`flex items-center gap-3 px-3.5 py-2.5 border-b border-border last:border-b-0 ${
-                      isReceived ? "bg-green-50 dark:bg-green-950/20" :
-                      isOverdue ? "bg-red-50 dark:bg-red-950/20" :
-                      isPartial ? "bg-amber-50 dark:bg-amber-950/20" :
-                      "bg-surface"
-                    }`}
-                  >
-                    {isReceived ? (
-                      <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
-                    ) : isOverdue ? (
-                      <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-                    ) : (
-                      <Clock className="w-4 h-4 text-amber-600 shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold font-mono text-foreground">{po.id}</span>
-                        <span className="text-[10px] font-bold text-[#6DB344]">{po.vendor}</span>
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                          isReceived ? "bg-green-600/15 text-green-700" :
-                          isPartial ? "bg-amber-500/15 text-amber-700" :
-                          isOverdue ? "bg-red-600/15 text-red-700" :
-                          "bg-blue-500/15 text-blue-700"
-                        }`}>
-                          {isReceived ? "RECEIVED" : isPartial ? "PARTIAL" : isOverdue ? "OVERDUE" : "ORDERED"}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-muted mt-0.5 flex items-center gap-3 flex-wrap">
-                        <span>Ordered {new Date(po.ordered_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
-                        {isReceived && po.received_at && (
-                          <span>Received {new Date(po.received_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
-                        )}
-                        {!isReceived && po.estimated_arrival_min && po.estimated_arrival_max && (
-                          <span className={isOverdue ? "text-red-600 font-semibold" : ""}>
-                            Expected {new Date(po.estimated_arrival_min).toLocaleDateString("en-US", { month: "short", day: "numeric" })}–{new Date(po.estimated_arrival_max).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                            {isOverdue && " ⚠️"}
-                          </span>
-                        )}
-                        <span>{itemCount} item{itemCount !== 1 ? "s" : ""}{totalLF > 0 ? ` • ${totalLF} LF` : ""}</span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
         {/* Board Summary by Unit */}
         {boardSummary.length > 0 && (
