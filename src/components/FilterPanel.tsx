@@ -86,8 +86,12 @@ export default function FilterPanel({
 
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="fixed right-2 top-14 w-72 max-w-[calc(100vw-1rem)] max-h-[calc(100vh-5rem)] flex flex-col bg-background border border-border rounded-lg shadow-lg z-40 p-3 gap-2">
+          {/* touch-none: dragging on the dimmed background must not pan the page. */}
+          <div className="fixed inset-0 z-30 touch-none" onClick={() => setOpen(false)} />
+          {/* Height uses dvh (the part of the screen you can actually see on a
+              phone; plain vh counts the area behind Safari's bars) and leaves
+              room for the bottom tab bar so the last names are reachable. */}
+          <div className="fixed right-2 top-14 w-72 max-w-[calc(100vw-1rem)] max-h-[calc(100dvh-3.5rem-5rem-env(safe-area-inset-bottom,0px))] flex flex-col bg-background border border-border rounded-lg shadow-lg z-40 p-3 gap-2">
             <div className="flex items-center justify-between">
               <span className="font-medium text-sm">Filter by crew</span>
               {active && (
@@ -103,7 +107,7 @@ export default function FilterPanel({
             {crews.length === 0 ? (
               <p className="text-sm text-muted py-2">No crew names found.</p>
             ) : (
-              <div className="overflow-y-auto -mx-1 px-1 space-y-1">
+              <div className="min-h-0 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-1">
                 {crews.map((name) => {
                   const selected = filters.crew === name;
                   return (
