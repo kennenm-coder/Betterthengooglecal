@@ -515,6 +515,11 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const [editUnitLabel, setEditUnitLabel] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
+  // Hard lock against double submits. State alone isn't enough: a second tap can
+  // land before React redraws the button as disabled, and the lock must outlive
+  // the save itself (trim handoff + email take seconds). Only a FAILED save
+  // releases it; a successful one stays locked until the modal closes.
+  const submitLockRef = useRef(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState("");
   // Set when the write-up saved but its notification email didn't send. Holds
@@ -1503,7 +1508,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   // the latest state without re-binding listeners on every keystroke.
   const flushRef = useRef<() => void>(() => {});
   flushRef.current = () => {
-    if (isEditing || isBatchEdit || !draftReady || submitting) return;
+    if (isEditing || isBatchEdit || !draftReady || submitting || submitLockRef.current) return;
     const d = buildDraftNow();
     if (d) saveDraft(d);
     else clearDraft(order.orderNumber);
@@ -1526,9 +1531,12 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   // ── Auto-save (debounced) ──
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (isEditing || isBatchEdit || !draftReady || submitting) return;
+    if (isEditing || isBatchEdit || !draftReady || submitting || submitLockRef.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      // A submit may have started since this was scheduled; it clears the draft
+      // itself, and re-saving here would bring the submitted write-up back.
+      if (submitLockRef.current) return;
       const d = buildDraftNow();
       if (!d) {
         clearDraft(order.orderNumber);
@@ -1663,6 +1671,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   }
 
   async function submitWriteUp(sendEmail: boolean, startStatus: WriteUpStatus = "in_review") {
+    // A submit is already running (or already went through): ignore extra taps.
+    if (submitLockRef.current) return;
     if (startStatus !== "draft" && validIssues.length === 0) {
       setError("Add at least one issue with a description and a scope.");
       return;
@@ -1676,6 +1686,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       return;
     }
 
+    submitLockRef.current = true;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
     setSubmitting(true);
     setError("");
     const ctx = {
@@ -1690,16 +1702,25 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     };
     // Commit any typed-but-not-added trim/parts first, then build from the merged
     // model so nothing half-entered is lost.
-    const { mergedIssues } = flushAdders();
-    const inputs: WriteUpEntryInput[] = buildInputs(mergedIssues);
-
-    const { created, error: saveError } = await submitWriteUpBatch(ctx, inputs, (done, total) =>
-      setProgress({ done, total })
-    );
-    setSubmitting(false);
+    let inputs: WriteUpEntryInput[];
+    let created: Awaited<ReturnType<typeof submitWriteUpBatch>>["created"] = [];
+    let saveError: string | null = null;
+    try {
+      const { mergedIssues } = flushAdders();
+      inputs = buildInputs(mergedIssues);
+      ({ created, error: saveError } = await submitWriteUpBatch(ctx, inputs, (done, total) =>
+        setProgress({ done, total })
+      ));
+    } catch (err) {
+      inputs = [];
+      saveError = err instanceof Error ? err.message : "Unexpected error";
+    }
     setProgress(null);
 
     if (created.length === 0) {
+      // Nothing saved, so it's safe to try again — release the lock.
+      submitLockRef.current = false;
+      setSubmitting(false);
       // Show the actual database reason so it's fixable (RLS, permissions, etc.).
       // The draft is untouched, so nothing is lost.
       setError(
