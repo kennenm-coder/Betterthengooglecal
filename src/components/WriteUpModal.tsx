@@ -1555,6 +1555,11 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   // ── Close guard ──
   const dirty = editorHasContent;
   function attemptClose() {
+    // Mid-submit the email is the LAST step: closing now would hide the
+    // "email didn't send" prompt if it fails, so the field manager would never
+    // know. Ignore the X / backdrop until it finishes — the success and failure
+    // screens that follow carry their own buttons.
+    if (submitting || submitLockRef.current) return;
     if (isEditing) {
       onClose(); // edit mode: no draft to preserve
       return;
@@ -1765,6 +1770,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         // modal open on a resend prompt so the notification isn't silently lost.
         onSaved?.();
         setEmailFailed({ to, cc, subject, body });
+        // Show WHY on the prompt, so a failure can be reported and fixed
+        // instead of guessed at.
+        setError(sent.error ? `Reason: ${sent.error}` : "");
         return;
       }
     }
@@ -2135,7 +2143,11 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
               </p>
             </div>
           </div>
-          <button onClick={attemptClose} className="p-2 rounded-lg hover:bg-surface text-muted shrink-0">
+          <button
+            onClick={attemptClose}
+            disabled={submitting}
+            className="p-2 rounded-lg hover:bg-surface text-muted shrink-0 disabled:opacity-30"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
