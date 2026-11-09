@@ -7,18 +7,23 @@ import { lastFirst, crewsForDate, sortByStartTime, extractCity } from "@/lib/for
 import { format } from "date-fns";
 import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
+import SpecialDayTile from "./SpecialDayTile";
+import type { SpecialDay } from "@/lib/special-days-store";
 
 const HOURS = Array.from({ length: 13 }, (_, i) => i + 6); // 6AM - 6PM
 
 export default function DayView({
   orders,
   date,
+  specialDays = [],
   onSelectOrder,
   onSwipeLeft,
   onSwipeRight,
 }: {
   orders: WorkOrder[];
   date: Date;
+  /** Crews blocked this day as Special Ops / Office Day (no job behind them). */
+  specialDays?: SpecialDay[];
   onSelectOrder: (order: WorkOrder) => void;
   onSwipeLeft?: () => void;
   onSwipeRight?: () => void;
@@ -54,6 +59,16 @@ export default function DayView({
       </div>
 
       <div ref={swipeRef} className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain touch-pan-y">
+        {specialDays.length > 0 && (
+          <div className="flex border-b border-border/50">
+            <div className="w-12 shrink-0 text-[11px] text-muted py-2 text-right pr-2 pt-2">all day</div>
+            <div className="flex-1 min-w-0 border-l border-border/50 py-1 px-2 space-y-1">
+              {specialDays.map((d) => (
+                <SpecialDayTile key={`${d.crewName}|${d.kind}`} day={d} />
+              ))}
+            </div>
+          </div>
+        )}
         <div className="relative">
         {HOURS.map((hour) => {
           const hourOrders = ordersByHour.get(hour) || [];

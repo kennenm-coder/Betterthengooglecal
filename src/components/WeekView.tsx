@@ -7,11 +7,14 @@ import { format, startOfWeek, addDays, isToday } from "date-fns";
 import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
 import WeekBarOverview from "./WeekBarOverview";
+import SpecialDayTile from "./SpecialDayTile";
+import type { SpecialDay } from "@/lib/special-days-store";
 
 export default function WeekView({
   orders,
   date,
   timeOffRequests = [],
+  specialByDay,
   onSelectOrder,
   onSelectDay,
   onSwipeLeft,
@@ -20,6 +23,8 @@ export default function WeekView({
   orders: WorkOrder[];
   date: Date;
   timeOffRequests?: TimeOffRequest[];
+  /** Crews blocked as Special Ops / Office Day, keyed by YYYY-MM-DD. */
+  specialByDay?: Map<string, SpecialDay[]>;
   onSelectOrder: (order: WorkOrder) => void;
   onSelectDay: (date: Date) => void;
   onSwipeLeft?: () => void;
@@ -87,7 +92,8 @@ export default function WeekView({
         {days.map((day) => {
           const dayKey = format(day, "yyyy-MM-dd");
           const dayOrders = ordersByDay.get(dayKey) || [];
-          if (dayOrders.length === 0) return null;
+          const daySpecial = specialByDay?.get(dayKey) || [];
+          if (dayOrders.length === 0 && daySpecial.length === 0) return null;
 
           return (
             <div key={dayKey} className="p-3">
@@ -95,6 +101,9 @@ export default function WeekView({
                 {format(day, "EEEE, MMM d")}
               </h3>
               <div className="space-y-1.5">
+                {daySpecial.map((d) => (
+                  <SpecialDayTile key={`${d.crewName}|${d.kind}`} day={d} compact />
+                ))}
                 {dayOrders.map((order) => {
                   const crews = crewsForDate(order, dayKey);
                   const city = extractCity(order.address);

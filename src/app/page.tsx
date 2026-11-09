@@ -24,7 +24,8 @@ import FloatersBanner from "@/components/FloatersBanner";
 import MoreForMoreNotices from "@/components/MoreForMoreNotices";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
-import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO } from "date-fns";
+import { fetchSpecialDays, groupSpecialDaysByDate, specialDayMatchesCrew, type SpecialDay } from "@/lib/special-days-store";
+import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO, startOfWeek } from "date-fns";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Loader2, RefreshCw, CalendarDays, Plus, UserCog } from "lucide-react";
 
@@ -42,6 +43,7 @@ function CalendarPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
   const { roles, crewNames } = useAuth();
   const canManageTimeOff = canManageTimeOffRole(roles);
@@ -50,6 +52,11 @@ function CalendarPage() {
   useEffect(() => {
     fetchTimeOffRequests().then(setTimeOffRequests);
   }, []);
+
+  // Special Ops / Office Day tiles from the scheduling app. Fetched a whole week
+  // at a time (covers the day view too) and cached against that week, so moving
+  // to another week shows nothing rather than last week's tiles while loading.
+  const [specialCache, setSpecialCache] = useState<{ week: string; days: SpecialDay[] } | null>(null);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -79,6 +86,7 @@ function CalendarPage() {
       }
       await refresh();
       fetchTimeOffRequests().then(setTimeOffRequests);
+      setRefreshTick((n) => n + 1);
       resetBlock();
     } finally {
       setRefreshing(false);
@@ -151,6 +159,22 @@ function CalendarPage() {
     () => applyFilters(calendarOrders, filters),
     [calendarOrders, filters]
   );
+
+  const weekStartStr = format(startOfWeek(currentDate, { weekStartsOn: 0 }), "yyyy-MM-dd");
+  const weekEndStr = format(addDays(parseISO(weekStartStr), 6), "yyyy-MM-dd");
+  useEffect(() => {
+    let cancelled = false;
+    fetchSpecialDays(weekStartStr, weekEndStr).then((days) => {
+      if (!cancelled) setSpecialCache({ week: weekStartStr, days });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [weekStartStr, weekEndStr, refreshTick]);
+  const specialByDay = useMemo(() => {
+    const days = specialCache?.week === weekStartStr ? specialCache.days : [];
+    return groupSpecialDaysByDate(days.filter((d) => specialDayMatchesCrew(d, filters.crew)));
+  }, [specialCache, weekStartStr, filters.crew]);
 
   const goToday = () => setCurrentDate(new Date());
   const goPrev = useCallback(() => {
@@ -343,6 +367,7 @@ function CalendarPage() {
           <DayView
             orders={filteredOrders}
             date={currentDate}
+            specialDays={specialByDay.get(format(currentDate, "yyyy-MM-dd")) || []}
             onSelectOrder={setSelectedOrder}
             onSwipeLeft={goNext}
             onSwipeRight={goPrev}
@@ -352,6 +377,7 @@ function CalendarPage() {
             orders={filteredOrders}
             date={currentDate}
             timeOffRequests={timeOffRequests}
+            specialByDay={specialByDay}
             onSelectOrder={setSelectedOrder}
             onSelectDay={(d) => {
               setCurrentDate(d);
