@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { FieldWorkOrder } from "@/lib/types";
 import {
   fetchActiveWriteUpAddressIndex,
@@ -23,12 +23,33 @@ import { AlertTriangle, Loader2 } from "lucide-react";
  * PO. This page gathers them by address instead — which is why the caveat at
  * the top matters: these are all the open issues at the house, not a list
  * scoped to the work order the crew happens to be assigned.
+ *
+ * An install's tile opens this with ?exclude=<its order numbers>, because the
+ * install instructions already show that install's own write-up. Those numbers
+ * are left out here so the two never overlap.
  */
 export default function AddressWriteUpsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center h-screen">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <AddressWriteUps />
+    </Suspense>
+  );
+}
+
+function AddressWriteUps() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { roles, loading: authLoading } = useAuth();
   const { activeWriteUpsAt } = useData();
+  // Joined string, so the effect keys off the numbers rather than a new array.
+  const excludeKey = searchParams.get("exclude") || "";
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -38,7 +59,12 @@ export default function AddressWriteUpsPage() {
 
   // The ids the calendar already knows about. Joined into a string so the
   // effect keys off the actual ids rather than a fresh array each render.
+  const excluded = excludeKey
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
   const knownIds = activeWriteUpsAt(address)
+    .filter((r) => !excluded.includes((r.orderNumber || "").trim()))
     .map((r) => r.id)
     .sort()
     .join(",");
@@ -60,7 +86,12 @@ export default function AddressWriteUpsPage() {
       }
       if (cancelled) return;
 
-      const rows = await fetchWriteUpsByIds(ids);
+      const skip = excludeKey.split(",").map((n) => n.trim()).filter(Boolean);
+      // Filtered again on the rows themselves: on a hard refresh the ids above
+      // come straight from the index, before the exclusion has been applied.
+      const rows = (await fetchWriteUpsByIds(ids)).filter(
+        (w) => !skip.includes((w.orderNumber || "").trim())
+      );
       if (cancelled) return;
       // Keep each order's submissions together, units in order within them.
       rows.sort(
@@ -82,7 +113,7 @@ export default function AddressWriteUpsPage() {
     return () => {
       cancelled = true;
     };
-  }, [address, authLoading, canView, knownIds]);
+  }, [address, authLoading, canView, knownIds, excludeKey]);
 
   if (authLoading) {
     return (

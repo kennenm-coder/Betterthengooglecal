@@ -151,7 +151,25 @@ export default function JobCard({
   const parts = isMeasure ? null : describeParts(partsFor(order.orderNumber));
   const partsLabel = order.workOrderType === "Service" ? "Parts" : "Product";
 
-  const writeUpRefs = order.workOrderType === "Service" ? activeWriteUpsAt(order.address) : [];
+  // An install already shows its own write-up through the install instructions
+  // button, so this button covers only OTHER order numbers at the address (say a
+  // write-up filed the day before). The two are deliberately not merged. The
+  // numbers to leave out are passed to the page as ?exclude=.
+  const ownOrderNumbers = [order.orderNumber, mat?.job.poNumber]
+    .map((n) => (n || "").trim())
+    .filter(Boolean);
+  const writeUpRefs =
+    order.workOrderType === "Service"
+      ? activeWriteUpsAt(order.address)
+      : order.workOrderType === "Install"
+        ? activeWriteUpsAt(order.address).filter(
+            (r) => !ownOrderNumbers.includes((r.orderNumber || "").trim())
+          )
+        : [];
+  const writeUpsExclude =
+    order.workOrderType === "Install" && ownOrderNumbers.length > 0
+      ? `?exclude=${encodeURIComponent(ownOrderNumbers.join(","))}`
+      : "";
   const writeUpOrders = new Set(writeUpRefs.map((r) => r.orderNumber).filter(Boolean));
   const showWriteUps = writeUpRefs.length > 0;
 
@@ -531,7 +549,7 @@ export default function JobCard({
             <button
               onClick={() => {
                 window.history.replaceState(null, "", `/?order=${order.id}`);
-                router.push(`/work-orders/address/${encodeURIComponent(order.address)}`);
+                router.push(`/work-orders/address/${encodeURIComponent(order.address)}${writeUpsExclude}`);
               }}
               className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-amber-600 text-white text-sm font-medium active:scale-[0.98] transition-transform"
             >
@@ -559,7 +577,7 @@ export default function JobCard({
 
           {/* Legacy install instructions — only when there's no real material
               job. Anyone can open the link; only scheduling/admin can edit it. */}
-          {!isMeasure && !mat && !showWriteUps && (legacyUrl || canEditLegacy) && (
+          {!isMeasure && !mat && !(showWriteUps && order.workOrderType === "Service") && (legacyUrl || canEditLegacy) && (
             <div className="mt-3">
               {legacyUrl && !editingLegacy && (
                 <>
