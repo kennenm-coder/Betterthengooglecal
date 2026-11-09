@@ -371,7 +371,7 @@ export default function InstallInstructionsPage() {
 
         {/* Board Summary by Unit */}
         {boardSummary.length > 0 && (
-          <div className="mb-5 bg-[#fafcf8] px-3.5 py-2 text-sm leading-relaxed border-b-2 border-[#6DB344]">
+          <div className="mb-5 bg-[#fafcf8] dark:bg-[#2a3a25] text-foreground px-3.5 py-2 text-sm leading-relaxed border-b-2 border-[#6DB344]">
             <strong>Board Summary: </strong>
             {boardSummary.map((entry, i) => (
               <span key={i}>
