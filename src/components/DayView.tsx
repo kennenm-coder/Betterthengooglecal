@@ -78,7 +78,13 @@ export default function DayView({
                       )} ${typeTileText(order.workOrderType)}`}
                     >
                       <div className="font-medium truncate">
-                        {lastFirst(order.customerName)} - {order.orderNumber}
+                        {/* Phone: crew on top. Desktop keeps the job name on top. */}
+                        <span className="md:hidden">
+                          {crews.length > 0 ? crews.join(" + ") : "Unassigned"}
+                        </span>
+                        <span className="hidden md:inline">
+                          {lastFirst(order.customerName)} - {order.orderNumber}
+                        </span>
                       </div>
                       <div className="text-sm opacity-90 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 break-words">
                         {multiDay && (
@@ -88,7 +94,12 @@ export default function DayView({
                         )}
                         <span>{formatTime(order.scheduledStart)}</span>
                         {city && <span>&middot; {city}</span>}
-                        {crews.length > 0 && <span>&middot; {crews.join(" + ")}</span>}
+                        <span className="md:hidden">
+                          &middot; {lastFirst(order.customerName)} - {order.orderNumber}
+                        </span>
+                        {crews.length > 0 && (
+                          <span className="hidden md:inline">&middot; {crews.join(" + ")}</span>
+                        )}
                         {order.materialJob && (
                           <span className="px-1.5 py-0.5 rounded bg-white/20 text-xs font-semibold">
                             Linked
