@@ -16,6 +16,7 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   canManageTimeOff as canManageTimeOffRole,
   canSeeFloaters,
+  canSeeMeasureTiles,
   isInstaller,
   installerNeedsSetup,
 } from "@/lib/roles";
@@ -24,7 +25,7 @@ import FloatersBanner from "@/components/FloatersBanner";
 import MoreForMoreNotices from "@/components/MoreForMoreNotices";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
-import { fetchSpecialDays, groupSpecialDaysByDate, specialDayMatchesCrew, type SpecialDay } from "@/lib/special-days-store";
+import { fetchSpecialDays, groupSpecialDaysByDate, isMeasureOnlyCrew, specialDayMatchesCrew, type SpecialDay } from "@/lib/special-days-store";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO, startOfWeek } from "date-fns";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Loader2, RefreshCw, CalendarDays, Plus, UserCog } from "lucide-react";
@@ -173,8 +174,12 @@ function CalendarPage() {
   }, [weekStartStr, weekEndStr, refreshTick]);
   const specialByDay = useMemo(() => {
     const days = specialCache?.week === weekStartStr ? specialCache.days : [];
-    return groupSpecialDaysByDate(days.filter((d) => specialDayMatchesCrew(d, filters.crew)));
-  }, [specialCache, weekStartStr, filters.crew]);
+    // A measure tech's tile follows the Tech Measure rule: admins and measure-tech logins only.
+    const measureOk = canSeeMeasureTiles(roles);
+    return groupSpecialDaysByDate(
+      days.filter((d) => specialDayMatchesCrew(d, filters.crew) && (measureOk || !isMeasureOnlyCrew(d)))
+    );
+  }, [specialCache, weekStartStr, filters.crew, roles]);
 
   const goToday = () => setCurrentDate(new Date());
   const goPrev = useCallback(() => {

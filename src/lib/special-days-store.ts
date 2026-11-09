@@ -18,6 +18,9 @@ export interface SpecialDay {
   crewName: string;
   crewAliases: string[];
   kind: SpecialKind;
+  /** The crew's scheduling type (measure_tech, install_in_house, ...). */
+  crewType: string | null;
+  additionalTypes: string[];
 }
 
 interface SpecialDayRow {
@@ -25,6 +28,8 @@ interface SpecialDayRow {
   crew_name: string;
   crew_aliases: string[] | null;
   kind: string;
+  crew_type?: string | null;
+  additional_types?: string[] | null;
 }
 
 export const SPECIAL_LABEL: Record<SpecialKind, string> = {
@@ -62,6 +67,8 @@ export async function fetchSpecialDays(startDate: string, endDate: string): Prom
       crewName: row.crew_name,
       crewAliases: row.crew_aliases ?? [],
       kind: row.kind,
+      crewType: row.crew_type ?? null,
+      additionalTypes: row.additional_types ?? [],
     });
   }
   return out;
@@ -76,6 +83,17 @@ export function specialDayMatchesCrew(day: SpecialDay, crew: string | null): boo
   if (!crew) return true;
   const want = norm(crew);
   return [day.crewName, ...day.crewAliases].some((n) => norm(n) === want);
+}
+
+/**
+ * Is this tile on a measure-tech-only crew? Such a tile belongs to the same
+ * audience as Tech Measure appointments (see canSeeMeasureTiles). A crew that
+ * also installs or services is shown to everyone, like their jobs would be.
+ * If the type is unknown (function not updated yet) the tile is not hidden.
+ */
+export function isMeasureOnlyCrew(day: SpecialDay): boolean {
+  const types = [day.crewType, ...day.additionalTypes].filter((t): t is string => !!t);
+  return types.length > 0 && types.every((t) => t === "measure_tech");
 }
 
 /** Group by date, keeping a stable order (Special Ops first, then by crew name). */
