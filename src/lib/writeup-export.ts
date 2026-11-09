@@ -353,7 +353,8 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
       line("SPEC CORRECTIONS", M, { size: 8, bold: true, color: MUTED, gap: 12 });
       for (const c of sec.specChanges) {
         const u = c.unitLabel ? `${c.unitLabel} · ` : "";
-        wrapped(`${u}${c.field}:  ${c.oldValue || "—"}  →  ${c.newValue}`, M + 4, contentW - 4, { size: 10, color: done ? GREEN : undefined });
+        // jsPDF's built-in Helvetica has no "→" glyph (it prints "!"), so use "->".
+        wrapped(`${u}${c.field}:  ${c.oldValue || "—"}  ->  ${c.newValue}`, M + 4, contentW - 4, { size: 10, color: done ? GREEN : undefined });
       }
     }
 
