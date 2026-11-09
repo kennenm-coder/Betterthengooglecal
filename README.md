@@ -151,7 +151,7 @@ like the other three.
 
 - **They are kept apart from the rest of the data.** `DataProvider` loads them into their own
   list (`measureOrders`), so they never reach counts, More for More, the loading schedule,
-  Changes or the unscheduled list. The calendar and Search merge them in for display only.
+  or Changes. The calendar and Search merge them in for display only.
 - **Scheduled ones only.** An unscheduled Tech Measure has no day to sit on, so it is not loaded.
 - **This is UI scoping, not access control.** `work_orders`' read policy lets every allowlisted
   non-installer read every row (migration 035); the calendar just doesn't ask for them unless the

@@ -300,7 +300,7 @@ export interface FieldWorkOrder {
   updatedByName: string;
 }
 
-export type ViewMode = "day" | "week" | "list";
+export type ViewMode = "day" | "week";
 
 export interface Employee {
   firstName: string;

@@ -228,8 +228,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
           return enriched;
         });
       };
-      // The Map is also flattened into materialJobs state so Search and
-      // UnscheduledJobs can consume it from context instead of re-fetching.
+      // The Map is also flattened into materialJobs state so Search
+      // can consume it from context instead of re-fetching.
       jobsPromise.then((res) => {
         if (!res || stale()) return;
         jobByPORef.current = res.jobs;

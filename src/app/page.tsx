@@ -5,7 +5,6 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useData } from "@/components/DataProvider";
 import DayView from "@/components/DayView";
 import WeekView from "@/components/WeekView";
-import UnscheduledJobs from "@/components/UnscheduledJobs";
 import OrderSheet from "@/components/OrderSheet";
 import BottomNav from "@/components/BottomNav";
 import FilterPanel, { Filters, EMPTY_FILTERS, applyFilters } from "@/components/FilterPanel";
@@ -17,7 +16,6 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   canManageTimeOff as canManageTimeOffRole,
   canSeeFloaters,
-  isAdmin,
   isInstaller,
   installerNeedsSetup,
 } from "@/lib/roles";
@@ -28,7 +26,7 @@ import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO } from "date-fns";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Database, CalendarDays, Plus, UserCog } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, RefreshCw, CalendarDays, Plus, UserCog } from "lucide-react";
 
 export default function CalendarPageWrapper() {
   return (
@@ -92,7 +90,8 @@ function CalendarPage() {
   const [view, setView] = useState<ViewMode>(() => {
     if (typeof window === "undefined") return "day";
     const saved = sessionStorage.getItem("cal:view");
-    return saved === "day" || saved === "week" || saved === "list" ? saved : "day";
+    // A tab saved as "list" (the retired Jobs Not Scheduled screen) falls back to day.
+    return saved === "day" || saved === "week" ? saved : "day";
   });
   const [currentDate, setCurrentDate] = useState<Date>(() => {
     if (typeof window === "undefined") return new Date();
@@ -141,7 +140,7 @@ function CalendarPage() {
 
   // Tech Measure tiles join the calendar views (and the filters) here and
   // nowhere else: they are empty unless this login is an admin or measure tech,
-  // and the unscheduled list keeps reading scopedOrders so a measure can never
+  // and everything else keeps reading scopedOrders so a measure can never
   // make an install look scheduled.
   const calendarOrders = useMemo(
     () => (measureOrders.length > 0 ? [...scopedOrders, ...measureOrders] : scopedOrders),
@@ -252,7 +251,6 @@ function CalendarPage() {
                 onChange={(e) => {
                   if (e.target.value) {
                     setCurrentDate(parseISO(e.target.value));
-                    if (view !== "day" && view !== "week") setView("day");
                   }
                 }}
               />
@@ -288,18 +286,6 @@ function CalendarPage() {
           </button>
 
           <FilterPanel orders={calendarOrders} filters={filters} onChange={setFilters} />
-
-          {isAdmin(roles) && (
-            <button
-              onClick={() => setView(view === "list" ? "day" : "list")}
-              className={`p-2 rounded-full transition-colors shrink-0 ${
-                view === "list" ? "bg-primary text-white" : "hover:bg-surface"
-              }`}
-              title="Jobs Not Scheduled"
-            >
-              <Database className="w-4.5 h-4.5" />
-            </button>
-          )}
         </div>
       </header>
 
@@ -353,12 +339,7 @@ function CalendarPage() {
       )}
 
       <div className="flex-1 flex flex-col min-h-0">
-        {view === "list" ? (
-          <UnscheduledJobs
-            orders={scopedOrders}
-            onSelectOrder={setSelectedOrder}
-          />
-        ) : view === "day" ? (
+        {view === "day" ? (
           <DayView
             orders={filteredOrders}
             date={currentDate}
