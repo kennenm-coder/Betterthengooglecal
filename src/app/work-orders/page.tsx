@@ -1405,7 +1405,7 @@ function ReviewSection({
                   {specs.map((c, i) => (
                     <div key={i} className="text-xs ml-4">
                       <span className="text-muted">{c.field}:</span>{" "}
-                      <span className="text-muted">{c.oldValue || "—"}</span>
+                      <span className="text-foreground">{c.oldValue || "—"}</span>
                       {" → "}
                       <span className={`font-semibold ${done ? "text-green-700" : "text-amber-600"}`}>{c.newValue}</span>
                     </div>
