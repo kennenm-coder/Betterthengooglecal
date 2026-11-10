@@ -287,7 +287,7 @@ export default function WriteUpDocView({
                         {c.unitLabel ? `${c.unitLabel} · ` : ""}
                         {c.field}:
                       </span>{" "}
-                      <span className="line-through text-muted">{c.oldValue || "—"}</span>
+                      <span className="text-muted">{c.oldValue || "—"}</span>
                       {" → "}
                       <span className="font-semibold" style={{ color: accentText }}>
                         {c.newValue}
