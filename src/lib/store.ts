@@ -1024,6 +1024,32 @@ async function fetchJobRows(
   }, JOBS_RAW_PAGE_SIZE);
 }
 
+/**
+ * Run one page request, trying again if it fails. The jobs download is ~60
+ * sequential requests on a phone's first open (no saved copy yet), and ONE
+ * dropped request used to throw the whole download away, leaving every tile
+ * without its install instructions. Errors that mean "this function does not
+ * exist" are not transient, so they return at once and the caller falls back.
+ */
+async function retryPage(
+  run: () => PromiseLike<{ data: unknown; error: unknown }>
+): Promise<{ data: unknown; error: unknown }> {
+  const waits = [400, 1200, 2500];
+  let last: { data: unknown; error: unknown } = { data: null, error: new Error("not run") };
+  for (let attempt = 0; attempt <= waits.length; attempt++) {
+    try {
+      last = await run();
+    } catch (err) {
+      last = { data: null, error: err };
+    }
+    if (!last.error && Array.isArray(last.data)) return last;
+    const code = (last.error as { code?: string } | null)?.code;
+    if (code === "PGRST202" || code === "42883" || code === "42P01") return last;
+    if (attempt < waits.length) await new Promise((r) => setTimeout(r, waits[attempt]));
+  }
+  return last;
+}
+
 async function keysetThrough(
   page: (afterId: string | null) => PromiseLike<{ data: unknown; error: unknown }>,
   size: number
@@ -1031,7 +1057,7 @@ async function keysetThrough(
   const rows: JobRow[] = [];
   let afterId: string | null = null;
   while (true) {
-    const { data, error } = await page(afterId);
+    const { data, error } = await retryPage(() => page(afterId));
     if (error || !Array.isArray(data)) return null;
     const batch = data as JobRow[];
     rows.push(...batch);
@@ -1049,7 +1075,7 @@ async function pageThrough(
   const rows: JobRow[] = [];
   let offset = 0;
   while (true) {
-    const { data, error } = await page(offset, offset + size - 1);
+    const { data, error } = await retryPage(() => page(offset, offset + size - 1));
     if (error || !Array.isArray(data)) return null;
     rows.push(...(data as JobRow[]));
     if (data.length < size) break;

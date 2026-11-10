@@ -22,6 +22,8 @@ import {
   enrichWithMaterials,
   fetchLegacyLinks,
   deleteLegacyLink,
+  invalidateMaterialJobsCache,
+  invalidateLegacyLinksCache,
   yieldToMain,
   isCancelledAppointment,
 } from "@/lib/store";
@@ -123,7 +125,11 @@ function getMonthsInRange(start: string, end: string): Set<string> {
 }
 
 export default function DataProvider({ children }: { children: ReactNode }) {
-  const { roles } = useAuth();
+  const { roles, user } = useAuth();
+  const userId = user?.id ?? null;
+  // Whose session the last refresh() ran under: undefined = not known yet,
+  // null = nobody was signed in (the login page mounts this provider too).
+  const refreshedForRef = useRef<string | null | undefined>(undefined);
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [measureOrders, setMeasureOrders] = useState<WorkOrder[]>([]);
   const [materialJobs, setMaterialJobs] = useState<MaterialJobData[]>([]);
@@ -194,7 +200,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       // performs the refresh under supabase-js's lock and is free when the
       // token is still valid.
       try {
-        await getSupabase()?.auth.getSession();
+        const sessionRes = await getSupabase()?.auth.getSession();
+        refreshedForRef.current = sessionRes?.data.session?.user?.id ?? null;
       } catch {
         /* proceed — each request will refresh on its own if needed */
       }
@@ -230,14 +237,37 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       };
       // The Map is also flattened into materialJobs state so Search
       // can consume it from context instead of re-fetching.
-      jobsPromise.then((res) => {
-        if (!res || stale()) return;
+      const applyJobs = (res: { jobs: Map<string, any>; sig: string }) => {
         jobByPORef.current = res.jobs;
         // Baseline fingerprint so we can detect later linked-job changes.
         jobsSigRef.current = res.sig;
         setMaterialJobs(Array.from(res.jobs.values()) as MaterialJobData[]);
         setLinkedJobsStale(false);
         applyEnrichment();
+      };
+      // A jobs pull that fails comes back empty (or throws), which would leave
+      // every tile without its install instructions until someone happens to
+      // tap Refresh. An empty answer is never real for this business, so try
+      // again a few times, a little later each time.
+      const retryJobs = async () => {
+        for (const waitMs of [3000, 8000, 20000]) {
+          await new Promise((r) => setTimeout(r, waitMs));
+          if (stale()) return;
+          const res = await fetchMaterialJobsWithSignature({ revalidate: true }).catch(() => null);
+          if (stale()) return;
+          if (res && res.jobs.size > 0) {
+            applyJobs(res);
+            return;
+          }
+        }
+      };
+      jobsPromise.then((res) => {
+        if (stale()) return;
+        if (!res || res.jobs.size === 0) {
+          void retryJobs();
+          return;
+        }
+        applyJobs(res);
       });
       legacyPromise.then((links) => {
         if (!links || stale()) return;
@@ -436,9 +466,11 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     const index = await fetchPurchaseOrderIndex().catch(() => null);
     if (index && index.size > 0) setPurchaseOrders(index);
   }, []);
+  // userId is a dependency so it runs again once someone signs in: the first
+  // run can happen on the login page, with nobody signed in and nothing to read.
   useEffect(() => {
     refreshPurchaseOrders();
-  }, [refreshPurchaseOrders]);
+  }, [refreshPurchaseOrders, userId]);
 
   const partsFor = useCallback(
     (orderNumber: string): PurchaseOrderRollup | null => {
@@ -529,6 +561,32 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       abortRef.current?.abort();
     };
   }, [refresh]);
+
+  // This provider sits above every page, so it starts on the login screen with
+  // nobody signed in, and signing in moves to the calendar WITHOUT a page
+  // reload. Without this, the first load (made as nobody, so every table came
+  // back empty) was never repeated: a new account saw tiles with no install
+  // instructions until they tapped Refresh. When the signed-in person is not
+  // the one the last load ran for, throw away what that load left behind and
+  // load again.
+  useEffect(() => {
+    if (!userId) return;
+    const last = refreshedForRef.current;
+    if (last === undefined || last === userId) return;
+    // The module-level caches would otherwise hand back the empty answers from
+    // the signed-out load (or, on a shared device, the previous person's jobs).
+    invalidateMaterialJobsCache();
+    invalidateLegacyLinksCache();
+    jobByPORef.current = new Map();
+    jobsSigRef.current = "";
+    if (last) {
+      // A different person on the same screen: don't leave the last one's tiles up.
+      setOrders([]);
+      setMaterialJobs([]);
+      setLoading(true);
+    }
+    void refresh();
+  }, [userId, refresh]);
 
   // Cancelled appointments stay in state (the next import can flip one back)
   // but never reach a screen. Filtering here covers every load path at once —
