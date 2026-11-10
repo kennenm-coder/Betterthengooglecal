@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   WorkOrder,
   MaterialUnit,
@@ -2241,7 +2241,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 <span className="text-xs font-bold flex items-center gap-1.5 text-muted uppercase tracking-wide">
                   <StickyNote className="w-3.5 h-3.5" /> Note
                 </span>
-                <textarea
+                <AutoGrowTextarea
                   value={editNote}
                   onChange={(e) => setEditNote(e.target.value)}
                   rows={2}
@@ -2297,7 +2297,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 )}
                 <div>
                   <label className="text-xs text-muted block mb-1">Who could do this work?</label>
-                  <textarea
+                  <AutoGrowTextarea
                     value={crewNote}
                     onChange={(e) => setCrewNote(e.target.value)}
                     rows={2}
@@ -2311,7 +2311,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 </div>
                 <div>
                   <SectionLabel step={1}>What&apos;s wrong?</SectionLabel>
-                  <textarea
+                  <AutoGrowTextarea
                     value={background}
                     onChange={(e) => setBackground(e.target.value)}
                     rows={3}
@@ -2321,7 +2321,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 </div>
                 <div>
                   <label className="text-xs text-muted block mb-1">Financing notes</label>
-                  <textarea
+                  <AutoGrowTextarea
                     value={financingNotes}
                     onChange={(e) => setFinancingNotes(e.target.value)}
                     rows={2}
@@ -2331,7 +2331,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 </div>
                 <div>
                   <label className="text-xs text-muted block mb-1">Paint &amp; stain notes</label>
-                  <textarea
+                  <AutoGrowTextarea
                     value={paintStainNotes}
                     onChange={(e) => setPaintStainNotes(e.target.value)}
                     rows={2}
@@ -2671,7 +2671,7 @@ function WorkNeeded({
                 </div>
               </div>
               {w.notes !== undefined && (
-                <textarea
+                <AutoGrowTextarea
                   value={w.notes}
                   onChange={(e) => onNotes(i, e.target.value)}
                   rows={2}
@@ -2744,6 +2744,26 @@ function WorkNeeded({
   );
 }
 
+
+/* ── A text box that grows to fit what's typed (rows = the minimum height) ── */
+function AutoGrowTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const { value, ...rest } = props;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Collapsing the box to measure it can shrink the page for a moment and
+    // bump the scroll position, so remember where every scroller was.
+    const saved: Array<[HTMLElement, number]> = [];
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      if (p.scrollTop > 0) saved.push([p, p.scrollTop]);
+    }
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+    for (const [p, top] of saved) p.scrollTop = top;
+  }, [value]);
+  return <textarea ref={ref} value={value} {...rest} />;
+}
 
 /* ── Reusable: photos grid + take/upload ── */
 function PhotoSection({
@@ -3325,7 +3345,7 @@ function IssueCard({
       {/* Instructions about HOW to order — not a third place to list items. */}
       <div>
         <span className="text-xs font-bold text-muted uppercase tracking-wide">Ordering notes</span>
-        <textarea
+        <AutoGrowTextarea
           value={issue.orderingNotes}
           onChange={(e) => onUpdate({ orderingNotes: e.target.value })}
           rows={2}
