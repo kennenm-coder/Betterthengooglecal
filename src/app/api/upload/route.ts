@@ -6,6 +6,7 @@ import { isPurchaseOrderReport, parsePurchaseOrderReport, PurchaseOrderRow } fro
 import { WorkOrder } from "@/lib/types";
 import { requireRole, getAdminClient } from "@/lib/auth";
 import { writeImportLog, fetchExistingOrders, computeOrderChanges } from "@/lib/import-log";
+import { runWriteUpAutoClose } from "@/lib/writeup-auto-close";
 
 /**
  * Power Automate posts the full rForce export here hourly, 8am–5pm. A run reads
@@ -372,6 +373,24 @@ async function autoConfirmFromFeed(): Promise<number | null> {
   }
 }
 
+/**
+ * Refresh every open write-up's rForce stage and close the ones that have sat
+ * in Job Closed for a week (src/lib/writeup-auto-close.ts).
+ *
+ * Non-fatal on purpose, like the auto-confirm above: the import's job is to
+ * land the work orders. If this cannot run — most likely because migration 052
+ * is not applied yet — the calendar is still correct and the write-ups simply
+ * keep the stage they had.
+ */
+async function refreshWriteUpStages(runStartedAt: string, parsedRows: number) {
+  try {
+    return await runWriteUpAutoClose(getAdminClient(), runStartedAt, parsedRows);
+  } catch (err) {
+    console.warn("Write-up stage refresh skipped:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const contentType = request.headers.get("content-type") || "";
@@ -535,7 +554,11 @@ export async function POST(request: NextRequest) {
         return b.changes.length - a.changes.length;
       });
 
+    // Taken before the upsert stamps the rows, so every row this import
+    // carries is stamped after the run's own time in the ledger.
+    const runStartedAt = new Date().toISOString();
     const upserted = await upsertToSupabase(orders);
+    const writeUpStages = await refreshWriteUpStages(runStartedAt, orders.length);
 
     // Log the import for the shared import log
     const source = isBrowserUpload ? "browser" : "power_automate";
@@ -566,6 +589,7 @@ export async function POST(request: NextRequest) {
       format,
       parsed: orders.length,
       upserted,
+      writeUpStages,
     });
   } catch (err: unknown) {
     console.error("Upload error:", err);

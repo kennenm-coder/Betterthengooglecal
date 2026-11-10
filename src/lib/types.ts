@@ -1,3 +1,5 @@
+import type { StageDetail, StageKey } from "./writeup-stage";
+
 export interface WorkOrder {
   id: string;
   status: string;
@@ -288,6 +290,16 @@ export interface FieldWorkOrder {
   closedAt: string | null;
   /** "Not yet" was answered to an archive/close nudge — quiet until this passes. */
   nudgeSnoozedUntil: string | null;
+  /** Where the rForce orders behind this write-up stand, set by the hourly
+   *  import (src/lib/writeup-stage.ts). Null until the import has looked. */
+  rforceStage: StageKey | null;
+  rforceStageDetail: StageDetail | null;
+  /** Every rForce order behind it is closed since this time; an Open
+   *  write-up with this set shows in the Job Closed tab and closes itself
+   *  AUTO_CLOSE_DAYS later. */
+  jobClosedSince: string | null;
+  /** Closed by the import rather than a person. */
+  autoClosedAt: string | null;
   /** Phase 2 — photo support. */
   photoCount: number;
   photosUploaded: boolean;

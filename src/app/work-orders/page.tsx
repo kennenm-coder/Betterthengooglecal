@@ -41,6 +41,14 @@ import {
 } from "@/lib/service-parts";
 import { crewsToText, textToCrews } from "@/lib/writeup-crews";
 import {
+  AUTO_CLOSE_DAYS,
+  STAGE_FILTERS,
+  autoCloseAt,
+  stageTag,
+  type StageKey,
+  type StageTone,
+} from "@/lib/writeup-stage";
+import {
   nudgeFor,
   needsCrew,
   snoozeUntil,
@@ -72,10 +80,11 @@ import {
   Flag,
   Users,
   Package,
+  Clock,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
-type Filter = "draft" | "in_review" | "open" | "closed" | "archived" | "all";
+type Filter = "draft" | "in_review" | "open" | "job_closed" | "closed" | "archived" | "all";
 /** The pills at the top: write-ups asking to be archived, asking to be closed,
  *  or submitted with nobody picked to do the work. */
 type Attention = "archive" | "close" | "nocrew";
@@ -84,10 +93,28 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "draft", label: "Drafts" },
   { id: "in_review", label: "In Review" },
   { id: "open", label: "Open" },
+  { id: "job_closed", label: "Job Closed" },
   { id: "closed", label: "Closed" },
   { id: "archived", label: "Archived" },
   { id: "all", label: "All" },
 ];
+
+/**
+ * Open, with every rForce order behind it closed: it sits in the Job Closed tab
+ * and closes itself AUTO_CLOSE_DAYS after the clock started. Not a status of
+ * its own — still "open" in the database, so nothing else that reads status
+ * (spec overlays, nudges, the service-tile index) has to know about it. A
+ * write-up that closed itself once and was reopened by hand never comes back
+ * here.
+ */
+function inJobClosed(w: FieldWorkOrder): boolean {
+  return w.status === "open" && !!w.jobClosedSince && !w.autoClosedAt;
+}
+
+/** The tab a row shows under. */
+function tabOf(w: FieldWorkOrder): Filter {
+  return inJobClosed(w) ? "job_closed" : w.status;
+}
 
 /** Every bit of a write-up worth typing into the search box: the job it belongs
  *  to, who wrote it, the unit, and the text of the work itself. */
@@ -125,6 +152,9 @@ export default function WorkOrdersPage() {
   // One of the pills at the top is tapped: narrow the list to just those
   // write-ups. Cleared by tapping the pill again or switching tabs.
   const [attention, setAttention] = useState<Attention | null>(null);
+  // A stage button in the Open tab is tapped: narrow to write-ups at that
+  // stage in rForce. Cleared by tapping it again or switching tabs.
+  const [stageFilter, setStageFilter] = useState<StageKey | null>(null);
   // Service parts, keyed by street. Loaded on its own so a slow or forbidden
   // purchase-order read never holds up the write-ups themselves — an empty
   // index just means no parts cards, which is also what an installer sees.
@@ -290,6 +320,9 @@ export default function WorkOrdersPage() {
                 ...w,
                 status,
                 nudgeSnoozedUntil: null,
+                // The database resets the Job Closed clock on any status
+                // change (migration 052's trigger); mirror it.
+                jobClosedSince: null,
                 closedAt: status === "closed" ? now : status === "archived" ? w.closedAt : null,
               }
             : w
@@ -470,9 +503,12 @@ export default function WorkOrdersPage() {
     const byStatus =
       filter === "all"
         ? writeUps.filter((w) => w.status !== "archived")
-        : writeUps.filter((w) => w.status === filter);
+        : writeUps.filter((w) => tabOf(w) === filter);
     // A tapped pill narrows further to just the write-ups it counted.
-    const byAttention = attention ? byStatus.filter((w) => flagged[attention].has(w.id)) : byStatus;
+    const byPill = attention ? byStatus.filter((w) => flagged[attention].has(w.id)) : byStatus;
+    // So does a tapped stage button in the Open tab.
+    const byAttention =
+      filter === "open" && stageFilter ? byPill.filter((w) => w.rforceStage === stageFilter) : byPill;
     // Search runs inside the active tab, so it works on every filter. All terms
     // must match somewhere in the write-up (order doesn't matter).
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -481,7 +517,7 @@ export default function WorkOrdersPage() {
       const hay = writeUpSearchText(w);
       return terms.every((t) => hay.includes(t));
     });
-  }, [writeUps, filter, query, attention, flagged]);
+  }, [writeUps, filter, query, attention, flagged, stageFilter]);
 
   // Group by order number (one job may have several unit write-ups). Jobs with
   // any draft float to the top so unfinished write-ups are easy to find, then
@@ -499,9 +535,16 @@ export default function WorkOrdersPage() {
           ? 1
           : 2;
     const entries = Array.from(map.entries());
+    if (filter === "job_closed") {
+      // Next to close first.
+      const since = (rows: FieldWorkOrder[]) =>
+        rows.map((w) => w.jobClosedSince || "").filter(Boolean).sort()[0] || "";
+      entries.sort((a, b) => since(a[1]).localeCompare(since(b[1])));
+      return entries;
+    }
     entries.sort((a, b) => rank(a[1]) - rank(b[1]));
     return entries;
-  }, [visible, flagged]);
+  }, [visible, flagged, filter]);
 
   /** Tap a pill: jump to the tab it lives in and narrow to its write-ups. */
   function toggleAttention(kind: Attention) {
@@ -510,6 +553,7 @@ export default function WorkOrdersPage() {
       return;
     }
     setAttention(kind);
+    setStageFilter(null);
     setFilter(kind === "archive" ? "closed" : kind === "close" ? "open" : "all");
   }
 
@@ -527,8 +571,30 @@ export default function WorkOrdersPage() {
       : writeUps;
     const counts: Record<string, number> = {};
     for (const sec of groupWriteUpSections(pool)) {
-      counts[sec.status] = (counts[sec.status] || 0) + 1;
+      const openRows = sec.rows.filter((r) => r.status === "open");
+      const key =
+        sec.status === "open" && openRows.length > 0 && openRows.every(inJobClosed) ? "job_closed" : sec.status;
+      counts[key] = (counts[key] || 0) + 1;
     }
+    return counts;
+  }, [writeUps, query]);
+
+  // The Open tab's stage buttons: how many JOBS (tiles) sit at each stage,
+  // over whatever the search box has narrowed to. A job's rows all share one
+  // stage — the import works it out per order.
+  const stageCounts = useMemo(() => {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const stageOf = new Map<string, StageKey | null>();
+    for (const w of writeUps) {
+      if (tabOf(w) !== "open") continue;
+      if (terms.length) {
+        const hay = writeUpSearchText(w);
+        if (!terms.every((t) => hay.includes(t))) continue;
+      }
+      if (!stageOf.get(w.orderNumber)) stageOf.set(w.orderNumber, w.rforceStage);
+    }
+    const counts = new Map<StageKey, number>();
+    for (const st of stageOf.values()) if (st) counts.set(st, (counts.get(st) || 0) + 1);
     return counts;
   }, [writeUps, query]);
 
@@ -632,6 +698,7 @@ export default function WorkOrdersPage() {
               onClick={() => {
                 setFilter(f.id);
                 setAttention(null);
+                setStageFilter(null);
               }}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
                 filter === f.id ? "bg-primary text-white" : "bg-surface text-muted"
@@ -644,6 +711,19 @@ export default function WorkOrdersPage() {
             </button>
           ))}
         </div>
+        {filter === "open" && stageCounts.size > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {STAGE_FILTERS.filter((f) => stageCounts.get(f.key)).map((f) => (
+              <StageFilterButton
+                key={f.key}
+                active={stageFilter === f.key}
+                tone={stageTag(f.key, null).tone}
+                label={`${f.label} ${stageCounts.get(f.key)}`}
+                onClick={() => setStageFilter(stageFilter === f.key ? null : f.key)}
+              />
+            ))}
+          </div>
+        )}
         <div className="relative mt-2">
           <Search className="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
@@ -666,6 +746,20 @@ export default function WorkOrdersPage() {
       </header>
 
       <main className="flex-1 overflow-y-auto p-4">
+        {filter === "job_closed" && (
+          <div className="mb-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm no-print">
+            <p className="font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+              <Clock className="w-4 h-4" />
+              Write-ups here move to Closed after {AUTO_CLOSE_DAYS} days in Job Closed
+            </p>
+            <p className="text-xs text-muted mt-1">
+              Every rForce order behind these write-ups is closed: the job&apos;s own order and every service
+              order at the address. If a new service order is booked there first, the write-up goes back to
+              Open. Any work items not checked off are marked complete when it closes. Close one by hand any
+              time if it doesn&apos;t need the wait.
+            </p>
+          </div>
+        )}
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 text-primary animate-spin" />
@@ -692,6 +786,18 @@ export default function WorkOrdersPage() {
               // that never became service work.
               const partsRows = servicePartsAt(partsIndex, first.address);
               const partsTag = partsTagFor(partsRows);
+              // Where rForce has the work, worked out by the hourly import.
+              // Only shown while the write-up is still open.
+              const stageRow = items.find((w) => w.status === "open" && w.rforceStage);
+              const stage = stageRow?.rforceStage
+                ? stageTag(stageRow.rforceStage, stageRow.rforceStageDetail)
+                : null;
+              // Job Closed: when it closes itself, and what that will tick off.
+              const jcRows = items.filter(inJobClosed);
+              const jcSince = jcRows.map((w) => w.jobClosedSince as string).sort()[0];
+              const jcCloseOn = jcSince ? autoCloseAt(jcSince) : null;
+              const jcUnchecked = jcRows.flatMap((w) => w.lineItems).filter((li) => !li.completed).length;
+              const autoClosed = items.find((w) => w.status === "closed" && w.autoClosedAt);
               return (
                 <div
                   key={orderNumber}
@@ -739,7 +845,26 @@ export default function WorkOrdersPage() {
                             return null;
                           })}
                           {partsTag && <PartsBadge tag={partsTag} />}
+                          {stage && <StageBadge {...stage} />}
+                          {autoClosed?.autoClosedAt && (
+                            <StageBadge
+                              label={`Auto-closed ${format(parseISO(autoClosed.autoClosedAt), "MMM d")}`}
+                              tone="gray"
+                              title="Closed by the hourly import a week after every rForce order behind it closed"
+                            />
+                          )}
                         </div>
+                        {jcCloseOn && (
+                          <p className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400 mt-1 flex items-center gap-1">
+                            <Clock className="w-3 h-3 shrink-0" />
+                            {jcCloseOn.getTime() > Date.now()
+                              ? `Moves to Closed ${format(jcCloseOn, "EEE MMM d")}`
+                              : "Moves to Closed at the next hourly import"}
+                            {jcUnchecked > 0
+                              ? ` · ${jcUnchecked} work item${jcUnchecked !== 1 ? "s" : ""} will be marked complete automatically`
+                              : ""}
+                          </p>
+                        )}
                       </div>
                       {isOpen ? (
                         <ChevronDown className="w-5 h-5 text-muted shrink-0" />
@@ -1669,6 +1794,72 @@ function AttentionPill({
       {icon}
       {label}
       {active && <X className="w-3.5 h-3.5 ml-0.5" />}
+    </button>
+  );
+}
+
+const STAGE_TONE: Record<StageTone, { idle: string; active: string }> = {
+  red: { idle: "border-danger/40 text-danger bg-danger/5", active: "bg-danger text-white border-danger" },
+  amber: {
+    idle: "border-amber-500/50 text-amber-700 dark:text-amber-400 bg-amber-500/10",
+    active: "bg-amber-500 text-white border-amber-500",
+  },
+  sky: {
+    idle: "border-sky-500/50 text-sky-700 dark:text-sky-400 bg-sky-500/10",
+    active: "bg-sky-600 text-white border-sky-600",
+  },
+  blue: {
+    idle: "border-blue-500/50 text-blue-700 dark:text-blue-400 bg-blue-500/10",
+    active: "bg-blue-600 text-white border-blue-600",
+  },
+  green: {
+    idle: "border-emerald-500/50 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10",
+    active: "bg-emerald-600 text-white border-emerald-600",
+  },
+  violet: {
+    idle: "border-violet-500/50 text-violet-700 dark:text-violet-400 bg-violet-500/10",
+    active: "bg-violet-600 text-white border-violet-600",
+  },
+  gray: { idle: "border-border text-muted bg-surface", active: "bg-primary text-white border-primary" },
+};
+
+/** Where rForce has this write-up's work, on the collapsed tile. */
+function StageBadge({ label, tone, title }: { label: string; tone: StageTone; title: string }) {
+  return (
+    <span
+      title={title || undefined}
+      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${STAGE_TONE[tone].idle}`}
+    >
+      <Clock className="w-3 h-3" />
+      {label}
+    </span>
+  );
+}
+
+/** One of the Open tab's stage buttons. Tapping narrows the list to it. */
+function StageFilterButton({
+  active,
+  tone,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  tone: StageTone;
+  label: string;
+  onClick: () => void;
+}) {
+  const t = STAGE_TONE[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+        active ? t.active : t.idle
+      }`}
+    >
+      {label}
+      {active && <X className="w-3 h-3 ml-0.5" />}
     </button>
   );
 }

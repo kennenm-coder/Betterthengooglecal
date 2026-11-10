@@ -2,6 +2,7 @@ import { getSupabase } from "./supabase";
 import { fetchCatalogAndOffsets, fetchTrimCatalogOptions, MaterialCatalog } from "./nwo-builder";
 import { fetchMaterialJobs } from "./store";
 import { addressKey } from "./address-match";
+import type { StageDetail, StageKey } from "./writeup-stage";
 import {
   FieldWorkOrder,
   WriteUpLineItem,
@@ -1103,6 +1104,10 @@ interface FieldWorkOrderRow {
   status: string;
   closed_at: string | null;
   nudge_snoozed_until: string | null;
+  rforce_stage?: string | null;
+  rforce_stage_detail?: StageDetail | null;
+  job_closed_since?: string | null;
+  auto_closed_at?: string | null;
   photo_count: number | null;
   photos_uploaded: boolean | null;
   created_by: string | null;
@@ -1138,6 +1143,11 @@ function rowToWriteUp(row: FieldWorkOrderRow): FieldWorkOrder {
     status: (row.status as WriteUpStatus) || "open",
     closedAt: row.closed_at || null,
     nudgeSnoozedUntil: row.nudge_snoozed_until || null,
+    // Absent before migration 052 — the page then simply shows no stage.
+    rforceStage: (row.rforce_stage as StageKey) || null,
+    rforceStageDetail: row.rforce_stage_detail || null,
+    jobClosedSince: row.job_closed_since || null,
+    autoClosedAt: row.auto_closed_at || null,
     photoCount: row.photo_count || 0,
     photosUploaded: !!row.photos_uploaded,
     createdBy: row.created_by || "",

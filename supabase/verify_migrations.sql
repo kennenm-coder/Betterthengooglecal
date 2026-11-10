@@ -331,7 +331,16 @@ checks(migration, feature, verdict, checked) as (values
  ('043', 'unattended rForce auto-confirm',
   case when exists(select 1 from fn where k = 'rforce_auto_confirm')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'the sweep the nightly import and the auditor both call')
+  'the sweep the nightly import and the auditor both call'),
+
+ ('052', 'write-up rForce stage + Job Closed auto-close',
+  case when exists(select 1 from col where k = 'field_work_orders.job_closed_since')
+        and exists(select 1 from col where k = 'field_work_orders.rforce_stage')
+        and exists(select 1 from tbl where k = 'rforce_import_runs')
+        and exists(select 1 from fn where k = 'field_work_orders_reset_job_closed')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'the stage + job_closed_since columns, the import run ledger AND the '
+  'trigger that resets the clock on a status change')
 )
 select migration, feature, verdict, checked
 from checks
