@@ -2296,6 +2296,16 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                   </div>
                 )}
                 <div>
+                  <SectionLabel step={1}>What&apos;s wrong?</SectionLabel>
+                  <AutoGrowTextarea
+                    value={background}
+                    onChange={(e) => setBackground(e.target.value)}
+                    rows={3}
+                    placeholder="Overall situation — e.g. the original windows were stained the wrong color…"
+                    className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-3 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                  />
+                </div>
+                <div>
                   <label className="text-xs text-muted block mb-1">Who could do this work?</label>
                   <AutoGrowTextarea
                     value={crewNote}
@@ -2308,16 +2318,6 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                     Names, either/or, time frames — whatever helps. Office only: shows on the Write-Ups page, never on
                     the PDF or in the email.
                   </p>
-                </div>
-                <div>
-                  <SectionLabel step={1}>What&apos;s wrong?</SectionLabel>
-                  <AutoGrowTextarea
-                    value={background}
-                    onChange={(e) => setBackground(e.target.value)}
-                    rows={3}
-                    placeholder="Overall situation — e.g. the original windows were stained the wrong color…"
-                    className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-3 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-                  />
                 </div>
                 <div>
                   <label className="text-xs text-muted block mb-1">Financing notes</label>
