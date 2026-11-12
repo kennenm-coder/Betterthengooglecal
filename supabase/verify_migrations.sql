@@ -340,7 +340,14 @@ checks(migration, feature, verdict, checked) as (values
         and exists(select 1 from fn where k = 'field_work_orders_reset_job_closed')
        then 'APPLIED' else 'NOT APPLIED' end,
   'the stage + job_closed_since columns, the import run ledger AND the '
-  'trigger that resets the clock on a status change')
+  'trigger that resets the clock on a status change'),
+
+ ('053', 'write-up JIP / Service',
+  case when exists(select 1 from col where k = 'field_work_orders.writeup_kind')
+        and exists(select 1 from col where k = 'field_work_orders.writeup_kind_detail')
+        and exists(select 1 from col where k = 'field_work_orders.writeup_kind_at')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'the writeup_kind, writeup_kind_detail and writeup_kind_at columns')
 )
 select migration, feature, verdict, checked
 from checks

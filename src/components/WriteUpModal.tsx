@@ -35,6 +35,7 @@ import {
   unitLabelOf,
   unitAbbrevOf,
   submitWriteUpBatch,
+  requestWriteUpKindStamp,
   saveWriteUpBatchEdit,
   buildWriteUpEmailContent,
   WRITEUP_EMAIL_TO,
@@ -1600,6 +1601,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       setError(res.error ? `Couldn't save: ${res.error}` : "Couldn't save changes — try again.");
       return;
     }
+    if (status !== "draft") requestWriteUpKindStamp(order.orderNumber || editWriteUp.orderNumber);
     finishAfterEdit(await handOffEditedTrim(materialItems));
   }
 
@@ -1663,6 +1665,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       return;
     }
     autoAddToCatalogs();
+    if (status !== "draft") requestWriteUpKindStamp(ctx.orderNumber);
     finishAfterEdit(await handOffEditedTrim(buildInputs(mergedIssues).flatMap((i) => i.materialItems)));
   }
   async function saveAndClose() {
@@ -1746,6 +1749,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     // Drafts don't hand anything over — nothing has been submitted yet.
     let handoff: TrimHandoff | null = null;
     if (startStatus !== "draft") {
+      // JIP or Service is decided on the server; ask now so the trim order
+      // handed over below can print it (lib/writeup-kind.ts).
+      requestWriteUpKindStamp(order.orderNumber);
       handoff = await sendTrimToOrdering({
         orderNumber: order.orderNumber,
         customerName: order.customerName,

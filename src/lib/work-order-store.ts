@@ -3,6 +3,7 @@ import { fetchCatalogAndOffsets, fetchTrimCatalogOptions, MaterialCatalog } from
 import { fetchMaterialJobs } from "./store";
 import { addressKey } from "./address-match";
 import type { StageDetail, StageKey } from "./writeup-stage";
+import type { KindDetail, WriteUpKind } from "./writeup-kind";
 import {
   FieldWorkOrder,
   WriteUpLineItem,
@@ -1108,6 +1109,8 @@ interface FieldWorkOrderRow {
   rforce_stage_detail?: StageDetail | null;
   job_closed_since?: string | null;
   auto_closed_at?: string | null;
+  writeup_kind?: string | null;
+  writeup_kind_detail?: KindDetail | null;
   photo_count: number | null;
   photos_uploaded: boolean | null;
   created_by: string | null;
@@ -1148,6 +1151,9 @@ function rowToWriteUp(row: FieldWorkOrderRow): FieldWorkOrder {
     rforceStageDetail: row.rforce_stage_detail || null,
     jobClosedSince: row.job_closed_since || null,
     autoClosedAt: row.auto_closed_at || null,
+    // Absent before migration 053.
+    writeupKind: row.writeup_kind === "jip" || row.writeup_kind === "service" ? (row.writeup_kind as WriteUpKind) : null,
+    writeupKindDetail: row.writeup_kind_detail || null,
     photoCount: row.photo_count || 0,
     photosUploaded: !!row.photos_uploaded,
     createdBy: row.created_by || "",
@@ -1232,6 +1238,25 @@ export async function createWriteUp(input: NewWriteUp): Promise<CreateWriteUpRes
     return { writeUp: null, error: error?.message || "Unknown database error." };
   }
   return { writeUp: rowToWriteUp(data as FieldWorkOrderRow), error: null };
+}
+
+/**
+ * Ask the server to stamp JIP / Service on this job's new write-ups
+ * (POST /api/writeups/kind → src/lib/writeup-kind-stamp.ts) right after a
+ * submit, so a trim order handed over from it prints the right box on the paint
+ * shop's tracker without waiting for the next hourly import. Fire and forget:
+ * the import stamps anything this misses, and it can never fail a submit.
+ */
+export function requestWriteUpKindStamp(orderNumber: string): void {
+  const on = String(orderNumber || "").trim();
+  if (!on || typeof fetch === "undefined") return;
+  fetch("/api/writeups/kind", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ orderNumber: on }),
+  }).catch(() => {
+    /* the hourly import stamps it */
+  });
 }
 
 // ─── Batch submit (multi-unit write-up) ─────────────────────────────────────
