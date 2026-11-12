@@ -1,4 +1,5 @@
 import type { StageDetail, StageKey } from "./writeup-stage";
+import type { KindDetail, WriteUpKind } from "./writeup-kind";
 
 export interface WorkOrder {
   id: string;
@@ -300,6 +301,11 @@ export interface FieldWorkOrder {
   jobClosedSince: string | null;
   /** Closed by the import rather than a person. */
   autoClosedAt: string | null;
+  /** JIP or Service (src/lib/writeup-kind.ts), stamped by the server on
+   *  submit and by the hourly import. Null until decided — and for a job
+   *  with no install date on file. Never changed once set. */
+  writeupKind: WriteUpKind | null;
+  writeupKindDetail: KindDetail | null;
   /** Phase 2 — photo support. */
   photoCount: number;
   photosUploaded: boolean;

@@ -7,6 +7,7 @@ import { WorkOrder } from "@/lib/types";
 import { requireRole, getAdminClient } from "@/lib/auth";
 import { writeImportLog, fetchExistingOrders, computeOrderChanges } from "@/lib/import-log";
 import { runWriteUpAutoClose } from "@/lib/writeup-auto-close";
+import { stampWriteUpKinds } from "@/lib/writeup-kind-stamp";
 
 /**
  * Power Automate posts the full rForce export here hourly, 8am–5pm. A run reads
@@ -382,6 +383,21 @@ async function autoConfirmFromFeed(): Promise<number | null> {
  * is not applied yet — the calendar is still correct and the write-ups simply
  * keep the stage they had.
  */
+/**
+ * Stamp JIP / Service on every write-up that has no answer yet
+ * (src/lib/writeup-kind.ts). After the stage refresh, so a job that just
+ * reached Job Closed counts as closed. Non-fatal, like the stage refresh:
+ * before migration 053 the column is missing and this simply skips.
+ */
+async function refreshWriteUpKinds() {
+  try {
+    return await stampWriteUpKinds(getAdminClient());
+  } catch (err) {
+    console.warn("Write-up JIP/Service stamp skipped:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 async function refreshWriteUpStages(runStartedAt: string, parsedRows: number) {
   try {
     return await runWriteUpAutoClose(getAdminClient(), runStartedAt, parsedRows);
@@ -559,6 +575,7 @@ export async function POST(request: NextRequest) {
     const runStartedAt = new Date().toISOString();
     const upserted = await upsertToSupabase(orders);
     const writeUpStages = await refreshWriteUpStages(runStartedAt, orders.length);
+    const writeUpKinds = await refreshWriteUpKinds();
 
     // Log the import for the shared import log
     const source = isBrowserUpload ? "browser" : "power_automate";
@@ -590,6 +607,7 @@ export async function POST(request: NextRequest) {
       parsed: orders.length,
       upserted,
       writeUpStages,
+      writeUpKinds,
     });
   } catch (err: unknown) {
     console.error("Upload error:", err);
