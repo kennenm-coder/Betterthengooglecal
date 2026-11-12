@@ -24,7 +24,7 @@ import {
 import { fetchMaterialJobs } from "@/lib/store";
 import { getWriteUpEmails } from "@/lib/action-settings";
 import { dedupeRecipients } from "@/lib/email-recipients";
-import { groupWriteUpSections, isSectionDone, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
+import { groupWriteUpSections, isReadyToClose, isSectionDone, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
 import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibility";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
@@ -88,7 +88,7 @@ import { format, parseISO } from "date-fns";
 type Filter = "draft" | "in_review" | "open" | "job_closed" | "closed" | "archived" | "all";
 /** The pills at the top: write-ups asking to be archived, asking to be closed,
  *  or submitted with nobody picked to do the work. */
-type Attention = "archive" | "close" | "nocrew";
+type Attention = "archive" | "close" | "nocrew" | "ready";
 
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "draft", label: "Drafts" },
@@ -439,10 +439,22 @@ export default function WorkOrdersPage() {
     const nextItemsByRow = new Map<string, FieldWorkOrder["lineItems"]>();
     for (const r of section.rows) nextItemsByRow.set(r.id, r.lineItems.map((li) => ({ ...li })));
     const touched = new Set<string>();
+    const now = new Date().toISOString();
     for (const src of sources) {
       const arr = nextItemsByRow.get(src.rowId);
       if (!arr || !arr[src.index]) continue;
-      arr[src.index].completed = completed;
+      const li = arr[src.index];
+      // Who checked it off is recorded here too, same as from the service tile.
+      if (completed && !li.completed) {
+        li.completedBy = reviewer.by;
+        li.completedByName = reviewer.byName;
+        li.completedAt = now;
+      } else if (!completed) {
+        li.completedBy = undefined;
+        li.completedByName = undefined;
+        li.completedAt = undefined;
+      }
+      li.completed = completed;
       touched.add(src.rowId);
     }
     const results = await Promise.all(
@@ -480,8 +492,14 @@ export default function WorkOrdersPage() {
     const archive = new Set<string>();
     const close = new Set<string>();
     const nocrew = new Set<string>();
-    const counts = { archive: 0, close: 0, nocrew: 0 };
+    const ready = new Set<string>();
+    const counts = { archive: 0, close: 0, nocrew: 0, ready: 0 };
     for (const sec of groupWriteUpSections(writeUps)) {
+      // Every item checked off in the field, waiting for someone to close it.
+      if (isReadyToClose(sec)) {
+        counts.ready++;
+        for (const r of sec.rows) ready.add(r.id);
+      }
       const n = nudgeFor(sec);
       if (n === "archive") {
         counts.archive++;
@@ -495,7 +513,7 @@ export default function WorkOrdersPage() {
         for (const r of sec.rows) nocrew.add(r.id);
       }
     }
-    return { archive, close, nocrew, counts };
+    return { archive, close, nocrew, ready, counts };
   }, [writeUps]);
 
   const visible = useMemo(() => {
@@ -661,8 +679,17 @@ export default function WorkOrdersPage() {
             )}
           </div>
         </div>
-        {(flagged.counts.archive > 0 || flagged.counts.close > 0 || flagged.counts.nocrew > 0) && (
+        {(flagged.counts.archive > 0 || flagged.counts.close > 0 || flagged.counts.nocrew > 0 || flagged.counts.ready > 0) && (
           <div className="flex flex-wrap gap-1.5 mt-2">
+            {flagged.counts.ready > 0 && (
+              <AttentionPill
+                active={attention === "ready"}
+                onClick={() => toggleAttention("ready")}
+                tone="green"
+                icon={<Check className="w-3.5 h-3.5" />}
+                label={`${flagged.counts.ready} ready to close`}
+              />
+            )}
             {flagged.counts.archive > 0 && (
               <AttentionPill
                 active={attention === "archive"}
@@ -835,6 +862,9 @@ export default function WorkOrdersPage() {
                         <div className="flex flex-wrap gap-1 mt-1">
                           {sections.map((s) => (
                             <StatusPill key={s.key} status={s.status} done={isSectionDone(s)} />
+                          ))}
+                          {sections.filter(isReadyToClose).map((s) => (
+                            <FlagBadge key={`r-${s.key}`} tone="green" label="Ready to close" />
                           ))}
                           {sections.map((s) => {
                             const n = nudgeFor(s);
@@ -1464,6 +1494,12 @@ function ReviewSection({
                         it.units.length > 0 && <span className="text-muted"> — {it.units.join(", ")}</span>
                       )}
                       <span className="flex flex-wrap gap-x-2">
+                        {it.completed && it.completedByName && (
+                          <span className="text-[10px] text-green-700">
+                            Done by {it.completedByName}
+                            {it.completedAt ? ` · ${format(parseISO(it.completedAt), "MMM d")}` : ""}
+                          </span>
+                        )}
                         {it.reviewed && it.reviewedByName && (
                           <span className="text-[10px] text-blue-600">
                             Reviewed by {it.reviewedByName}
@@ -1473,6 +1509,16 @@ function ReviewSection({
                       </span>
                     </span>
                   </div>
+                  {it.attempts.length > 0 && (
+                    <ul className="mt-1 ml-6 space-y-0.5">
+                      {it.attempts.map((a) => (
+                        <li key={`${a.at}|${a.by}`} className="text-[11px] text-danger">
+                          <span className="font-semibold">Not complete</span> · {a.byName || a.by}
+                          {a.at ? ` · ${format(parseISO(a.at), "MMM d")}` : ""} — {a.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {perUnit && (
                     <ul className="mt-1 ml-6 space-y-1">
                       {it.unitStates.map((u) => (
@@ -1490,6 +1536,12 @@ function ReviewSection({
                           <span className={`text-xs ${u.completed ? "line-through text-muted" : "text-muted"}`}>
                             {u.unitLabel}
                           </span>
+                          {u.completed && u.completedByName && (
+                            <span className="text-[10px] text-green-700">
+                              {u.completedByName}
+                              {u.completedAt ? ` · ${format(parseISO(u.completedAt), "MMM d")}` : ""}
+                            </span>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -1767,6 +1819,10 @@ const PILL_TONE = {
     idle: "border-border text-muted bg-surface",
     active: "bg-primary text-white border-primary",
   },
+  green: {
+    idle: "border-green-600/50 text-green-700 dark:text-green-400 bg-green-600/10",
+    active: "bg-green-600 text-white border-green-600",
+  },
 } as const;
 
 /** A tappable count at the top of the page. Tapping narrows the list to it. */
@@ -1870,7 +1926,7 @@ function StageFilterButton({
 function FlagBadge({ tone, label }: { tone: keyof typeof PILL_TONE; label: string }) {
   return (
     <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${PILL_TONE[tone].idle}`}>
-      {tone === "gray" ? <Users className="w-3 h-3" /> : <Flag className="w-3 h-3" />}
+      {tone === "gray" ? <Users className="w-3 h-3" /> : tone === "green" ? <Check className="w-3 h-3" /> : <Flag className="w-3 h-3" />}
       {label}
     </span>
   );

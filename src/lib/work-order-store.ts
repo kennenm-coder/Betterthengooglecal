@@ -2022,3 +2022,102 @@ export async function updateWriteUpLineItems(id: string, lineItems: WriteUpLineI
   invalidateWriteUpsCache();
   return true;
 }
+
+// ─── Crew check-off from the service tile (migration 054) ───────────────────
+// Installers can't update a write-up row directly — only through these two
+// database functions, which change exactly one thing and stamp WHO did it from
+// the login itself. Field managers and admins use the same path from the tile
+// so every check-off reads the same way.
+
+export type WorkSource = { rowId: string; index: number };
+
+/** Check off (or uncheck) one work item on one or more unit rows. */
+export async function crewSetItemsDone(
+  sources: WorkSource[],
+  done: boolean
+): Promise<{ ok: boolean; error: string | null }> {
+  const supabase = getSupabase();
+  if (!supabase) return { ok: false, error: "Not signed in." };
+  const { error } = await supabase.rpc("writeup_crew_set_done", { p_sources: sources, p_done: done });
+  if (error) {
+    console.error("writeup_crew_set_done failed:", error);
+    return { ok: false, error: error.message };
+  }
+  invalidateWriteUpsCache();
+  return { ok: true, error: null };
+}
+
+/**
+ * "Not complete": record why, and add any photos / trim / parts to the same
+ * write-up. Photos upload first; the reason is what matters, so a photo that
+ * fails to upload is skipped rather than failing the report.
+ */
+export async function crewMarkNotComplete(input: {
+  sources: WorkSource[];
+  reason: string;
+  orderNumber: string;
+  unitLabel: string | null;
+  /** The work item's stored seq — stamped on the photos and materials so they
+   *  sit under that item and drop out of the buy list once it's done. */
+  workSeq?: number;
+  photos: EntryPhoto[];
+  materials: WriteUpMaterialItem[];
+}): Promise<{ ok: boolean; error: string | null }> {
+  const supabase = getSupabase();
+  if (!supabase) return { ok: false, error: "Not signed in." };
+  const seq = input.workSeq != null ? { workSeq: input.workSeq } : {};
+  const photos = await resolveEntryPhotos(
+    input.orderNumber,
+    input.unitLabel,
+    input.photos.map((p) => ({ ...p, ...seq }))
+  );
+  const materials = input.materials.map((m) => ({ ...m, ...seq }));
+  const { error } = await supabase.rpc("writeup_crew_not_complete", {
+    p_sources: input.sources,
+    p_reason: input.reason,
+    p_photos: photos,
+    p_materials: materials,
+  });
+  if (error) {
+    console.error("writeup_crew_not_complete failed:", error);
+    return { ok: false, error: error.message };
+  }
+  invalidateWriteUpsCache();
+  return { ok: true, error: null };
+}
+
+/** Email for a "Not complete" report — same inbox as a submitted write-up. */
+export function buildNotCompleteEmailContent(input: {
+  orderNumber: string;
+  customerName: string;
+  address: string;
+  itemTitle: string;
+  reason: string;
+  byEmail: string;
+  materials: WriteUpMaterialItem[];
+  photoCount: number;
+  docLink: string;
+}): { subject: string; body: string } {
+  const subject = `Work NOT complete - ${input.customerName || ""} - ${input.orderNumber}`;
+  const lines = [
+    "Write-up work was marked NOT complete in the field:",
+    "",
+    `Customer: ${input.customerName || "—"}`,
+    `Job #: ${input.orderNumber}`,
+    `Reported by: ${input.byEmail.split("@")[0]} <${input.byEmail}>`,
+  ];
+  if (input.address) lines.push(`Address: ${input.address}`);
+  lines.push("", `Work item: ${input.itemTitle}`, `Why it wasn't finished: ${input.reason}`);
+  if (input.materials.length) {
+    lines.push("", "Now needs:");
+    for (const m of input.materials)
+      lines.push(
+        `   - ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${m.partNumber ? ` #${m.partNumber}` : ""}${
+          m.lengths ? ` ${m.lengths}` : ""
+        }${m.vendor ? ` (${m.vendor})` : ""}`
+      );
+  }
+  if (input.photoCount) lines.push("", `${input.photoCount} photo(s) added to the write-up`);
+  lines.push("", "View the full write-up (Duck Force sign-in required):", input.docLink);
+  return { subject, body: lines.join("\n") };
+}

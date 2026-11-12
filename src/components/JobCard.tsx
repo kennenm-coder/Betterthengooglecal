@@ -36,6 +36,7 @@ import { upsertLegacyLink, deleteLegacyLink } from "@/lib/store";
 import { useData } from "./DataProvider";
 import { parseISO, isSameDay } from "date-fns";
 import { describeParts } from "@/lib/purchase-orders";
+import CrewWorkChecklist from "./CrewWorkChecklist";
 
 function isValidHttpUrl(s: string): boolean {
   try {
@@ -423,13 +424,23 @@ export default function JobCard({
               </InfoRow>
             )}
 
-            {order.workOrderType === "Service" && order.serviceDescription && (
+            {/* The write-ups' work to complete replaces the service description
+                when there is any; the description is the fallback. */}
+            {order.workOrderType === "Service" && writeUpRefs.length === 0 && order.serviceDescription && (
               <InfoRow icon={ClipboardList} label="Service Details">
                 <span className="text-foreground">{order.serviceDescription}</span>
               </InfoRow>
             )}
 
           </div>
+
+          {/* Work to complete from the write-ups at this address, with a
+              checkbox per item for the crew (three choices per tap). */}
+          {order.workOrderType === "Service" && writeUpRefs.length > 0 && (
+            <div className="mt-3">
+              <CrewWorkChecklist ids={writeUpRefs.map((r) => r.id)} onChanged={refreshActiveWriteUps} />
+            </div>
+          )}
 
           {/* Customer contact — phone and email come from the bill-to contact,
               so they sat directly under the crew rows and read as the measure

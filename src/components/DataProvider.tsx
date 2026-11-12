@@ -38,7 +38,7 @@ import {
 } from "@/lib/purchase-orders";
 import { addressKey } from "@/lib/address-match";
 import { useAuth } from "@/hooks/useAuth";
-import { canEditLegacyLink, canSeeMeasureTiles, canSeeWriteUps } from "@/lib/roles";
+import { canCheckOffWriteUps, canEditLegacyLink, canSeeMeasureTiles, canSeeWriteUps } from "@/lib/roles";
 import { getSupabase } from "@/lib/supabase";
 
 const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"]);
@@ -451,7 +451,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
   // Only the roles that can open a write-up pull the index; for everyone else
   // the lookup answers empty and service tiles fall back to the legacy link.
-  const canViewWriteUps = canSeeWriteUps(roles);
+  // Crews (installers, leads) pull it too: they check write-up work off from
+  // the service tile (migration 054).
+  const canViewWriteUps = canSeeWriteUps(roles) || canCheckOffWriteUps(roles);
   useEffect(() => {
     if (!canViewWriteUps) return;
     refreshActiveWriteUps();

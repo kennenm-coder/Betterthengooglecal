@@ -160,6 +160,14 @@ export interface MaterialUnit {
 // --- Field Write-Ups (post-install work orders) ---
 
 /** A single line of work requested in a write-up. */
+/** One "Not complete" report on a work item (migration 054). */
+export interface WorkAttempt {
+  by: string;
+  byName: string;
+  at: string;
+  reason: string;
+}
+
 export interface WriteUpLineItem {
   /** "preset" = picked from the preset chips, "custom" = free-typed. */
   kind: "preset" | "custom";
@@ -168,6 +176,15 @@ export interface WriteUpLineItem {
   /** Field-installed. Distinct from `reviewed` — this means the work is
    *  physically done. Closing a write-up completes all items. */
   completed?: boolean;
+  /** Who checked it off and when — the account, not a typed name. Set by the
+   *  crew check-off (migration 054) and by the Write-Ups page. Absent on items
+   *  checked before either recorded it. */
+  completedBy?: string;
+  completedByName?: string;
+  completedAt?: string;
+  /** "Not complete" reports from the field, oldest first: who tried, when,
+   *  and why it couldn't be finished. The item stays open. */
+  attempts?: WorkAttempt[];
   /** Office-reviewed: someone checked this item and uploaded it to the system.
    *  When every item is reviewed, the write-up moves In Review → Open. */
   reviewed?: boolean;

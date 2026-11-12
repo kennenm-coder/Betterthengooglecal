@@ -153,6 +153,21 @@ export function canReviewWriteUps(roles: RoleInput): boolean {
 }
 
 /**
+ * Who checks off write-up work from a service tile and its Active Write-Ups
+ * page — the three-choice popup (complete / complete + more issues / not
+ * complete). Crews on any job, not just their own. Mirrors the role list in
+ * writeup_crew_set_done() and the insert policy in migration 054.
+ */
+export function canCheckOffWriteUps(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "field-manager", "installer", "installer-lead"]);
+}
+
+/** Who can uncheck someone else's check-off. Anyone can undo their own. */
+export function canUndoAnyCheckOff(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "field-manager"]);
+}
+
+/**
  * Who can even SEE the Write-Ups tab. Admin + field-manager get full access;
  * scheduling + scheduling-manager get VIEW-ONLY (read, copy, download/print) —
  * they can't create, edit, review, delete, or toggle completion (gated by

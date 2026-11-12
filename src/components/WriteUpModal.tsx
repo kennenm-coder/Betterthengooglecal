@@ -44,7 +44,11 @@ import {
   getSignedPhotoUrl,
   WriteUpEntryInput,
   fetchMaterialCatalog,
+  crewMarkNotComplete,
+  buildNotCompleteEmailContent,
+  type WorkSource,
 } from "@/lib/work-order-store";
+import { canDoFieldWork } from "@/lib/roles";
 import type { MaterialCatalog } from "@/lib/nwo-builder";
 import { familyMatcher, isUniversalType } from "@/lib/product-family";
 import { autoVendorFor, isInHouse, isOrderable } from "@/lib/trim-vendor";
@@ -118,6 +122,31 @@ interface Props {
    * JobReferencePanel.
    */
   reference?: React.ReactNode;
+  /** Opened from a crew check-off on a service tile (migration 054) instead of
+   *  the Write-Up button. See CrewMode. */
+  crew?: CrewMode;
+}
+
+/**
+ * The two crew screens behind the three-choice popup on a service tile:
+ *  - "followup": "Complete, found more issues" - a slimmed-down write-up (what's
+ *    wrong, units, work items with trim/parts/photos). Saves as a NEW write-up.
+ *  - "notComplete": the item stays open; records why, plus optional trim,
+ *    parts and photos, all on the SAME write-up.
+ * Responsibility, crews, financing, paint and spec changes stay office-only.
+ */
+export interface CrewMode {
+  kind: "followup" | "notComplete";
+  /** How the item reads to people, e.g. "Write-up 1 · 003 Replace casing — 101". */
+  itemTitle: string;
+  /** Keeps each item's half-finished form apart in local drafts. */
+  itemKey: string;
+  /** notComplete: the line items being reported on. */
+  sources?: WorkSource[];
+  /** notComplete: the unit row the trim/parts/photos land on. */
+  unitLabel?: string | null;
+  /** notComplete: the item's stored seq, stamped on the new trim/parts/photos. */
+  workSeq?: number;
 }
 
 interface LocalPhoto {
@@ -436,8 +465,11 @@ function specEntriesFromChanges(changes: SpecChange[]): SpecEntry[] {
   });
 }
 
-export default function WriteUpModal({ order, units, onClose, onSaved, editWriteUp, editBatch, reference }: Props) {
-  const { user, autoCc } = useAuth();
+export default function WriteUpModal({ order, units, onClose, onSaved, editWriteUp, editBatch, reference, crew }: Props) {
+  const { user, autoCc, roles } = useAuth();
+  // A crew form keeps its local draft apart from a normal write-up on the job.
+  const draftKey = crew ? `crew-${crew.kind}:${order.orderNumber}:${crew.itemKey}` : order.orderNumber;
+  const isNotComplete = crew?.kind === "notComplete";
   const isBatchEdit = !!editBatch && editBatch.length > 0;
   // The old single-row flat editor only applies when NOT doing a guided batch edit.
   const isEditing = !!editWriteUp && !isBatchEdit;
@@ -583,7 +615,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   useEffect(() => {
     if (isEditing || isBatchEdit) return; // editing doesn't use the local draft system
     let cancelled = false;
-    loadDraft(order.orderNumber).then((d) => {
+    loadDraft(draftKey).then((d) => {
       if (cancelled) return;
       const hasContent =
         d &&
@@ -1373,6 +1405,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     });
     // Background + notes go on the whole-job row.
     const noteParts = [
+      crew?.kind === "followup" ? `Follow-up to ${crew.itemTitle}` : "",
       background.trim(),
       financingNotes.trim() ? `Financing notes: ${financingNotes.trim()}` : "",
       paintStainNotes.trim() ? `Paint & stain notes: ${paintStainNotes.trim()}` : "",
@@ -1460,7 +1493,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     setDraftReady(true);
   }
   async function discardDraft() {
-    await clearDraft(order.orderNumber);
+    await clearDraft(draftKey);
     setPendingDraft(null);
     setBackground("");
     setFinancingNotes("");
@@ -1475,7 +1508,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   function buildDraftNow(): WriteUpDraft | null {
     if (!createHasContent) return null;
     return {
-      orderNumber: order.orderNumber,
+      orderNumber: draftKey,
       updatedAt: new Date().toISOString(),
       background,
       financingNotes,
@@ -1512,7 +1545,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     if (isEditing || isBatchEdit || !draftReady || submitting || submitLockRef.current) return;
     const d = buildDraftNow();
     if (d) saveDraft(d);
-    else clearDraft(order.orderNumber);
+    else clearDraft(draftKey);
   };
 
   // Flush immediately when the app is backgrounded or closed (crash-safe-ish).
@@ -1540,7 +1573,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       if (submitLockRef.current) return;
       const d = buildDraftNow();
       if (!d) {
-        clearDraft(order.orderNumber);
+        clearDraft(draftKey);
         return;
       }
       saveDraft(d);
@@ -1674,7 +1707,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     onClose();
   }
   async function discardAndClose() {
-    await clearDraft(order.orderNumber);
+    await clearDraft(draftKey);
     onClose();
   }
 
@@ -1739,7 +1772,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       return;
     }
 
-    await clearDraft(order.orderNumber);
+    await clearDraft(draftKey);
     autoAddToCatalogs();
 
     // Trim that needs ordering opens a standalone order in the trim ordering
@@ -1752,6 +1785,10 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       // JIP or Service is decided on the server; ask now so the trim order
       // handed over below can print it (lib/writeup-kind.ts).
       requestWriteUpKindStamp(order.orderNumber);
+    }
+    // An installer can't open trim orders (that queue is field-manager and
+    // office only), so a crew follow-up leaves the trim for the office to send.
+    if (startStatus !== "draft" && (!crew || canDoFieldWork(roles))) {
       handoff = await sendTrimToOrdering({
         orderNumber: order.orderNumber,
         customerName: order.customerName,
@@ -1790,6 +1827,87 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     // A repeat trim order on this job — or trim that failed to go over at all —
     // is something to read, not a 1.5s flash: that dialog waits to be dismissed
     // instead of closing itself.
+    const holdOpen = !!handoff && (handoffFailed(handoff) || handoff.sequence > 1);
+    if (!holdOpen) setTimeout(() => onClose(), 1500);
+  }
+
+  /** "Not complete": record why on the item and add any trim / parts / photos
+   *  to the same write-up, then email the usual write-up inbox. */
+  async function submitNotComplete() {
+    if (!crew || crew.kind !== "notComplete" || !crew.sources?.length) return;
+    if (submitLockRef.current) return;
+    const reason = background.trim();
+    if (!reason) {
+      setError("Say why it wasn't finished.");
+      return;
+    }
+    submitLockRef.current = true;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setSubmitting(true);
+    setError("");
+    let materials: WriteUpMaterialItem[] = [];
+    let photos: WriteUpEntryInput["photos"] = [];
+    let res: { ok: boolean; error: string | null };
+    try {
+      const { mergedIssues } = flushAdders();
+      // One whole-job item named after the work being reported on, so the
+      // shared builder turns its lists into trim + part lines the usual way.
+      const inputs = buildInputs(mergedIssues.slice(0, 1).map((it) => ({ ...it, label: crew.itemTitle, unitKeys: [] })));
+      materials = inputs.flatMap((i) => i.materialItems);
+      photos = inputs.flatMap((i) => i.photos);
+      res = await crewMarkNotComplete({
+        sources: crew.sources,
+        reason,
+        orderNumber: order.orderNumber,
+        unitLabel: crew.unitLabel ?? null,
+        workSeq: crew.workSeq,
+        photos,
+        materials,
+      });
+    } catch (err) {
+      res = { ok: false, error: err instanceof Error ? err.message : "Unexpected error" };
+    }
+    if (!res.ok) {
+      submitLockRef.current = false;
+      setSubmitting(false);
+      setError(`Couldn't save: ${res.error || "unknown error"} — nothing was lost, try again.`);
+      return;
+    }
+    await clearDraft(draftKey);
+
+    let handoff: TrimHandoff | null = null;
+    if (canDoFieldWork(roles) && materials.length) {
+      handoff = await sendTrimToOrdering({
+        orderNumber: order.orderNumber,
+        customerName: order.customerName,
+        materials,
+      });
+      if (handoff) setTrimOrder(handoff);
+    }
+
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    const docLink = `${origin}/work-orders/${encodeURIComponent(order.orderNumber)}`;
+    const toEmails = await getWriteUpEmails();
+    const { to, cc } = dedupeRecipients(toEmails.length ? toEmails : [WRITEUP_EMAIL_TO], autoCc);
+    const { subject, body } = buildNotCompleteEmailContent({
+      orderNumber: order.orderNumber,
+      customerName: order.customerName,
+      address: order.address,
+      itemTitle: crew.itemTitle,
+      reason,
+      byEmail: user?.email || "",
+      materials,
+      photoCount: photos.length,
+      docLink,
+    });
+    const sent = await sendWriteUpNotify(to, cc, subject, body);
+    onSaved?.();
+    if (!sent.ok) {
+      setEmailFailed({ to, cc, subject, body });
+      setError(sent.error ? `Reason: ${sent.error}` : "");
+      return;
+    }
+    setSentOk("emailed");
     const holdOpen = !!handoff && (handoffFailed(handoff) || handoff.sequence > 1);
     if (!holdOpen) setTimeout(() => onClose(), 1500);
   }
@@ -1960,7 +2078,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
               <Check className="w-8 h-8 text-green-600" />
             </div>
             <p className="font-semibold">
-              {sentOk === "updated" ? "Changes saved" : "Write-up submitted"}
+              {sentOk === "updated" ? "Changes saved" : isNotComplete ? "Saved — still open" : "Write-up submitted"}
             </p>
             <p className="text-xs text-muted mt-1 flex items-center justify-center gap-1.5">
               {sentOk === "emailed" ? (
@@ -2141,9 +2259,16 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
             <Wrench className="w-5 h-5 text-amber-600 shrink-0" />
             <div className="min-w-0">
               <h2 className="text-base font-semibold leading-tight">
-                {isEditing || isBatchEdit ? "Edit Write-Up" : "Write-Up"}
+                {isEditing || isBatchEdit
+                  ? "Edit Write-Up"
+                  : crew?.kind === "followup"
+                    ? "Follow-Up Write-Up"
+                    : isNotComplete
+                      ? "Not Complete"
+                      : "Write-Up"}
               </h2>
               <p className="text-xs text-muted leading-tight truncate">
+                {crew ? `${crew.itemTitle} · ` : ""}
                 {order.customerName} · #{order.orderNumber}
                 {savedTick && <span className="text-green-600"> · saved</span>}
               </p>
@@ -2256,11 +2381,65 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 />
               </section>
             </>
+          ) : isNotComplete ? (
+            /* ── Crew "Not complete": why, plus anything it now needs ── */
+            <>
+              <section>
+                <SectionLabel step={1}>Why wasn&apos;t it finished?</SectionLabel>
+                <AutoGrowTextarea
+                  value={background}
+                  onChange={(e) => setBackground(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. Wrong size casing on the truck, homeowner wasn't home…"
+                  className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-3 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                />
+                <p className="text-[11px] text-muted mt-1">
+                  The item stays open on the same write-up. This note is saved with your name and emailed to the office.
+                </p>
+              </section>
+              {issues[0] && (
+                <section className="space-y-3">
+                  <SectionLabel step={2}>Does it need anything ordered now?</SectionLabel>
+                  <p className="text-[11px] text-muted -mt-2">Optional. Added to this write-up&apos;s materials.</p>
+                  <MaterialSection
+                    materials={listsAt(issues[0], WHOLE_JOB_LIST).materials}
+                    onChange={(m) =>
+                      setIssueLists(issues[0].id, WHOLE_JOB_LIST, { materials: m, parts: listsAt(issues[0], WHOLE_JOB_LIST).parts })
+                    }
+                    catalog={catalog}
+                    materialCatalog={materialCatalog}
+                    colorOptions={trimOptions ? [...trimOptions.colors, ...trimOptions.stains] : []}
+                    speciesOptions={trimOptions?.species || []}
+                    vendorOptions={vendorOptions}
+                    onRegisterFlush={(fn) => registerFlush(`mat:${issues[0].id}|${WHOLE_JOB_LIST}`, fn)}
+                  />
+                  <PartsPicker
+                    parts={listsAt(issues[0], WHOLE_JOB_LIST).parts}
+                    catalog={partsCatalog}
+                    bundles={partsBundles}
+                    affectedUnits={[]}
+                    pinUnits={false}
+                    unitTitle={unitTitle}
+                    onChange={(parts) =>
+                      setIssueLists(issues[0].id, WHOLE_JOB_LIST, { materials: listsAt(issues[0], WHOLE_JOB_LIST).materials, parts })
+                    }
+                    onRegisterFlush={(fn) => registerFlush(`parts:${issues[0].id}|${WHOLE_JOB_LIST}`, fn)}
+                  />
+                  <PhotoSection
+                    photos={issues[0].photos}
+                    onOpenCamera={() => openCamera({ kind: "issue", issueId: issues[0].id })}
+                    onUpload={(files) => addPhotosTo({ kind: "issue", issueId: issues[0].id }, files)}
+                    onRemove={(pid) => removeIssuePhoto(issues[0].id, pid)}
+                  />
+                </section>
+              )}
+            </>
           ) : (
             /* ── Create: flat top-level flow ── */
             <>
               {/* 1. What's wrong + notes */}
               <section className="space-y-3">
+                {!crew && (<>
                 <div>
                   <label className="text-xs text-muted block mb-1">Responsibility</label>
                   <div className="flex flex-wrap gap-2">
@@ -2301,6 +2480,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                     </select>
                   </div>
                 )}
+                </>)}
                 <div>
                   <SectionLabel step={1}>What&apos;s wrong?</SectionLabel>
                   <AutoGrowTextarea
@@ -2311,6 +2491,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                     className="w-full mt-2 rounded-lg border border-border bg-background px-3 py-3 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
                   />
                 </div>
+                {!crew && (<>
                 <div>
                   <label className="text-xs text-muted block mb-1">Who could do this work?</label>
                   <AutoGrowTextarea
@@ -2345,6 +2526,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                     className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
                   />
                 </div>
+                </>)}
               </section>
 
               {/* 2. Units affected — pick units, opt into spec changes per unit */}
@@ -2396,7 +2578,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                             />
                           </>
                         )}
-                        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
+                        {!crew && <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
                           <input
                             type="checkbox"
                             checked={u.hasSpecChange}
@@ -2404,7 +2586,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                             className="w-4 h-4 accent-amber-500"
                           />
                           Spec change needed on this unit
-                        </label>
+                        </label>}
                         {u.hasSpecChange && (
                           <div className="pt-1">
                             <UnitSpecSection
@@ -2563,10 +2745,28 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 </>
               )}
             </button>
+          ) : isNotComplete ? (
+            <button
+              onClick={submitNotComplete}
+              disabled={submitting || !background.trim()}
+              className="w-full py-4 rounded-xl bg-amber-500 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.99] transition-transform"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Send className="w-5 h-5" />
+                  Save &amp; Email
+                </>
+              )}
+            </button>
           ) : (
             <>
               <div className="flex gap-2">
-                <button
+                {!crew && <button
                   onClick={() => submitWriteUp(false, "draft")}
                   disabled={submitting || !editorHasContent}
                   className="shrink-0 px-4 py-4 rounded-xl border-2 border-amber-500 text-amber-600 font-semibold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.99] transition-transform"
@@ -2574,7 +2774,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 >
                   <Check className="w-5 h-5" />
                   Save draft
-                </button>
+                </button>}
                 <button
                   onClick={() => submitWriteUp(true, "in_review")}
                   disabled={submitting || totalUnits === 0}
@@ -2594,7 +2794,13 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
                 </button>
               </div>
               <p className="text-[11px] text-muted text-center mt-1.5">
-                <strong>Save draft</strong> keeps it as a draft · <strong>Submit</strong> sends it for review.
+                {crew ? (
+                  <>Saves as a new write-up for the office to review.</>
+                ) : (
+                  <>
+                    <strong>Save draft</strong> keeps it as a draft · <strong>Submit</strong> sends it for review.
+                  </>
+                )}
               </p>
             </>
           )}

@@ -21,6 +21,7 @@ import { mergeLengths } from "./lengths";
 import {
   FieldWorkOrder,
   SpecChange,
+  WorkAttempt,
   WriteUpMaterialItem,
   WriteUpNewProduct,
   WriteUpPhoto,
@@ -34,6 +35,10 @@ import {
 export interface WorkItemUnitState {
   unitLabel: string;
   completed: boolean;
+  /** Who checked this unit off and when (latest stamp across its sources). */
+  completedBy?: string;
+  completedByName?: string;
+  completedAt?: string;
   sources: { rowId: string; index: number }[];
 }
 
@@ -54,6 +59,12 @@ export interface NumberedWorkItem {
   /** Who last reviewed it + when (for the Write-Ups tab attribution). */
   reviewedByName?: string;
   reviewedAt?: string;
+  /** Who checked the LAST unit off and when — the stamp for the item as a whole. */
+  completedByName?: string;
+  completedAt?: string;
+  /** "Not complete" reports from the field, oldest first, deduplicated across
+   *  the rows the item fans out to. */
+  attempts: WorkAttempt[];
   /** The exact line items this collapses to, so the review action can flip
    *  them across every affected row. */
   sources: { rowId: string; index: number }[];
@@ -222,12 +233,15 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
       notes?: string;
       units: Set<string>;
       /** Per-unit tally, keyed by unit label, in the order the units appear. */
-      byUnit: Map<string, { total: number; done: number; sources: { rowId: string; index: number }[] }>;
+      byUnit: Map<string, { total: number; done: number; by?: string; byName?: string; at?: string; sources: { rowId: string; index: number }[] }>;
       total: number;
       done: number;
       reviewed: number;
       reviewedByName?: string;
       reviewedAt?: string;
+      completedByName?: string;
+      completedAt?: string;
+      attempts: Map<string, WorkAttempt>;
       sources: { rowId: string; index: number }[];
       order: number;
     }
@@ -239,7 +253,7 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
         const gkey = li.seq != null ? `s:${li.seq}` : `l:${li.label.trim().toLowerCase()}`;
         let g = groups.get(gkey);
         if (!g) {
-          g = { seq: li.seq, label: li.label, notes: li.notes, units: new Set(), byUnit: new Map(), total: 0, done: 0, reviewed: 0, sources: [], order: appearance++ };
+          g = { seq: li.seq, label: li.label, notes: li.notes, units: new Set(), byUnit: new Map(), total: 0, done: 0, reviewed: 0, attempts: new Map(), sources: [], order: appearance++ };
           groups.set(gkey, g);
         }
         g.units.add(unit);
@@ -249,7 +263,20 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
           g.byUnit.set(unit, bu);
         }
         bu.total += 1;
-        if (li.completed) bu.done += 1;
+        if (li.completed) {
+          bu.done += 1;
+          if (li.completedAt && (!bu.at || li.completedAt > bu.at)) {
+            bu.at = li.completedAt;
+            bu.by = li.completedBy;
+            bu.byName = li.completedByName || li.completedBy;
+          }
+          if (li.completedAt && (!g.completedAt || li.completedAt > g.completedAt)) {
+            g.completedAt = li.completedAt;
+            g.completedByName = li.completedByName || li.completedBy;
+          }
+        }
+        // The same report is written to every row the item fans out to.
+        for (const a of li.attempts || []) g.attempts.set(`${a.at}|${a.by}|${a.reason}`, a);
         bu.sources.push({ rowId: row.id, index });
         g.total += 1;
         if (li.completed) g.done += 1;
@@ -279,12 +306,18 @@ export function groupWriteUpSections(writeUps: FieldWorkOrder[]): WriteUpSection
       unitStates: [...g.byUnit.entries()].map(([unitLabel, u]) => ({
         unitLabel,
         completed: u.total > 0 && u.done === u.total,
+        completedBy: u.by,
+        completedByName: u.byName,
+        completedAt: u.at,
         sources: u.sources,
       })),
       completed: g.total > 0 && g.done === g.total,
       reviewed: g.total > 0 && g.reviewed === g.total,
       reviewedByName: g.reviewedByName,
       reviewedAt: g.reviewedAt,
+      completedByName: g.completedByName,
+      completedAt: g.completedAt,
+      attempts: [...g.attempts.values()].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)),
       sources: g.sources,
     }));
 
@@ -444,6 +477,13 @@ export function jobMaterialTotal(sections: WriteUpSection[]): JobMaterialLine[] 
 /** "W1, W3" — which write-ups a total line came from. */
 export function writeUpRefs(nums: number[]): string {
   return nums.map((n) => `W${n}`).join(", ");
+}
+
+/** Every work item is checked off but nobody has closed the write-up yet —
+ *  it waits on the Write-Ups page for someone to look it over and close it.
+ *  Nothing closes on its own (Kennen's call, 2026-11-12). */
+export function isReadyToClose(section: WriteUpSection): boolean {
+  return (section.status === "open" || section.status === "in_review") && isSectionDone(section);
 }
 
 /** A write-up is done when it is Closed, or when every work item on it is

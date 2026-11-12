@@ -347,7 +347,16 @@ checks(migration, feature, verdict, checked) as (values
         and exists(select 1 from col where k = 'field_work_orders.writeup_kind_detail')
         and exists(select 1 from col where k = 'field_work_orders.writeup_kind_at')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'the writeup_kind, writeup_kind_detail and writeup_kind_at columns')
+  'the writeup_kind, writeup_kind_detail and writeup_kind_at columns'),
+
+ ('054', 'crew check-off from the service tile',
+  case when exists(select 1 from fn where k = 'writeup_crew_set_done')
+        and exists(select 1 from fn where k = 'writeup_crew_not_complete')
+        and exists(select 1 from pol where t = 'field_work_orders'
+                     and p = 'field_workers_insert_field_work_orders' and body like '%installer%')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'both crew functions AND installer in the write-up insert policy — the '
+  'functions alone would leave installers unable to file a follow-up')
 )
 select migration, feature, verdict, checked
 from checks

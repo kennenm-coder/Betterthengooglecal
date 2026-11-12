@@ -12,7 +12,8 @@ import { addressKey } from "@/lib/address-match";
 import WriteUpDocView from "@/components/WriteUpDocView";
 import { useData } from "@/components/DataProvider";
 import { useAuth } from "@/hooks/useAuth";
-import { canSeeWriteUps } from "@/lib/roles";
+import { canCheckOffWriteUps, canSeeWriteUps } from "@/lib/roles";
+import CrewWorkChecklist from "@/components/CrewWorkChecklist";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
 /**
@@ -47,7 +48,9 @@ function AddressWriteUps() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { roles, loading: authLoading } = useAuth();
-  const { activeWriteUpsAt } = useData();
+  const { activeWriteUpsAt, refreshActiveWriteUps } = useData();
+  // Bumped after a check-off, so the doc below re-reads what changed.
+  const [reloadTick, setReloadTick] = useState(0);
   // Joined string, so the effect keys off the numbers rather than a new array.
   const excludeKey = searchParams.get("exclude") || "";
   const [writeUps, setWriteUps] = useState<FieldWorkOrder[]>([]);
@@ -55,7 +58,10 @@ function AddressWriteUps() {
   const [loading, setLoading] = useState(true);
 
   const address = decodeURIComponent(String(params.addr || ""));
-  const canView = canSeeWriteUps(roles);
+  // Crews (installers, leads) open this page from the service tile to check
+  // work off, so they can view it too (migration 054).
+  const canView = canSeeWriteUps(roles) || canCheckOffWriteUps(roles);
+  const canCheck = canCheckOffWriteUps(roles);
 
   // The ids the calendar already knows about. Joined into a string so the
   // effect keys off the actual ids rather than a fresh array each render.
@@ -113,7 +119,7 @@ function AddressWriteUps() {
     return () => {
       cancelled = true;
     };
-  }, [address, authLoading, canView, knownIds, excludeKey]);
+  }, [address, authLoading, canView, knownIds, excludeKey, reloadTick]);
 
   if (authLoading) {
     return (
@@ -178,6 +184,19 @@ function AddressWriteUps() {
         </>
       }
       caveat={
+        <>
+        {canCheck && (
+          <div className="mb-5 no-print">
+            <CrewWorkChecklist
+              ids={writeUps.map((w) => w.id)}
+              heading="Check off work"
+              onChanged={() => {
+                refreshActiveWriteUps();
+                setReloadTick((n) => n + 1);
+              }}
+            />
+          </div>
+        )}
         <div className="mb-5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-3 flex items-start gap-2.5">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-700" />
           <div className="text-xs leading-relaxed text-amber-800">
@@ -189,6 +208,7 @@ function AddressWriteUps() {
             }. They are not necessarily specific to the work order you were assigned — check with your manager before working anything that isn't on your own order.`}
           </div>
         </div>
+        </>
       }
     />
   );
