@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useBackClose, overlayKeyHere, readPageState, savePageState } from "@/hooks/useBackClose";
 import { useData } from "@/components/DataProvider";
 import OrderSheet from "@/components/OrderSheet";
 import BottomNav from "@/components/BottomNav";
@@ -13,6 +14,8 @@ import { useRouter } from "next/navigation";
 import { isSameDay, parseISO } from "date-fns";
 
 const MAX_RESULTS = 50;
+/** History-entry slot that keeps the search text for the back button. */
+const SEARCH_STATE = "searchQ";
 
 export default function SearchPage() {
   // Use material jobs already loaded by DataProvider — no extra fetch.
@@ -55,18 +58,66 @@ export default function SearchPage() {
 
   const totalResults = orderResults.length + jobResults.length;
 
+  // Coming back (back button) from a page opened inside a result's tile —
+  // install instructions, write-ups — puts the search and the open tile back
+  // instead of a blank page. The search text rides on this page's history
+  // entry; the open tile's entry names the job (see useBackClose).
+  const inputRef = useRef<HTMLInputElement>(null);
+  const arrivalKey = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const saved = readPageState(SEARCH_STATE);
+    if (typeof saved === "string" && saved) {
+      // Restoring history into React on mount — intentional setState.
+      setQuery(saved);
+    } else {
+      inputRef.current?.focus();
+    }
+  }, []);
+
+  // Save the text a moment after typing stops (browsers cap how often a page
+  // may rewrite its history entry).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        savePageState(SEARCH_STATE, query);
+      } catch {
+        /* history write refused — losing the restore is harmless */
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  useEffect(() => {
+    if (arrivalKey.current === undefined) arrivalKey.current = overlayKeyHere();
+    const key = arrivalKey.current;
+    if (!key) return;
+    if (key.startsWith("order:")) {
+      if (searchable.length === 0) return;
+      arrivalKey.current = null;
+      const match = searchable.find((o) => o.id === key.slice("order:".length));
+      if (match) setSelectedOrder(match);
+    } else if (key.startsWith("job:")) {
+      if (materialJobs.length === 0) return;
+      arrivalKey.current = null;
+      const match = materialJobs.find((j) => j.id === key.slice("job:".length));
+      if (match) setSelectedJob(match);
+    } else {
+      arrivalKey.current = null;
+    }
+  }, [searchable, materialJobs]);
+
   return (
     <div className="flex flex-col h-full">
       <header className="bg-background border-b border-border px-3 py-3 z-20">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted" />
           <input
+            ref={inputRef}
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by name, WO#, address, or order#..."
             className="w-full pl-10 pr-10 py-2.5 rounded-lg border border-border bg-surface text-sm placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
-            autoFocus
           />
           {query && (
             <button
@@ -308,6 +359,7 @@ function MaterialJobSheet({
   onClose: () => void;
   onOpenInstall: (id: string) => void;
 }) {
+  useBackClose(onClose, { key: `job:${job.id}` });
   const unitCount = job.units.length;
 
   return (

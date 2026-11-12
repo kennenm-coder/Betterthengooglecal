@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense, useState, useMemo, useCallback, useEffect } from "react";
+import { Suspense, useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { overlayKeyHere } from "@/hooks/useBackClose";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useData } from "@/components/DataProvider";
 import DayView from "@/components/DayView";
@@ -114,8 +115,21 @@ function CalendarPage() {
   const [selectedOrder, setSelectedOrder] = useState<WorkOrder | null>(null);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
 
-  // Restore OrderSheet when returning from install instructions page.
-  // The setState here is intentional — we sync URL state into React on mount.
+  // Reopen the tile when the user comes back (back button) from a page opened
+  // inside it — install instructions, write-ups. They land on the tile's own
+  // history entry, which names the order. Read once, on the first pass with
+  // orders loaded. The setState here is intentional — syncing history into React.
+  const arrivalKey = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (arrivalKey.current === undefined) arrivalKey.current = overlayKeyHere();
+    const key = arrivalKey.current;
+    if (!key?.startsWith("order:") || orders.length === 0) return;
+    arrivalKey.current = null;
+    const match = orders.find((o) => o.id === key.slice("order:".length));
+    if (match) setSelectedOrder(match);
+  }, [orders]);
+
+  // Older links that name the order in the address (?order=123).
   useEffect(() => {
     const orderId = searchParams.get("order");
     if (orderId && orders.length > 0) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useBackClose } from "@/hooks/useBackClose";
 import { addDays, format } from "date-fns";
 import { X, Download, Truck, Sunrise, Info, Trash2 } from "lucide-react";
 import { useData } from "./DataProvider";
@@ -27,6 +28,7 @@ function parseLocalDate(value: string): Date {
 }
 
 export default function LoadingScheduleModal({ onClose }: { onClose: () => void }) {
+  useBackClose(onClose);
   const { orders } = useData();
   const [dateStr, setDateStr] = useState(defaultDateISO());
   const [rows, setRows] = useState<LoadingRow[] | null>(null);

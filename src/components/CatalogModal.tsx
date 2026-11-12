@@ -18,6 +18,7 @@
 // email. See lib/catalog-photo.ts.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useBackClose } from "@/hooks/useBackClose";
 import {
   PartsCatalogItem,
   PartsBundle,
@@ -49,6 +50,7 @@ const TABS: { key: Tab; label: string; icon: typeof Package }[] = [
 ];
 
 export default function CatalogModal({ onClose }: { onClose: () => void }) {
+  useBackClose(onClose);
   const [tab, setTab] = useState<Tab>("parts");
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>

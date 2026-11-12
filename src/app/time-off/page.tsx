@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, Suspense } from "react";
+import { useBackClose } from "@/hooks/useBackClose";
 import { useRouter, useSearchParams } from "next/navigation";
 import { TimeOffRequest, Employee } from "@/lib/types";
 import {
@@ -171,6 +172,10 @@ function TimeOffContent() {
   const [showAddEmployee, setShowAddEmployee] = useState(false);
   const [newEmp, setNewEmp] = useState<NewEmployee>({ ...emptyEmployee });
   const [savingEmp, setSavingEmp] = useState(false);
+  useBackClose(
+    () => { setShowAddEmployee(false); setNewEmp({ ...emptyEmployee }); },
+    { active: showAddEmployee }
+  );
 
   // Date filter state
   const [filterStart, setFilterStart] = useState("");

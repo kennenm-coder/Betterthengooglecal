@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useBackClose } from "@/hooks/useBackClose";
 import { WorkOrder, MaterialJobData, MaterialUnit } from "@/lib/types";
 import { searchWorkOrders, fetchMaterialJobs } from "@/lib/store";
 import { WriteUpTarget } from "./WriteUpModal";
@@ -77,6 +78,7 @@ function matchMaterialJobs(jobs: Map<string, MaterialJobData>, query: string, li
  * the field manager types.
  */
 export default function WriteUpPicker({ onPick, onClose }: Props) {
+  useBackClose(onClose);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<WorkOrder[]>([]);
   const [searching, setSearching] = useState(false);

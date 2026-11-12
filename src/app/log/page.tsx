@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { overlayKeyHere } from "@/hooks/useBackClose";
 import { ImportLogEntry, ImportLogOrder } from "@/lib/import-log";
 import {
   JobChange,
@@ -88,6 +89,18 @@ export default function LogPage() {
   const [selectedOrder, setSelectedOrder] = useState<WorkOrder | null>(null);
   const [openingKey, setOpeningKey] = useState<string | null>(null);
   const [notFoundKeys, setNotFoundKeys] = useState<string[]>([]);
+
+  // Reopen the job when the user comes back (back button) from a page opened
+  // inside its tile — see the same block on the calendar page.
+  const arrivalKey = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (arrivalKey.current === undefined) arrivalKey.current = overlayKeyHere();
+    const key = arrivalKey.current;
+    if (!key?.startsWith("order:") || orders.length === 0) return;
+    arrivalKey.current = null;
+    const match = orders.find((o) => o.id === key.slice("order:".length));
+    if (match) setSelectedOrder(match);
+  }, [orders]);
 
   async function fetchLog() {
     setLoading(true);

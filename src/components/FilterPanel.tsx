@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useBackClose } from "@/hooks/useBackClose";
 import { WorkOrder } from "@/lib/types";
 import { Filter, X } from "lucide-react";
 import { crewsForDate, ownsOrder } from "@/lib/format-utils";
@@ -61,6 +62,7 @@ export default function FilterPanel({
   onChange: (filters: Filters) => void;
 }) {
   const [open, setOpen] = useState(false);
+  useBackClose(() => setOpen(false), { active: open });
   const active = hasActiveFilters(filters);
 
   const crews = useMemo(() => getCrewOptions(orders), [orders]);

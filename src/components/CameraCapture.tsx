@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useBackClose } from "@/hooks/useBackClose";
 import { X, Check, Trash2, Camera, AlertCircle } from "lucide-react";
 
 interface CapturedShot {
@@ -34,6 +35,8 @@ export default function CameraCapture({
   const [error, setError] = useState("");
   const [res, setRes] = useState("");
   const [ready, setReady] = useState(false);
+  // Back finishes like Done, so photos already taken are never dropped.
+  useBackClose(() => finish());
 
   // Keep a ref in sync so unmount cleanup can revoke object URLs without
   // capturing a stale (empty) shots array.

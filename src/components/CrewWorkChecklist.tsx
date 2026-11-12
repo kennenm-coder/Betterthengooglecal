@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useBackClose } from "@/hooks/useBackClose";
 import { format, parseISO } from "date-fns";
 import { AlertTriangle, Check, ChevronDown, ChevronRight, ClipboardList, Loader2, RotateCcw, X } from "lucide-react";
 import type { FieldWorkOrder, MaterialUnit } from "@/lib/types";
@@ -398,6 +399,7 @@ export default function CrewWorkChecklist({
 }
 
 function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  useBackClose(onClose);
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50" onClick={onClose}>
       <div

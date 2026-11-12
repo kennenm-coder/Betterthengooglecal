@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useBackClose } from "@/hooks/useBackClose";
 import { useData } from "@/components/DataProvider";
 import {
   getActionTypes,
@@ -1144,6 +1145,8 @@ function ConfirmRemovalDialog({
   onCancel: () => void;
 }) {
   const verb = removalVerb(pending);
+  // Back cancels, same as tapping outside (ignored mid-delete).
+  useBackClose(() => !busy && onCancel());
   const person = removalPerson(pending);
   const roles = pending.kind === "delete" ? rowRoles(pending.entry) : [];
   const phrase = confirmPhraseFor(verb, person);

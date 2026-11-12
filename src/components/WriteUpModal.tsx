@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useBackClose } from "@/hooks/useBackClose";
 import {
   WorkOrder,
   MaterialUnit,
@@ -473,6 +474,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const isBatchEdit = !!editBatch && editBatch.length > 0;
   // The old single-row flat editor only applies when NOT doing a guided batch edit.
   const isEditing = !!editWriteUp && !isBatchEdit;
+  // Back acts like the X: asks first if there is unsaved work.
+  useBackClose(() => attemptClose());
   const [presets, setPresets] = useState<string[]>([]);
   const [catalog, setCatalog] = useState<CatalogPickItem[]>([]);
   const [options, setOptions] = useState<UnitOptions | null>(null);

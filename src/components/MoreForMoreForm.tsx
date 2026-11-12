@@ -10,6 +10,7 @@
 // Rates and the math live in lib/more-for-more; this file only draws them.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useBackClose } from "@/hooks/useBackClose";
 import { format } from "date-fns";
 import {
   X,
@@ -279,6 +280,7 @@ export default function MoreForMoreForm({
   onDeleted,
   previewPeople,
 }: Props) {
+  useBackClose(onClose);
   const { name: myName, user } = useAuth();
   const isOffice = mode === "office";
 

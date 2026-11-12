@@ -559,7 +559,6 @@ export default function JobCard({
           {showWriteUps && (
             <button
               onClick={() => {
-                window.history.replaceState(null, "", `/?order=${order.id}`);
                 router.push(`/work-orders/address/${encodeURIComponent(order.address)}${writeUpsExclude}`);
               }}
               className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-amber-600 text-white text-sm font-medium active:scale-[0.98] transition-transform"
@@ -575,10 +574,9 @@ export default function JobCard({
           {/* Open Install Instructions — navigates to full page */}
           {mat && (
             <button
-              onClick={() => {
-                window.history.replaceState(null, "", `/?order=${order.id}`);
-                router.push(`/install/${mat.id}`);
-              }}
+              // Back from there lands on this tile's history entry, and the
+              // page reopens the tile (see useBackClose / overlayKeyHere).
+              onClick={() => router.push(`/install/${mat.id}`)}
               className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-primary text-white text-sm font-medium active:scale-[0.98] transition-transform"
             >
               <FileText className="w-4 h-4" />

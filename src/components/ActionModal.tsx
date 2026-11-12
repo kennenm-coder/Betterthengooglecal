@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useBackClose } from "@/hooks/useBackClose";
 import { WorkOrder, ActionPerson } from "@/lib/types";
 import {
   getActionTypes,
@@ -33,6 +34,7 @@ export default function ActionModal({
   order: WorkOrder;
   onClose: () => void;
 }) {
+  useBackClose(onClose);
   const [step, setStep] = useState<"type" | "notes">("type");
   const [actionType, setActionType] = useState("");
   const [notes, setNotes] = useState("");

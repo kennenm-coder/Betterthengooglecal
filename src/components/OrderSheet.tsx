@@ -3,6 +3,7 @@
 import { WorkOrder } from "@/lib/types";
 import JobCard from "./JobCard";
 import { X } from "lucide-react";
+import { useBackClose } from "@/hooks/useBackClose";
 
 export default function OrderSheet({
   order,
@@ -11,6 +12,9 @@ export default function OrderSheet({
   order: WorkOrder;
   onClose: () => void;
 }) {
+  // Back closes the tile; the key lets the page reopen it when the user comes
+  // back from a page opened inside it (install instructions, write-ups).
+  useBackClose(onClose, { key: `order:${order.id}` });
   return (
     <div className="fixed inset-0 z-50 flex flex-col">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
