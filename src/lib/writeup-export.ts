@@ -3,7 +3,7 @@
 // are dynamically imported so they only load when the user hits Download.
 
 import type { FieldWorkOrder } from "./types";
-import { groupWriteUpSections, isSectionDone, openUnitsOf, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine } from "./writeup-sections";
+import { groupWriteUpSections, isSectionDone, jobMaterialTotal, openUnitsOf, padSeq, pcsOf, splitInstalled, splitMaterialLines, writeUpRefs, type SectionMaterialLine } from "./writeup-sections";
 
 export interface WriteUpExportInput {
   orderNumber: string;
@@ -146,29 +146,33 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
   // The QTY total counts only what's still to buy; lines whose work is already
   // installed follow under their own band, struck through, so the office can
   // still see what was bought without it being counted again.
-  function materialTable(lines: SectionMaterialLine[], kind: "trim" | "part" = "trim") {
+  // `withFrom` adds a column naming the write-ups a line came from — used by the
+  // whole-job total, where the same line can come from several write-ups.
+  function materialTable(lines: (SectionMaterialLine & { writeUps?: number[] })[], kind: "trim" | "part" = "trim", withFrom = false) {
     const { needed, installed } = splitInstalled(lines);
     const totalPcs = pcsOf(needed);
     ensure(30);
+    const fromW = withFrom ? 50 : 0;
     const cols =
       kind === "part"
         ? [
             { label: `QTY: ${totalPcs}`, w: 56 },
             { label: "Unit", w: 46 },
-            { label: "Part", w: 170 },
+            { label: "Part", w: 170 - fromW / 2 },
             { label: "Color", w: 84 },
             { label: "Size", w: 70 },
-            { label: "Part #", w: contentW - 56 - 46 - 170 - 84 - 70 },
+            { label: "Part #", w: contentW - 56 - 46 - 170 - 84 - 70 - fromW / 2 },
           ]
         : [
             { label: `QTY: ${totalPcs}`, w: 56 },
             { label: "Unit", w: 46 },
-            { label: "Item", w: 126 },
+            { label: "Item", w: 126 - fromW / 2 },
             { label: "Color", w: 74 },
             { label: "Species", w: 62 },
             { label: "Lengths", w: 88 },
-            { label: "Vendor", w: contentW - 56 - 46 - 126 - 74 - 62 - 88 },
+            { label: "Vendor", w: contentW - 56 - 46 - 126 - 74 - 62 - 88 - fromW / 2 },
           ];
+    if (withFrom) cols.push({ label: "From", w: fromW });
     setFill(DARK);
     doc.rect(M, y, contentW, 16, "F");
     doc.setFont("helvetica", "bold");
@@ -182,13 +186,14 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     y += 16;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
-    const row = (m: SectionMaterialLine, done: boolean) => {
+    const row = (m: SectionMaterialLine & { writeUps?: number[] }, done: boolean) => {
       ensure(14);
       const bought = done && m.workNumbers.length > 0 ? `  (${m.workNumbers.map(padSeq).join(", ")})` : "";
       const cells =
         kind === "part"
           ? [`${m.qty} ${m.unit}`, m.unitLabel || "—", `${m.item || "—"}${bought}`, m.color || "—", m.size || "—", m.partNumber || "—"]
           : [`${m.qty} ${m.unit}`, m.unitLabel || "—", `${m.item || "—"}${bought}`, m.color || "—", m.species || "—", m.lengths || "—", m.vendor || "—"];
+      if (withFrom) cells.push(writeUpRefs(m.writeUps || []));
       x = M + 4;
       for (let i = 0; i < cols.length; i++) {
         setColor(done ? MUTED : i === 0 ? BLACK : MUTED);
@@ -395,6 +400,38 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     }
     photoGrid(sec.photos);
     y += 12;
+  }
+
+  // ── Total materials for the job ──
+  // Every open write-up's still-needed lines merged into one list to order from.
+  // Only with two or more write-ups; with one it would repeat that one's table.
+  const jobTotal = sections.length > 1 ? jobMaterialTotal(sections) : [];
+  if (jobTotal.length > 0) {
+    ensure(60);
+    setFill(DARK);
+    doc.rect(M, y, contentW, 18, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    setColor([255, 255, 255]);
+    doc.text("TOTAL MATERIALS FOR THIS JOB", M + 6, y + 12.5);
+    y += 26;
+    wrapped(
+      "Everything still to buy across all open write-ups, with matching lines added together. Installed work and closed write-ups are left out. W# shows which write-up each line is from.",
+      M,
+      contentW,
+      { size: 8.5, color: MUTED }
+    );
+    y += 4;
+    const { trim: totTrim, parts: totParts } = splitMaterialLines(jobTotal);
+    if (totTrim.length > 0) {
+      line("TRIM / MATERIAL", M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      materialTable(totTrim, "trim", true);
+      y += 4;
+    }
+    if (totParts.length > 0) {
+      line("PARTS", M, { size: 8, bold: true, color: MUTED, gap: 12 });
+      materialTable(totParts, "part", true);
+    }
   }
 
   // ── Footer page numbers ──

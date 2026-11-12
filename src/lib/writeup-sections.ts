@@ -406,6 +406,46 @@ export function padSeq(n: number): string {
   return String(n).padStart(3, "0");
 }
 
+/** One line of the whole-job total: what's still to buy across every open
+ *  write-up, merged, plus which write-ups it came from. */
+export interface JobMaterialLine extends SectionMaterialLine {
+  /** Write-up numbers (sec.index) this line was ordered on. */
+  writeUps: number[];
+}
+
+/**
+ * Everything still to buy for the job, across all of its write-ups, as one
+ * merged list — so three write-ups that each need the same casing read as one
+ * line to order, not three tables to add up by eye.
+ *
+ * Built from each write-up's own still-needed lines, so it follows the same
+ * rule: once a work item is checked off installed, its material drops out of
+ * that write-up's count AND out of this total. Closed, archived and draft
+ * write-ups add nothing — there's nothing on them to buy.
+ */
+export function jobMaterialTotal(sections: WriteUpSection[]): JobMaterialLine[] {
+  const lines: SectionMaterialLine[] = [];
+  for (const sec of sections) {
+    if (sec.status === "closed" || sec.status === "archived" || sec.status === "draft") continue;
+    for (const m of sec.materials) {
+      if (m.installed) continue;
+      // Work numbers restart at 1 in every write-up, so they mean nothing across
+      // the job. Carry the write-up number through the merge in their place.
+      lines.push({ ...m, workNumbers: [sec.index] });
+    }
+  }
+  return mergeMaterialLines(lines).map(({ workNumbers, ...m }) => ({
+    ...m,
+    workNumbers: [],
+    writeUps: workNumbers,
+  }));
+}
+
+/** "W1, W3" — which write-ups a total line came from. */
+export function writeUpRefs(nums: number[]): string {
+  return nums.map((n) => `W${n}`).join(", ");
+}
+
 /** A write-up is done when it is Closed, or when every work item on it is
  *  checked off installed. Either way there is nothing left for the field to do.
  *  One rule for the Write-Ups list, the doc page and the PDF, so they agree. */

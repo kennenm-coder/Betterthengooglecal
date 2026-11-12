@@ -6,6 +6,7 @@ import { FieldWorkOrder } from "@/lib/types";
 import { writeUpsToPlainText } from "@/lib/work-order-store";
 import { groupWriteUpSections, isSectionDone, openUnitsOf, padSeq } from "@/lib/writeup-sections";
 import { downloadWriteUpZip } from "@/lib/writeup-export";
+import JobMaterialTotal from "./JobMaterialTotal";
 import { ArrowLeft, Loader2, Printer, Wrench, Download, Copy, Check } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -449,6 +450,11 @@ export default function WriteUpDocView({
           </div>
           );
         })}
+
+        {/* Every open write-up's still-needed material, merged into one list */}
+        <div className="mb-8 -mx-4">
+          <JobMaterialTotal sections={sections} vendorColor={ACCENT_TEXT} />
+        </div>
 
         {/* Footer */}
         <div className="mt-8 pt-4 border-t border-border flex justify-between text-xs text-muted">

@@ -32,6 +32,7 @@ import JobReferencePanel, { referenceJobFromWriteUp } from "@/components/JobRefe
 import { useData } from "@/components/DataProvider";
 import ServicePartsCard from "@/components/ServicePartsCard";
 import LinkedTrimOrders from "@/components/LinkedTrimOrders";
+import JobMaterialTotal from "@/components/JobMaterialTotal";
 import {
   fetchServicePartsIndex,
   servicePartsAt,
@@ -945,6 +946,7 @@ export default function WorkOrdersPage() {
                         />
                       </div>
                     ))}
+                    <JobMaterialTotal sections={sections} vendorColor="#6DB344" />
                   </div>
                 </div>
               );
