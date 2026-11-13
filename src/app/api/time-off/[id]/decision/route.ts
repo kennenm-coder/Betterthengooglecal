@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireRole, getAdminClient } from "@/lib/auth";
+import { logKioskEvent } from "@/lib/kiosk-inbox-server";
 
 export const runtime = "nodejs";
 
@@ -99,6 +100,18 @@ export async function POST(
     // anything this call fails to deliver. A mail problem must never make an
     // approval look like it failed.
     void notifyKiosk(id);
+
+    // The kiosk's audit trail, like every other inbox decision. Only kiosk
+    // requests have a submission to hang it on.
+    if (data.kiosk_submission_id) {
+      await logKioskEvent(admin, {
+        submissionId: data.kiosk_submission_id,
+        eventType: `time_off_${status}`,
+        actor: reviewedByName,
+        referenceCode: data.reference_code ?? null,
+        note: note || null,
+      });
+    }
 
     return NextResponse.json({ request: data });
   } catch (e) {

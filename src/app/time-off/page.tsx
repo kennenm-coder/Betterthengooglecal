@@ -14,7 +14,8 @@ import {
   timeOffStatus,
   isPending,
 } from "@/lib/time-off-store";
-import PendingTimeOffSection from "@/components/PendingTimeOffSection";
+import KioskInboxSection from "@/components/kiosk-inbox/KioskInboxSection";
+import { canSeeShareLinks } from "@/lib/kiosk-inbox";
 import {
   ArrowLeft,
   Plus,
@@ -193,17 +194,6 @@ function TimeOffContent() {
   }
 
   useEffect(() => { loadData(); }, []);
-
-  // Requests awaiting a payroll decision. These are kiosk submissions; they are
-  // NOT on the calendar yet, so they get their own queue at the top of the
-  // screen rather than being mixed into the log below.
-  const pendingRequests = useMemo(
-    () =>
-      requests
-        .filter(isPending)
-        .sort((a, b) => a.start_date.localeCompare(b.start_date)),
-    [requests]
-  );
 
   const filteredRequests = useMemo(() => {
     // Decided rows only — pending ones live in the approval queue above.
@@ -526,11 +516,12 @@ function TimeOffContent() {
               </div>
             )}
 
-            {/* Kiosk requests waiting on a payroll decision */}
-            <PendingTimeOffSection
-              requests={pendingRequests}
-              formatDateDisplay={formatDateDisplay}
-              onDecided={(updated) =>
+            {/* Every kiosk submission waiting on a decision, the records of
+                past ones, and the share links. Pending time off is NOT on the
+                calendar yet, so it lives here rather than in the log below. */}
+            <KioskInboxSection
+              showLinks={canSeeShareLinks(roles)}
+              onTimeOffDecided={(updated) =>
                 setRequests((prev) =>
                   prev.map((r) => (r.id === updated.id ? updated : r))
                 )
