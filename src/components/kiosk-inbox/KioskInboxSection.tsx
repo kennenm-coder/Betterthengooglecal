@@ -1,27 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, FileSignature, Inbox, Link2, Loader2, RefreshCw } from "lucide-react";
+import { FileSignature, History, Inbox, Link2, Loader2 } from "lucide-react";
 import type { TimeOffRequest } from "@/lib/types";
-import {
-  INBOX_DECIDED_EVENT,
-  KIND_LABELS,
-  type InboxItem,
-  type InboxKind,
-} from "@/lib/kiosk-inbox";
+import { INBOX_DECIDED_EVENT, type InboxItem } from "@/lib/kiosk-inbox";
 import InboxItemCard, { type DecisionResult } from "./InboxItemCard";
+import HistoryPanel from "./HistoryPanel";
 import ShareLinksPanel from "./ShareLinksPanel";
 
-type Tab = "waiting" | "records" | "links";
-type KindFilter = "all" | InboxKind;
+type Tab = "waiting" | "history" | "links";
 
 /**
  * The approvals inbox at the top of the Time Off (payroll) screen.
  *
  * Every kiosk submission lands here: time off, time card adjustments, forms
  * that need a decision, and Difference Maker nominations. Each person sees
- * only the rows their roles can decide (admins see everything). Records holds
- * what has been decided and the forms that only needed filing.
+ * only the rows their roles can decide (admins see everything). History holds
+ * everything already decided and the forms that only needed filing.
  *
  * Time off approved here goes onto the calendar, so `onTimeOffDecided` lets
  * the Time Off log below update without a reload.
@@ -36,12 +31,11 @@ export default function KioskInboxSection({
 }) {
   const [tab, setTab] = useState<Tab>("waiting");
   const [pending, setPending] = useState<InboxItem[] | null>(null);
-  const [records, setRecords] = useState<InboxItem[] | null>(null);
   const [kioskUrl, setKioskUrl] = useState<string | null>(null);
   const [viewMissing, setViewMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loadingRecords, setLoadingRecords] = useState(false);
-  const [kindFilter, setKindFilter] = useState<KindFilter>("all");
+  // Bumped after any decision so History refetches the page it is on.
+  const [historyKey, setHistoryKey] = useState(0);
 
   const loadPending = useCallback(async () => {
     try {
@@ -58,35 +52,15 @@ export default function KioskInboxSection({
     }
   }, []);
 
-  const loadRecords = useCallback(async () => {
-    setLoadingRecords(true);
-    try {
-      const res = await fetch("/api/kiosk-inbox?view=records");
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Could not load the records");
-      setRecords(json.items ?? []);
-      setKioskUrl(json.kioskUrl ?? null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setRecords((r) => r ?? []);
-    } finally {
-      setLoadingRecords(false);
-    }
-  }, []);
-
   useEffect(() => {
     loadPending();
   }, [loadPending]);
-
-  useEffect(() => {
-    if (tab === "records" && records === null) loadRecords();
-  }, [tab, records, loadRecords]);
 
   // A decision made from the header bell: refresh what is shown here.
   useEffect(() => {
     const onElsewhere = () => {
       loadPending();
-      setRecords(null);
+      setHistoryKey((k) => k + 1);
     };
     window.addEventListener(INBOX_DECIDED_EVENT, onElsewhere);
     window.addEventListener("time-off-decided", onElsewhere);
@@ -102,25 +76,18 @@ export default function KioskInboxSection({
         (i) => !(i.decision_table === item.decision_table && i.item_id === item.item_id)
       )
     );
-    // Records reload next time they are opened, so the new decision shows.
-    setRecords(null);
+    setHistoryKey((k) => k + 1);
     if (result.timeOffRequest) onTimeOffDecided(result.timeOffRequest);
   }
 
   const decidable = useMemo(() => (pending ?? []).filter((i) => i.can_decide), [pending]);
-
-  const filteredRecords = useMemo(
-    () =>
-      (records ?? []).filter((r) => kindFilter === "all" || r.kind === kindFilter),
-    [records, kindFilter]
-  );
 
   const waitingCount = decidable.length;
   const urgent = tab === "waiting" && waitingCount > 0;
 
   const tabs: { key: Tab; label: string; icon: typeof Inbox }[] = [
     { key: "waiting", label: waitingCount ? `Waiting (${waitingCount})` : "Waiting", icon: Inbox },
-    { key: "records", label: "Records", icon: Archive },
+    { key: "history", label: "History", icon: History },
   ];
   if (showLinks) tabs.push({ key: "links", label: "Share links", icon: Link2 });
 
@@ -186,57 +153,7 @@ export default function KioskInboxSection({
         </>
       )}
 
-      {tab === "records" && (
-        <div className="pb-2">
-          <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2">
-            {(["all", "time_off", "time_card", "form", "recognition"] as KindFilter[]).map((k) => (
-              <button
-                key={k}
-                onClick={() => setKindFilter(k)}
-                className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                  kindFilter === k
-                    ? "bg-foreground text-background"
-                    : "bg-background border border-border text-muted"
-                }`}
-              >
-                {k === "all" ? "All" : KIND_LABELS[k]}
-              </button>
-            ))}
-            <button
-              onClick={loadRecords}
-              disabled={loadingRecords}
-              className="ml-auto p-1.5 rounded-full hover:bg-surface text-muted disabled:opacity-50"
-              title="Reload"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loadingRecords ? "animate-spin" : ""}`} />
-            </button>
-          </div>
-
-          {records === null || (loadingRecords && records.length === 0) ? (
-            <div className="flex justify-center py-4">
-              <Loader2 className="w-5 h-5 animate-spin text-muted" />
-            </div>
-          ) : viewMissing ? (
-            <p className="px-4 pb-2 text-xs text-muted">
-              Records appear once the kiosk&apos;s inbox is set up in the database.
-              Decided time off is in the log below.
-            </p>
-          ) : filteredRecords.length === 0 ? (
-            <p className="px-4 pb-2 text-xs text-muted">Nothing on record yet.</p>
-          ) : (
-            <ul className="mx-4 divide-y divide-border rounded-lg border border-border bg-background">
-              {filteredRecords.map((item) => (
-                <li key={`${item.decision_table}:${item.item_id}`} className="px-3 py-2.5">
-                  <InboxItemCard item={item} kioskUrl={kioskUrl} />
-                </li>
-              ))}
-            </ul>
-          )}
-          {records && records.length >= 300 && (
-            <p className="px-4 pt-2 text-[11px] text-muted">Showing the latest 300.</p>
-          )}
-        </div>
-      )}
+      {tab === "history" && <HistoryPanel refreshKey={historyKey} />}
 
       {tab === "links" && showLinks && <ShareLinksPanel />}
     </section>

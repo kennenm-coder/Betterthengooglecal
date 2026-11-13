@@ -1,7 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireRole, getAdminClient } from "@/lib/auth";
 import { INBOX_ROLES } from "@/lib/kiosk-inbox";
-import { kioskAppUrl, loadInboxItems } from "@/lib/kiosk-inbox-server";
+import {
+  kioskAppUrl,
+  loadHistory,
+  loadInboxItems,
+  parseHistoryFilters,
+} from "@/lib/kiosk-inbox-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +18,10 @@ export const dynamic = "force-dynamic";
  *
  *   GET                 pending rows this person can decide, plus `unseen`:
  *                       how many arrived since they last opened the bell.
- *   GET ?view=records   decided and record-only history they may see.
+ *   GET ?view=history   decided and record-only history they may see,
+ *                       filtered and paged in the database:
+ *                       kind, status, from, to (ISO), q (name / reference
+ *                       code / nominee), page (0-based, 25 a page).
  *
  * Opening the bell clears the BADGE, not the queue: rows stay until somebody
  * decides them, so a glance never silently dismisses anybody's request.
@@ -22,27 +30,28 @@ export async function GET(request: NextRequest) {
   const { user, error } = await requireRole(...INBOX_ROLES);
   if (error) return error;
 
-  const view =
-    request.nextUrl.searchParams.get("view") === "records" ? "records" : "pending";
-
   try {
     const admin = getAdminClient();
-    const { items, viewMissing } = await loadInboxItems(admin, user!, view);
 
-    let unseen = 0;
-    if (view === "pending") {
-      const { data: seen } = await admin
-        .from("time_off_notification_reads")
-        .select("last_seen_at")
-        .eq("email", user!.email.toLowerCase())
-        .maybeSingle();
-      const lastSeen = seen?.last_seen_at ? Date.parse(seen.last_seen_at) : 0;
-      const decidable = items.filter((i) => i.can_decide);
-      // Never opened the bell? Everything is unseen.
-      unseen = lastSeen
-        ? decidable.filter((i) => Date.parse(i.submitted_at) > lastSeen).length
-        : decidable.length;
+    if (request.nextUrl.searchParams.get("view") === "history") {
+      const filters = parseHistoryFilters(request.nextUrl.searchParams);
+      const history = await loadHistory(admin, user!, filters);
+      return NextResponse.json({ ...history, kioskUrl: kioskAppUrl() });
     }
+
+    const { items, viewMissing } = await loadInboxItems(admin, user!);
+
+    const { data: seen } = await admin
+      .from("time_off_notification_reads")
+      .select("last_seen_at")
+      .eq("email", user!.email.toLowerCase())
+      .maybeSingle();
+    const lastSeen = seen?.last_seen_at ? Date.parse(seen.last_seen_at) : 0;
+    const decidable = items.filter((i) => i.can_decide);
+    // Never opened the bell? Everything is unseen.
+    const unseen = lastSeen
+      ? decidable.filter((i) => Date.parse(i.submitted_at) > lastSeen).length
+      : decidable.length;
 
     return NextResponse.json({
       items,

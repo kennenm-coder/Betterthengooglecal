@@ -4,6 +4,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthenticatedUser } from "@/lib/auth";
 import {
+  HISTORY_PAGE_SIZE,
+  HISTORY_STATUSES,
+  historyOrdersByDecision,
+  type HistoryFilters,
+  type HistoryStatus,
   holdsApproverRole,
   type InboxItem,
   type InboxTimeCardDetail,
@@ -153,27 +158,21 @@ export interface InboxLoad {
 }
 
 /**
- * Pending rows this user can decide, or (`records`) the decided and
- * record-only history this user is allowed to see.
+ * Pending rows this user can decide.
  *
  * Visibility is filtered in the query, not after it, so the row limit counts
  * only rows the person can actually see.
  */
 export async function loadInboxItems(
   admin: SupabaseClient,
-  user: AuthenticatedUser,
-  view: "pending" | "records"
+  user: AuthenticatedUser
 ): Promise<InboxLoad> {
-  let query = admin.from("kiosk_review_items").select(VIEW_COLUMNS);
-
-  if (view === "pending") {
-    query = query.eq("status", "pending").order("submitted_at", { ascending: true }).limit(200);
-  } else {
-    query = query
-      .in("status", ["approved", "denied", "recorded"])
-      .order("submitted_at", { ascending: false })
-      .limit(300);
-  }
+  let query = admin
+    .from("kiosk_review_items")
+    .select(VIEW_COLUMNS)
+    .eq("status", "pending")
+    .order("submitted_at", { ascending: true })
+    .limit(200);
 
   if (!user.roles.includes("admin")) {
     query = query.overlaps("approver_roles", user.roles);
@@ -183,10 +182,7 @@ export async function loadInboxItems(
 
   if (error) {
     if (isMissingRelation(error)) {
-      return {
-        items: view === "pending" ? await legacyPendingTimeOff(admin, user) : [],
-        viewMissing: true,
-      };
+      return { items: await legacyPendingTimeOff(admin, user), viewMissing: true };
     }
     throw new Error(error.message);
   }
@@ -194,6 +190,103 @@ export async function loadInboxItems(
   const items = ((data ?? []) as ViewRow[]).map((r) => toItem(r, user));
   await attachDetail(admin, items);
   return { items, viewMissing: false };
+}
+
+export interface HistoryLoad extends InboxLoad {
+  /** Rows matching the filters, across all pages. */
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/**
+ * Decided and record-only history, filtered and paged in the database.
+ *
+ * Ordering: anything decided sorts by WHEN it was decided, newest first.
+ * "On record" and "All" sort by when it was submitted, because record-only
+ * rows have no decision date. The date range applies to that same column.
+ */
+export async function loadHistory(
+  admin: SupabaseClient,
+  user: AuthenticatedUser,
+  filters: HistoryFilters
+): Promise<HistoryLoad> {
+  const { page, pageSize } = filters;
+  const byDecision = historyOrdersByDecision(filters.status);
+  const dateColumn = byDecision ? "reviewed_at" : "submitted_at";
+
+  let query = admin
+    .from("kiosk_review_items")
+    .select(VIEW_COLUMNS, { count: "exact" });
+
+  const statuses: Record<HistoryStatus, string[]> = {
+    decided: ["approved", "denied"],
+    approved: ["approved"],
+    denied: ["denied"],
+    recorded: ["recorded"],
+    all: ["approved", "denied", "recorded"],
+  };
+  query = query.in("status", statuses[filters.status]);
+
+  if (filters.kind !== "all") query = query.eq("kind", filters.kind);
+  if (filters.from) query = query.gte(dateColumn, filters.from);
+  if (filters.to) query = query.lt(dateColumn, filters.to);
+
+  if (filters.q) {
+    const like = `*${filters.q}*`;
+    query = query.or(
+      `employee_name.ilike.${like},reference_code.ilike.${like},title.ilike.${like}`
+    );
+  }
+
+  if (!user.roles.includes("admin")) {
+    query = query.overlaps("approver_roles", user.roles);
+  }
+
+  query = query
+    .order(dateColumn, { ascending: false, nullsFirst: false })
+    .order("submitted_at", { ascending: false })
+    .range(page * pageSize, page * pageSize + pageSize - 1);
+
+  const { data, error, count } = await query;
+
+  if (error) {
+    if (isMissingRelation(error)) {
+      return { items: [], viewMissing: true, total: 0, page, pageSize };
+    }
+    throw new Error(error.message);
+  }
+
+  const items = ((data ?? []) as ViewRow[]).map((r) => toItem(r, user));
+  await attachDetail(admin, items);
+  return { items, viewMissing: false, total: count ?? items.length, page, pageSize };
+}
+
+/**
+ * Read the History filters off a request URL, rejecting anything odd rather
+ * than passing it to the database.
+ */
+export function parseHistoryFilters(params: URLSearchParams): HistoryFilters {
+  const kind = params.get("kind");
+  const status = params.get("status");
+  const page = Math.max(0, Math.min(10_000, parseInt(params.get("page") || "0", 10) || 0));
+  const iso = (v: string | null) => (v && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null);
+  // Characters that mean something in PostgREST's or=() syntax or in LIKE.
+  const q = (params.get("q") || "").replace(/[,()*%\\"':]/g, " ").trim().slice(0, 80);
+
+  return {
+    kind: (["time_off", "time_card", "form", "recognition"] as const).includes(kind as never)
+      ? (kind as HistoryFilters["kind"])
+      : "all",
+    status: (HISTORY_STATUSES as readonly string[]).includes(status ?? "")
+      ? (status as HistoryStatus)
+      : "decided",
+    from: iso(params.get("from")),
+    to: iso(params.get("to")),
+    q,
+    page,
+    pageSize: HISTORY_PAGE_SIZE,
+  };
 }
 
 const TIME_OFF_APPROVERS = ["admin", "payroll-admin", "payroll-approver"];

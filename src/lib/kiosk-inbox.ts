@@ -107,6 +107,44 @@ export function holdsApproverRole(roles: RoleInput, approverRoles: string[] | nu
   return (approverRoles ?? ["admin"]).some((r) => held.includes(r));
 }
 
+/**
+ * History's status filter. "decided" (approved + denied) is the default.
+ * "recorded" = forms that only needed filing.
+ */
+export const HISTORY_STATUSES = ["decided", "approved", "denied", "recorded", "all"] as const;
+export type HistoryStatus = (typeof HISTORY_STATUSES)[number];
+
+export const HISTORY_STATUS_LABELS: Record<HistoryStatus, string> = {
+  decided: "Approved + denied",
+  approved: "Approved",
+  denied: "Denied",
+  recorded: "On record (no decision)",
+  all: "Everything",
+};
+
+export const HISTORY_PAGE_SIZE = 25;
+
+export interface HistoryFilters {
+  kind: "all" | InboxKind;
+  status: HistoryStatus;
+  /** ISO timestamp, inclusive. */
+  from: string | null;
+  /** ISO timestamp, exclusive. */
+  to: string | null;
+  /** Matches employee name, reference code, or title (nominee). */
+  q: string;
+  page: number;
+  pageSize: number;
+}
+
+/**
+ * Decided rows sort and filter by decision date; anything that can include
+ * record-only rows (no decision date) uses the submitted date instead.
+ */
+export function historyOrdersByDecision(status: HistoryStatus): boolean {
+  return status === "decided" || status === "approved" || status === "denied";
+}
+
 /** Fired on window after any inbox decision, so the bell and the Time Off screen agree. */
 export const INBOX_DECIDED_EVENT = "kiosk-inbox-decided";
 
