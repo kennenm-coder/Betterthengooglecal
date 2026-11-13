@@ -604,6 +604,93 @@ export async function fetchLinkedTrimOrders(orderNumber: string): Promise<Linked
   }
 }
 
+// The tile, its trim order box and the doc all ask for the same job's orders
+// at once; one request answers them all. Short-lived so a vendor changed in the
+// material list shows up on the next look, not the next page load.
+const linkedCache = new Map<string, { at: number; p: Promise<LinkedTrimOrder[]> }>();
+const LINKED_CACHE_MS = 20_000;
+
+export function fetchLinkedTrimOrdersCached(orderNumber: string): Promise<LinkedTrimOrder[]> {
+  const k = String(orderNumber || "").trim();
+  const hit = linkedCache.get(k);
+  if (hit && Date.now() - hit.at < LINKED_CACHE_MS) return hit.p;
+  const p = fetchLinkedTrimOrders(k);
+  linkedCache.set(k, { at: Date.now(), p });
+  return p;
+}
+
+/** How a write-up's trim row is matched to a line on its trim order. */
+export function trimMatchKey(profile: string, species: string, color: string): string {
+  return [profile, species, color].map((s) => (s || "").trim().toLowerCase()).join("|");
+}
+
+/** Vendors on a job's trim order(s), per trimMatchKey. Usually one; two when
+ *  the office split a line between vendors. */
+export type OrderVendors = Map<string, string[]>;
+
+export function orderVendorsFrom(orders: LinkedTrimOrder[]): OrderVendors {
+  const map: OrderVendors = new Map();
+  for (const o of orders) {
+    for (const l of o.lines) {
+      const v = (l.vendor || "").trim();
+      if (!v) continue;
+      const k = trimMatchKey(l.profile, l.species, l.color);
+      const list = map.get(k) || [];
+      if (!list.some((x) => x.toLowerCase() === v.toLowerCase())) list.push(v);
+      map.set(k, list);
+    }
+  }
+  return map;
+}
+
+/** The vendor to show for a write-up row, and what the write-up itself said
+ *  when the trim order has since moved it. */
+export interface ShownVendor {
+  vendor: string;
+  /** The write-up's own vendor, when the trim order now says something else. */
+  was: string | null;
+}
+
+/**
+ * The vendor actually buying a write-up's trim row. The write-up's saved vendor
+ * is never rewritten (the office's material-list accounts can't write
+ * write-ups); instead, a row that went over to a trim order shows the vendor on
+ * that order, as it stands. Rows that never went over (parts, in-house trim,
+ * no vendor) and rows the office reshaped past matching keep their own vendor.
+ */
+export function shownVendor(
+  m: Pick<WriteUpMaterialItem, "kind" | "item" | "species" | "color" | "vendor">,
+  ov: OrderVendors | null | undefined
+): ShownVendor {
+  const own = (m.vendor || "").trim();
+  if (!ov || m.kind === "part" || !isOrderable(own)) return { vendor: own, was: null };
+  const list = ov.get(trimMatchKey(m.item, m.species, m.color));
+  if (!list || list.length === 0) return { vendor: own, was: null };
+  if (list.length === 1 && list[0].toLowerCase() === own.toLowerCase()) return { vendor: own, was: null };
+  return { vendor: list.join(" / "), was: own };
+}
+
+/** Write-ups with each trim row's vendor swapped for the one on its trim
+ *  order — for the PDF, which can't show a live lookup. Never throws. */
+export async function withOrderVendors<
+  T extends { orderNumber: string; materialItems: WriteUpMaterialItem[] }
+>(writeUps: T[]): Promise<T[]> {
+  try {
+    const orders = [...new Set(writeUps.map((w) => String(w.orderNumber || "").trim()).filter(Boolean))];
+    const byOrder = new Map<string, OrderVendors>();
+    await Promise.all(
+      orders.map(async (o) => byOrder.set(o, orderVendorsFrom(await fetchLinkedTrimOrdersCached(o))))
+    );
+    return writeUps.map((w) => {
+      const ov = byOrder.get(String(w.orderNumber || "").trim());
+      if (!ov || ov.size === 0) return w;
+      return { ...w, materialItems: w.materialItems.map((m) => ({ ...m, vendor: shownVendor(m, ov).vendor })) };
+    });
+  } catch {
+    return writeUps;
+  }
+}
+
 /** Why the write didn't land, in words a field manager can repeat to the
  *  office. 42501 is Postgres's "row-level security refused this" — the exact
  *  failure this handoff hit for its first three days. */

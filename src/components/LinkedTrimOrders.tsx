@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Loader2, PackageCheck } from "lucide-react";
-import { fetchLinkedTrimOrders, LinkedTrimOrder } from "@/lib/trim-order-handoff";
+import { fetchLinkedTrimOrdersCached, LinkedTrimOrder, trimMatchKey as key } from "@/lib/trim-order-handoff";
 import type { WriteUpMaterialItem } from "@/lib/types";
 
 const STATUS_TEXT: Record<string, string> = {
@@ -10,10 +10,6 @@ const STATUS_TEXT: Record<string, string> = {
   on_hold: "On hold",
   ordered: "Ordered",
 };
-
-function key(profile: string, species: string, color: string): string {
-  return [profile, species, color].map((s) => (s || "").trim().toLowerCase()).join("|");
-}
 
 /**
  * The trim order(s) this write-up opened, as they stand in trim ordering right
@@ -35,7 +31,7 @@ export default function LinkedTrimOrders({
 
   useEffect(() => {
     let live = true;
-    fetchLinkedTrimOrders(orderNumber).then((o) => {
+    fetchLinkedTrimOrdersCached(orderNumber).then((o) => {
       if (live) setOrders(o);
     });
     return () => {

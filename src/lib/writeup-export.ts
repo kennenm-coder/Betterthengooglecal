@@ -4,6 +4,7 @@
 
 import type { FieldWorkOrder } from "./types";
 import { groupWriteUpSections, isSectionDone, jobMaterialTotal, openUnitsOf, padSeq, pcsOf, splitInstalled, splitMaterialLines, writeUpRefs, type SectionMaterialLine } from "./writeup-sections";
+import { withOrderVendors } from "./trim-order-handoff";
 
 export interface WriteUpExportInput {
   orderNumber: string;
@@ -476,7 +477,9 @@ export async function downloadWriteUpZip(input: WriteUpExportInput): Promise<voi
     }
   }
 
-  const pdf = await buildPdf(input, thumbs);
+  // The PDF shows the vendor each trim row is actually being bought from — the
+  // one on its trim order in the material list, where that has changed.
+  const pdf = await buildPdf({ ...input, writeUps: await withOrderVendors(input.writeUps) }, thumbs);
   zip.file(`${base}.pdf`, pdf);
 
   const photos = zip.folder("photos");

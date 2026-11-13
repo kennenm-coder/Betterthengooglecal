@@ -1,6 +1,9 @@
 "use client";
 
 import { Layers } from "lucide-react";
+import ShownVendorText from "./ShownVendorText";
+import { unionOrderVendors, useOrderVendors } from "@/hooks/useOrderVendors";
+import { shownVendor } from "@/lib/trim-order-handoff";
 import {
   jobMaterialTotal,
   pcsOf,
@@ -21,11 +24,20 @@ import {
 export default function JobMaterialTotal({
   sections,
   vendorColor,
+  liveVendors = true,
 }: {
   sections: WriteUpSection[];
   /** Vendor column color — matches the surrounding view's accent. */
   vendorColor: string;
+  /** Look up the trim orders' vendors (false while a list tile is closed). */
+  liveVendors?: boolean;
 }) {
+  const orderVendors = unionOrderVendors(
+    useOrderVendors(
+      sections.flatMap((s) => s.rows.map((r) => r.orderNumber)),
+      liveVendors && sections.length > 1
+    )
+  );
   if (sections.length < 2) return null;
   const total = jobMaterialTotal(sections);
   if (total.length === 0) return null;
@@ -71,7 +83,7 @@ export default function JobMaterialTotal({
                   <td className={`${td} text-muted`}>{m.species || "—"}</td>
                   <td className={`${td} text-muted font-mono`}>{m.lengths || "—"}</td>
                   <td className={`${td} font-bold`} style={{ color: vendorColor }}>
-                    {m.vendor || "—"}
+                    <ShownVendorText shown={shownVendor(m, orderVendors)} />
                   </td>
                   <td className={`${td} text-muted whitespace-nowrap`}>{writeUpRefs(m.writeUps)}</td>
                 </tr>

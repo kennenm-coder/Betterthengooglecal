@@ -7,6 +7,9 @@ import { writeUpsToPlainText } from "@/lib/work-order-store";
 import { groupWriteUpSections, isSectionDone, openUnitsOf, padSeq } from "@/lib/writeup-sections";
 import { downloadWriteUpZip } from "@/lib/writeup-export";
 import JobMaterialTotal from "./JobMaterialTotal";
+import ShownVendorText from "./ShownVendorText";
+import { useOrderVendors } from "@/hooks/useOrderVendors";
+import { shownVendor } from "@/lib/trim-order-handoff";
 import { ArrowLeft, Loader2, Printer, Wrench, Download, Copy, Check } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -56,6 +59,8 @@ export default function WriteUpDocView({
   const [copied, setCopied] = useState(false);
 
   const sections = groupWriteUpSections(writeUps);
+  // What the material list is actually buying each trim row from.
+  const vendorsByOrder = useOrderVendors(writeUps.map((w) => w.orderNumber));
   // Issues still to fix: rows that aren't closed AND aren't on a finished write-up.
   const openCount = sections
     .filter((s) => !isSectionDone(s))
@@ -407,7 +412,7 @@ export default function WriteUpDocView({
                           <td className={`${tdStyle} text-muted${strike}`}>{m.species || "—"}</td>
                           <td className={`${tdStyle} text-muted font-mono text-[11px]${strike}`}>{m.lengths || "—"}</td>
                           <td className={`${tdStyle} font-bold text-[11px]${strike}`} style={{ color: accentText }}>
-                            {m.vendor || "—"}
+                            <ShownVendorText shown={shownVendor(m, vendorsByOrder?.[secOrder.trim()])} />
                           </td>
                         </tr>,
                       ];

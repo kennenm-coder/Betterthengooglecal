@@ -33,6 +33,9 @@ import { useData } from "@/components/DataProvider";
 import ServicePartsCard from "@/components/ServicePartsCard";
 import LinkedTrimOrders from "@/components/LinkedTrimOrders";
 import JobMaterialTotal from "@/components/JobMaterialTotal";
+import ShownVendorText from "@/components/ShownVendorText";
+import { useOrderVendors } from "@/hooks/useOrderVendors";
+import { shownVendor } from "@/lib/trim-order-handoff";
 import {
   fetchServicePartsIndex,
   servicePartsAt,
@@ -973,10 +976,11 @@ export default function WorkOrdersPage() {
                           onDeletePhotos={async () => {
                             for (const w of sec.rows) if (w.photos.length) await deletePhotos(w);
                           }}
+                          liveVendors={isOpen}
                         />
                       </div>
                     ))}
-                    <JobMaterialTotal sections={sections} vendorColor="#6DB344" />
+                    <JobMaterialTotal sections={sections} vendorColor="#6DB344" liveVendors={isOpen} />
                   </div>
                 </div>
               );
@@ -1105,6 +1109,7 @@ function ReviewSection({
   nudge,
   onSnooze,
   onDeletePhotos,
+  liveVendors,
 }: {
   section: WriteUpSection;
   total: number;
@@ -1123,8 +1128,13 @@ function ReviewSection({
   /** "Not yet" — hush the question for a while. */
   onSnooze: () => Promise<void>;
   onDeletePhotos: () => Promise<void>;
+  /** Look up the trim order's vendors — only while the tile is open. */
+  liveVendors: boolean;
 }) {
   const [snoozing, setSnoozing] = useState(false);
+  const sectionOrder = section.rows[0]?.orderNumber || "";
+  const vendorsByOrder = useOrderVendors([sectionOrder], liveVendors);
+  const orderVendors = vendorsByOrder?.[sectionOrder.trim()] ?? null;
   const [closingFromNudge, setClosingFromNudge] = useState(false);
   const allWork = [...section.outstanding, ...section.completed].sort((a, b) => a.seq - b.seq);
   // Crews that could do this work — tile only, never the PDF. Editable in
@@ -1586,7 +1596,9 @@ function ReviewSection({
                     <td className={`px-2 py-1 text-xs border-b border-border text-muted${strike}`}>{m.color || "—"}</td>
                     <td className={`px-2 py-1 text-xs border-b border-border text-muted${strike}`}>{m.species || "—"}</td>
                     <td className={`px-2 py-1 text-xs border-b border-border text-muted font-mono${strike}`}>{m.lengths || "—"}</td>
-                    <td className={`px-2 py-1 text-xs border-b border-border font-bold text-[#6DB344]${strike}`}>{m.vendor || "—"}</td>
+                    <td className={`px-2 py-1 text-xs border-b border-border font-bold text-[#6DB344]${strike}`}>
+                      <ShownVendorText shown={shownVendor(m, orderVendors)} />
+                    </td>
                   </tr>,
                 ];
               })}
