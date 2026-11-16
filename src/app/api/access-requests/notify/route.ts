@@ -126,7 +126,8 @@ export async function POST(request: Request) {
         `Name:  ${row.name || "(not given)"}`,
         `Email: ${row.email}`,
         "",
-        "Open Duck Force → Admin → Requests to approve or deny it.",
+        "Approve or deny it in NWO Toolbox → Admin → Team:",
+        "https://www.nwotoolbox.com/admin?tab=team",
       ].join("\n"),
     });
 
