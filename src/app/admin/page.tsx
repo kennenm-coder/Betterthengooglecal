@@ -76,7 +76,7 @@ export default function AdminPage() {
           <h1 className="text-lg font-semibold">Team Management</h1>
         </header>
         <main className="flex-1 overflow-y-auto p-4">
-          <TeamTab canDelete={false} isPayrollAdmin={true} />
+          <TeamMovedNotice />
         </main>
         <BottomNav />
       </div>
@@ -143,7 +143,7 @@ function UnlockedContent() {
 
       <div className="flex-1 overflow-y-auto p-4">
         {tab === "settings" && <SettingsTab />}
-        {tab === "team" && <TeamTab canDelete={true} />}
+        {tab === "team" && <TeamMovedNotice />}
         {tab === "log" && <LogTab />}
         {tab === "upload" && <UploadTab />}
       </div>
@@ -151,7 +151,42 @@ function UnlockedContent() {
   );
 }
 
-/* ── Team Tab ── */
+/* ── Team: managed in the NWO Toolbox hub ── */
+
+/**
+ * Where the team roster is managed now. Every app shares one roster
+ * (`allowed_emails`), so it has one editor: Admin -> Team in the NWO Toolbox
+ * hub, which admins and payroll admins can both open, with the same powers
+ * they had here.
+ */
+const TEAM_ADMIN_URL = "https://www.nwotoolbox.com/admin?tab=team";
+
+function TeamMovedNotice() {
+  return (
+    <div className="max-w-md mx-auto mt-6 rounded-xl border border-border bg-surface p-5 space-y-3 text-center">
+      <Users className="w-10 h-10 text-primary mx-auto" />
+      <h2 className="text-base font-semibold">Team is managed in NWO Toolbox</h2>
+      <p className="text-sm text-muted">
+        Adding people, changing roles, linking installers to a crew and approving
+        access requests all happen in one place now, for every app.
+      </p>
+      <a
+        href={TEAM_ADMIN_URL}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-primary text-white text-sm font-medium"
+      >
+        Manage team in NWO Toolbox ↗
+      </a>
+      <p className="text-xs text-muted">Sign in with your Duck Force email and password.</p>
+    </div>
+  );
+}
+
+/* ── Team Tab (retired) ──
+ * No longer rendered: the roster is edited in the hub (see TeamMovedNotice).
+ * Kept so moving back is a one-line change while the hub version beds in.
+ * Delete once the hub's Team tab has been in daily use for a while. */
 interface AllowedEmail {
   id: string;
   email: string;
@@ -343,6 +378,7 @@ function ResourcePicker({
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- retired, kept for rollback (see note above AllowedEmail)
 function TeamTab({ canDelete = true, isPayrollAdmin = false }: { canDelete?: boolean; isPayrollAdmin?: boolean }) {
   const [emails, setEmails] = useState<AllowedEmail[]>([]);
   const [requests, setRequests] = useState<AccessRequest[]>([]);
