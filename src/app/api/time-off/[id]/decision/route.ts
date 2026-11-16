@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 import { requireRole, getAdminClient } from "@/lib/auth";
 import { logKioskEvent } from "@/lib/kiosk-inbox-server";
 
@@ -99,7 +99,12 @@ export async function POST(
     // the decision is already saved, and the kiosk's own cron sweep picks up
     // anything this call fails to deliver. A mail problem must never make an
     // approval look like it failed.
-    void notifyKiosk(id);
+    //
+    // after(), not a bare `void` promise: on Vercel the function is frozen as
+    // soon as the response is sent, so an un-awaited fetch never went out and
+    // every employee waited up to 15 minutes for the sweep. after() keeps the
+    // function alive until the ping finishes, without delaying the response.
+    after(() => notifyKiosk(id));
 
     // The kiosk's audit trail, like every other inbox decision. Only kiosk
     // requests have a submission to hang it on.
