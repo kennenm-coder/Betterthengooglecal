@@ -37,6 +37,7 @@ import { useData } from "./DataProvider";
 import { parseISO, isSameDay } from "date-fns";
 import { describeParts } from "@/lib/purchase-orders";
 import CrewWorkChecklist from "./CrewWorkChecklist";
+import WriteUpCompletedBy from "./WriteUpCompletedBy";
 
 function isValidHttpUrl(s: string): boolean {
   try {
@@ -174,6 +175,9 @@ export default function JobCard({
   const writeUpOrders = new Set(writeUpRefs.map((r) => r.orderNumber).filter(Boolean));
   const showWriteUps = writeUpRefs.length > 0;
 
+  // Bumped when a crew checks something off on this tile, so the "completed
+  // by" line above the write-ups button picks up the new name straight away.
+  const [checkOffTick, setCheckOffTick] = useState(0);
   const [editingLegacy, setEditingLegacy] = useState(false);
   const [legacyInput, setLegacyInput] = useState("");
   const [savingLegacy, setSavingLegacy] = useState(false);
@@ -438,7 +442,12 @@ export default function JobCard({
               checkbox per item for the crew (three choices per tap). */}
           {order.workOrderType === "Service" && writeUpRefs.length > 0 && (
             <div className="mt-3">
-              <CrewWorkChecklist ids={writeUpRefs.map((r) => r.id)} onChanged={refreshActiveWriteUps} />
+              <CrewWorkChecklist ids={writeUpRefs.map((r) => r.id)}
+                onChanged={() => {
+                  refreshActiveWriteUps();
+                  setCheckOffTick((t) => t + 1);
+                }}
+              />
             </div>
           )}
 
@@ -556,6 +565,7 @@ export default function JobCard({
           {/* Active write-ups at this address — a service tile's equivalent of
               the install instructions button, since the issues to fix live on
               the original install's order number, not this one. */}
+          {showWriteUps && <WriteUpCompletedBy ids={writeUpRefs.map((r) => r.id)} refreshKey={checkOffTick} />}
           {showWriteUps && (
             <button
               onClick={() => {
