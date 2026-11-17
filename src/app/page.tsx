@@ -16,6 +16,7 @@ import TimeOffBell from "@/components/TimeOffBell";
 import { useAuth } from "@/hooks/useAuth";
 import {
   canManageTimeOff as canManageTimeOffRole,
+  isMfmSubmitter,
   canSeeFloaters,
   canSeeMeasureTiles,
   isInstaller,
@@ -29,7 +30,7 @@ import { fetchTimeOffRequests } from "@/lib/time-off-store";
 import { fetchSpecialDays, groupSpecialDaysByDate, isMeasureOnlyCrew, specialDayMatchesCrew, type SpecialDay } from "@/lib/special-days-store";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO, startOfWeek } from "date-fns";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, CalendarDays, Plus, UserCog } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, RefreshCw, CalendarDays, Plus, UserCog, BadgeDollarSign } from "lucide-react";
 
 export default function CalendarPageWrapper() {
   return (
@@ -49,6 +50,8 @@ function CalendarPage() {
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequest[]>([]);
   const { roles, crewNames } = useAuth();
   const canManageTimeOff = canManageTimeOffRole(roles);
+  // The More for More Submitter's quick way to the office More for More tab.
+  const showMfmButton = isMfmSubmitter(roles);
   const { isStale, staleAfter, nextUpdate, isDesktop, dismiss, resetBlock } = useStaleTab();
 
   useEffect(() => {
@@ -257,6 +260,17 @@ function CalendarPage() {
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">Time Off</span>
+            </button>
+          )}
+
+          {showMfmButton && (
+            <button
+              onClick={() => router.push("/time-off?tab=mfm")}
+              className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-md bg-rba-green text-white font-medium shrink-0 active:scale-[0.97] transition-all"
+              title="More for More: finish sheets, send back, download"
+            >
+              <BadgeDollarSign className="w-4 h-4" />
+              <span className="hidden sm:inline">More for More</span>
             </button>
           )}
 
