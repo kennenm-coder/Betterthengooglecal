@@ -421,6 +421,7 @@ export default function MoreForMoreForm({
         currentRates: liveRates,
         existingOffice: isSub ? sheet?.office_data : null,
         approverName: isSub ? myName : undefined,
+        approverEmail: isSub ? user?.email?.toLowerCase() : undefined,
       });
       onSaved(saved);
       if (status === "draft") onClose();

@@ -585,6 +585,8 @@ export async function submitLeadSheet(input: {
   existingOffice?: Partial<OfficeData> | null;
   /** Approving only: the submitter's name, shown as who completed it. */
   approverName?: string;
+  /** Approving only: the submitter's email, recorded as who completed it. */
+  approverEmail?: string;
 }): Promise<MoreForMore> {
   const lead: LeadData = { ...input.lead, rates: normalizeRates(input.currentRates) };
   const approving = input.status === "approved";
@@ -599,6 +601,10 @@ export async function submitLeadSheet(input: {
   if (approving) {
     row.final_total = finalTotal;
     row.completed_by_name = input.approverName || null;
+    // Who and when. The database stamps these itself for a submitter; an
+    // admin goes through payroll's path, which keeps what the app sends.
+    row.completed_at = new Date().toISOString();
+    row.completed_by = input.approverEmail || null;
     // Tells the database this is the submitter re-approving their own sheet,
     // not the office working it (056) — so it stays marked auto-approved.
     row.auto_approved = true;

@@ -89,13 +89,14 @@ export function canFillMoreForMore(roles: RoleInput): boolean {
  * The More for More Submitter: someone who puts sheets in for EVERY crew
  * (not just their own) and whose submit approves the sheet on the spot.
  * Additive — it restricts nobody. Assigned in the NWO hub; this app only
- * reads it. Mirrors the mfm-submitter checks in migration 055.
+ * reads it. Mirrors the mfm-submitter checks in migrations 055/056.
  *
- * Deliberately the explicit role only: an admin sees the lead view unless
- * they also tick this role (handy for testing it).
+ * Admins count too, like every other gate (Kennen, 2026-11-17): they get the
+ * submitter's More for More list, the green More for More button and the
+ * rest. The database already lets admins do all of it as payroll.
  */
 export function isMfmSubmitter(roles: RoleInput): boolean {
-  return toList(roles).includes("mfm-submitter");
+  return isAdmin(roles) || toList(roles).includes("mfm-submitter");
 }
 
 /** Who gets the More for More tab at all: leads, submitters, and admins. */
