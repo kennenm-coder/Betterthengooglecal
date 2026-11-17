@@ -372,7 +372,15 @@ checks(migration, feature, verdict, checked) as (values
         and exists(select 1 from pol where t = 'more_for_more_jobs'
                      and p = 'mfm_jobs_update' and body like '%mfm-submitter%')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'mfm-submitter in the sheet read policy AND the job-flags update policy')
+  'mfm-submitter in the sheet read policy AND the job-flags update policy'),
+
+ ('057', 'More for More crews & tiers (lead_id, training, subcontractor)',
+  case when exists(select 1 from col where k = 'more_for_more_people.lead_id')
+        and exists(select 1 from col where k = 'more_for_more_people.training')
+        and exists(select 1 from pol where t = 'more_for_more_people'
+                     and p = 'mfm_people_update' and body like '%mfm-submitter%')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'lead_id and training columns AND mfm-submitter in the people update policy')
 )
 select migration, feature, verdict, checked
 from checks

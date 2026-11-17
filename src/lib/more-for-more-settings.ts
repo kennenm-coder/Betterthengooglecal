@@ -1,6 +1,8 @@
 // More for More settings (migration 047): the live bonus rates and the people
-// the form suggests by name. Payroll (admin, payroll-admin) edits both on
-// /more-for-more/settings; everyone allowlisted reads them.
+// the form suggests by name. Payroll (admin, payroll-admin) edits the rates on
+// /more-for-more/settings. The people are also the Crews & Tiers table (057),
+// which payroll AND the More for More Submitter edit. Everyone allowlisted
+// reads both.
 
 import { getSupabase } from "./supabase";
 import { DEFAULT_RATES, normalizeRates, type MfmRates, type Tier } from "./more-for-more";
@@ -19,6 +21,12 @@ export interface MfmPerson {
    * payroll typed in who has no account.
    */
   email?: string | null;
+  /** Their usual lead (057): who they ride with. A lead's crew points at them. */
+  leadId?: string | null;
+  /** Training (057): on the crew, but no bonus on a sheet. */
+  training?: boolean;
+  /** A subcontractor crew (057). A tag for now. */
+  subcontractor?: boolean;
 }
 
 function db() {
@@ -59,7 +67,31 @@ function toPerson(r: Record<string, unknown>): MfmPerson {
     tier: t === 1 || t === 2 || t === 3 ? (t as Tier) : null,
     active: r.active !== false,
     email: typeof r.email === "string" && r.email ? r.email.toLowerCase() : null,
+    leadId: typeof r.lead_id === "string" && r.lead_id ? r.lead_id : null,
+    training: r.training === true,
+    subcontractor: r.subcontractor === true,
   };
+}
+
+/** The columns a save writes. Crew fields only once 057 has added them. */
+function personRow(p: Omit<MfmPerson, "id">) {
+  return {
+    name: p.name.trim(),
+    kind: p.kind,
+    // Training means no tier; a tier means not training.
+    tier: p.training ? null : p.tier,
+    active: p.active,
+    ...(p.leadId !== undefined ? { lead_id: p.leadId } : {}),
+    ...(p.training !== undefined ? { training: p.training } : {}),
+    ...(p.subcontractor !== undefined ? { subcontractor: p.subcontractor } : {}),
+  };
+}
+
+/** A lead's crew: everyone whose usual lead is them, active only, A-Z. */
+export function crewOf(people: MfmPerson[], leadId: string): MfmPerson[] {
+  return people
+    .filter((p) => p.active && p.leadId === leadId)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -85,7 +117,7 @@ function friendly(message: string): string {
 export async function addMfmPerson(p: Omit<MfmPerson, "id">): Promise<MfmPerson> {
   const { data, error } = await db()
     .from("more_for_more_people")
-    .insert({ name: p.name.trim(), kind: p.kind, tier: p.tier, active: p.active })
+    .insert(personRow(p))
     .select("*")
     .single();
   if (error) throw new Error(friendly(error.message));
@@ -95,7 +127,7 @@ export async function addMfmPerson(p: Omit<MfmPerson, "id">): Promise<MfmPerson>
 export async function updateMfmPerson(p: MfmPerson): Promise<MfmPerson> {
   const { data, error } = await db()
     .from("more_for_more_people")
-    .update({ name: p.name.trim(), kind: p.kind, tier: p.tier, active: p.active, updated_at: new Date().toISOString() })
+    .update({ ...personRow(p), updated_at: new Date().toISOString() })
     .eq("id", p.id)
     .select("*")
     .single();

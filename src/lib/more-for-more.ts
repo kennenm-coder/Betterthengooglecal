@@ -179,6 +179,8 @@ export interface ApprenticeEntry {
   /** True: did the same units as the lead (the usual case). */
   sameAsLead: boolean;
   qty: Qty;
+  /** Training (057): on the sheet, but no bonus at all (units, jobs, JIP). */
+  training?: boolean;
 }
 
 /** The lead's half. */
@@ -318,6 +320,7 @@ export function normalizeLead(l: Partial<LeadData> | null | undefined): LeadData
       tier: a?.tier ?? null,
       sameAsLead: a?.sameAsLead !== false,
       qty: { ...(a?.qty || {}) },
+      training: a?.training === true,
     }));
   return merged;
 }
@@ -328,6 +331,8 @@ export interface PersonCalc {
   role: "lead" | "apprentice";
   name: string;
   tier: Tier | null;
+  /** Training (057): paid nothing on this sheet. */
+  training?: boolean;
   qty: Qty;
   /** Per unit line: qty × rate. */
   lines: Record<UnitKey, number>;
@@ -390,9 +395,15 @@ export function calcSheet(
   const extras = extrasOf(lead, officeIn);
   const rates = normalizeRates(lead.rates ?? currentRates ?? null);
   const people: PersonCalc[] = [];
-  const entries: { role: "lead" | "apprentice"; name: string; tier: Tier | null; appIdx: number | null }[] = [
-    { role: "lead", name: lead.leadName, tier: lead.leadTier, appIdx: null },
-    ...lead.apprentices.map((a, i) => ({ role: "apprentice" as const, name: a.name, tier: a.tier, appIdx: i })),
+  const entries: { role: "lead" | "apprentice"; name: string; tier: Tier | null; appIdx: number | null; training: boolean }[] = [
+    { role: "lead", name: lead.leadName, tier: lead.leadTier, appIdx: null, training: false },
+    ...lead.apprentices.map((a, i) => ({
+      role: "apprentice" as const,
+      name: a.name,
+      tier: a.training ? null : a.tier,
+      appIdx: i,
+      training: !!a.training,
+    })),
   ];
   entries.forEach((e, idx) => {
     const isLead = e.role === "lead";
@@ -414,14 +425,17 @@ export function calcSheet(
     const deductionAmt = round2((subtotal * deductionPct) / 100);
     const jobs = extras.additionalJobs.length;
     const who = isLead ? "lead" : "apprentice";
-    const additionalJobs = jobs * rates.additionalJob[who];
-    const jip =
-      (extras.jipInstallRelated ? rates.jip.installRelated[who] : 0) +
-      (extras.jipLittle ? rates.jip.little[who] : 0);
+    // Training: no bonus of any kind (Kennen, 2026-11-17).
+    const additionalJobs = e.training ? 0 : jobs * rates.additionalJob[who];
+    const jip = e.training
+      ? 0
+      : (extras.jipInstallRelated ? rates.jip.installRelated[who] : 0) +
+        (extras.jipLittle ? rates.jip.little[who] : 0);
     people.push({
       role: e.role,
       name: e.name,
       tier: e.tier,
+      training: e.training,
       qty,
       lines,
       subtotal,

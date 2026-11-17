@@ -14,6 +14,7 @@ import Link from "next/link";
 import { BadgeDollarSign, Search, X, Loader2, ChevronRight, Inbox } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import MoreForMoreForm from "@/components/MoreForMoreForm";
+import MoreForMoreCrews from "@/components/MoreForMoreCrews";
 import { useData } from "@/components/DataProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { refreshMfmNotices } from "@/hooks/useMfmNotices";
@@ -86,6 +87,8 @@ export default function MoreForMoreSubmitter() {
   const [loadError, setLoadError] = useState("");
 
   const [filter, setFilter] = useState<Filter>("todo");
+  // Jobs to submit, or the Crews & Tiers table (057).
+  const [section, setSection] = useState<"jobs" | "crews">("jobs");
   const [query, setQuery] = useState("");
   const [from, setFrom] = useState("");
   const [open, setOpen] = useState<{ job: JobSnapshot; order: WorkOrder | null; sheet: MoreForMore | null } | null>(null);
@@ -222,6 +225,26 @@ export default function MoreForMoreSubmitter() {
             Office
           </Link>
         </div>
+        <div className="flex rounded-lg bg-surface p-0.5">
+          {(
+            [
+              ["jobs", "Jobs"],
+              ["crews", "Crews & Tiers"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setSection(key)}
+              className={`flex-1 rounded-md px-2 py-1.5 text-sm font-medium ${
+                section === key ? "bg-background shadow-sm text-foreground" : "text-muted"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {section === "jobs" && (
+          <>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted" />
           <input
@@ -273,11 +296,15 @@ export default function MoreForMoreSubmitter() {
             />
           </label>
         </div>
+          </>
+        )}
       </header>
 
       <div className="flex-1 overflow-auto">
         {loadError && <p className="px-4 py-3 text-sm text-danger">{loadError}</p>}
-        {loading ? (
+        {section === "crews" ? (
+          <MoreForMoreCrews />
+        ) : loading ? (
           <div className="flex justify-center py-16">
             <Loader2 className="w-6 h-6 animate-spin text-muted" />
           </div>

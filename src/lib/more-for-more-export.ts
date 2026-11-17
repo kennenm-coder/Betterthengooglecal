@@ -90,7 +90,7 @@ export function sheetValues(rec: MoreForMore): SheetValues {
 
   people.forEach((p, i) => {
     put(NAME_CELLS[i], p.name);
-    put(TIER_CELLS[i], p.tier ?? "");
+    put(TIER_CELLS[i], p.training ? "Training" : p.tier ?? "");
     const start = UNIT_ROWS[i];
     UNIT_ITEMS.forEach((item, j) => {
       const q = Number(p.qty[item.key]) || 0;
@@ -301,7 +301,7 @@ function summarySheetXml(groups: { name: string; sheets: MoreForMore[] }[]): str
       const personCols = [0, 1, 2].flatMap((i) => {
         const p = people[i];
         if (!p) return ["", "", "", "", "", "", "", ""];
-        return [p.name, p.tier ?? "", p.subtotal, p.deductionPct, p.deductionAmt, p.additionalJobs, p.jip, p.pay];
+        return [p.name, p.training ? "Training" : p.tier ?? "", p.subtotal, p.deductionPct, p.deductionAmt, p.additionalJobs, p.jip, p.pay];
       });
       rows.push([
         fmtDate(rec.created_at), fmtDate(rec.submitted_at), STATUS_LABEL[rec.status] || rec.status,

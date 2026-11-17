@@ -30,6 +30,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { canManageMoreForMore } from "@/lib/roles";
 import MoreForMoreForm from "@/components/MoreForMoreForm";
 import MoreForMoreJobs from "@/components/MoreForMoreJobs";
+import MoreForMoreCrews from "@/components/MoreForMoreCrews";
 import type { WorkOrder } from "@/lib/types";
 import { fetchMoreForMores, money, type JobSnapshot, type MoreForMore } from "@/lib/more-for-more";
 
@@ -69,7 +70,7 @@ export default function MoreForMoreOffice() {
   const [sheets, setSheets] = useState<MoreForMore[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [view, setView] = useState<"needs" | "progress" | "done" | "jobs">("needs");
+  const [view, setView] = useState<"needs" | "progress" | "done" | "jobs" | "crews">("needs");
   const [query, setQuery] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -187,7 +188,7 @@ export default function MoreForMoreOffice() {
     <div className="flex-1 overflow-auto">
       <div className="max-w-3xl mx-auto w-full">
         <div className="px-3 pt-3 space-y-2 sticky top-0 bg-background z-10 pb-2 border-b border-border">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
             {viewBtn("needs", `Needs office${needsCount ? ` (${needsCount})` : ""}`)}
             {viewBtn(
               "progress",
@@ -196,10 +197,11 @@ export default function MoreForMoreOffice() {
             )}
             {viewBtn("done", "Completed")}
             {viewBtn("jobs", "Jobs", "Every install, and whether its More for More is in")}
+            {viewBtn("crews", "Crews & Tiers", "Who rides with whom, and each person's tier")}
           </div>
           <div className="flex items-center gap-2">
-            {view === "jobs" && <div className="flex-1" />}
-            <div className={`relative flex-1 min-w-0 ${view === "jobs" ? "hidden" : ""}`}>
+            {(view === "jobs" || view === "crews") && <div className="flex-1" />}
+            <div className={`relative flex-1 min-w-0 ${view === "jobs" || view === "crews" ? "hidden" : ""}`}>
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
               <input
                 value={query}
@@ -295,7 +297,9 @@ export default function MoreForMoreOffice() {
 
         {error && <p className="px-4 py-3 text-sm text-danger">{error}</p>}
 
-        {view === "jobs" ? (
+        {view === "crews" ? (
+          <MoreForMoreCrews />
+        ) : view === "jobs" ? (
           loading ? (
             <div className="flex justify-center py-16">
               <Loader2 className="w-6 h-6 animate-spin text-muted" />

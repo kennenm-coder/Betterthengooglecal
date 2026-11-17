@@ -33,7 +33,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useMfmSettings } from "@/hooks/useMfmSettings";
 import { canManageMoreForMore } from "@/lib/roles";
 import type { WorkOrder } from "@/lib/types";
-import type { MfmPerson } from "@/lib/more-for-more-settings";
+import { crewOf, type MfmPerson } from "@/lib/more-for-more-settings";
 import {
   calcSheet,
   createOfficeSheet,
@@ -100,7 +100,20 @@ function sameWords(a: string, b: string): boolean {
   return short.every((w) => long.includes(w));
 }
 
-function TierPicker({ value, onChange }: { value: Tier | null; onChange: (t: Tier) => void }) {
+function TierPicker({
+  value,
+  onChange,
+  training,
+  onTraining,
+}: {
+  value: Tier | null;
+  onChange: (t: Tier) => void;
+  /** Apprentices only: a fourth choice, Training (no bonus). */
+  training?: boolean;
+  onTraining?: () => void;
+}) {
+  const on = "border-rba-green bg-rba-green text-white";
+  const off = "border-border bg-surface text-foreground";
   return (
     <div className="flex gap-1.5">
       {([1, 2, 3] as Tier[]).map((t) => (
@@ -108,15 +121,38 @@ function TierPicker({ value, onChange }: { value: Tier | null; onChange: (t: Tie
           key={t}
           type="button"
           onClick={() => onChange(t)}
-          className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
-            value === t ? "border-rba-green bg-rba-green text-white" : "border-border bg-surface text-foreground"
+          className={`flex-1 rounded-lg border px-2 py-2 text-sm font-semibold transition-colors ${
+            !training && value === t ? on : off
           }`}
         >
           Tier {t}
         </button>
       ))}
+      {onTraining && (
+        <button
+          type="button"
+          onClick={onTraining}
+          className={`flex-1 rounded-lg border px-2 py-2 text-sm font-semibold transition-colors ${training ? on : off}`}
+          title="In training: on the sheet, but no bonus"
+        >
+          Training
+        </button>
+      )}
     </div>
   );
+}
+
+/** A person's usual crew, as the sheet's apprentices (two slots). */
+function crewAsApprentices(roster: MfmPerson[], lead: MfmPerson): ApprenticeEntry[] {
+  return crewOf(roster, lead.id)
+    .slice(0, 2)
+    .map((p) => ({
+      name: p.name,
+      tier: p.training ? null : p.tier,
+      training: !!p.training,
+      sameAsLead: true,
+      qty: {},
+    }));
 }
 
 function Stepper({ value, onChange }: { value: number; onChange: (n: number) => void }) {
@@ -362,6 +398,8 @@ export default function MoreForMoreForm({
           ...l,
           leadName: match ? match.name : crew,
           leadTier: l.leadTier ?? match?.tier ?? null,
+          // Their usual crew rides along (Crews & Tiers), unless already added.
+          apprentices: match && l.apprentices.length === 0 ? crewAsApprentices(roster, match) : l.apprentices,
         };
       });
       // The people list loads after the form opens: keep trying until it has.
@@ -376,6 +414,7 @@ export default function MoreForMoreForm({
       ...l,
       leadName: !l.leadName.trim() || l.leadName === myName ? me.name : l.leadName,
       leadTier: l.leadTier ?? me.tier,
+      apprentices: l.apprentices.length === 0 ? crewAsApprentices(roster, me) : l.apprentices,
     }));
   }, [roster, sheet, isOffice, isSub, job.crew_name, user?.email, myName]);
   // The lead always works at today's rates (their save stamps them on the
@@ -413,7 +452,7 @@ export default function MoreForMoreForm({
     if (!lead.leadTier) return "Pick the lead's tier.";
     for (const [i, a] of lead.apprentices.entries()) {
       if (!a.name.trim()) return `Enter apprentice ${i + 1}'s name, or remove them.`;
-      if (!a.tier) return `Pick ${a.name.trim()}'s tier.`;
+      if (!a.tier && !a.training) return `Pick ${a.name.trim()}'s tier (or Training).`;
     }
     const anyUnits = Object.values(lead.leadQty).some((v) => Number(v) > 0);
     if (!anyUnits) return "Enter at least one unit.";
@@ -807,7 +846,13 @@ export default function MoreForMoreForm({
                   <NameInput
                     value={a.name}
                     onChange={(name) => setApp(i, { name })}
-                    onPick={(p) => setApp(i, { name: p.name, tier: p.tier ?? a.tier })}
+                    onPick={(p) =>
+                      setApp(i, {
+                        name: p.name,
+                        tier: p.training ? null : p.tier ?? a.tier,
+                        training: !!p.training,
+                      })
+                    }
                     people={roster}
                     prefer="apprentice"
                     placeholder={`Apprentice ${i + 1} name`}
@@ -821,7 +866,15 @@ export default function MoreForMoreForm({
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
-                <TierPicker value={a.tier} onChange={(t) => setApp(i, { tier: t })} />
+                <TierPicker
+                  value={a.tier}
+                  onChange={(t) => setApp(i, { tier: t, training: false })}
+                  training={!!a.training}
+                  onTraining={() => setApp(i, { tier: null, training: true })}
+                />
+                {a.training && (
+                  <p className="text-xs text-muted">Training: on the sheet, but no bonus (units, jobs and JIP pay $0).</p>
+                )}
                 <label className="flex items-center gap-2 text-sm py-1">
                   <input
                     type="checkbox"
