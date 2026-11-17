@@ -2,6 +2,11 @@
 // Both the client (button visibility) and the DB RLS policies must agree on
 // who counts as a "field worker" — keep FIELD_WORK_ROLES in sync with the
 // role checks in supabase/migrations/005_field_work_orders.sql.
+//
+// WHERE ROLES ARE CREATED: the NWO Hub (Kennen-s-App, nwotoolbox.com) — its
+// Team tab and src/lib/roster-roles.ts. Do NOT add a new assignable role to
+// ROLE_OPTIONS below; add it to the hub's list. This file only decides what a
+// held role may DO in the calendar (the gates), and labels it for display.
 
 import type { UserRole } from "@/hooks/useAuth";
 
@@ -78,6 +83,24 @@ export function needsCrew(roles: RoleInput): boolean {
  */
 export function canFillMoreForMore(roles: RoleInput): boolean {
   return hasAny(roles, ["installer-lead", "admin"]);
+}
+
+/**
+ * The More for More Submitter: someone who puts sheets in for EVERY crew
+ * (not just their own) and whose submit approves the sheet on the spot.
+ * Additive — it restricts nobody. Assigned in the NWO hub; this app only
+ * reads it. Mirrors the mfm-submitter checks in migration 055.
+ *
+ * Deliberately the explicit role only: an admin sees the lead view unless
+ * they also tick this role (handy for testing it).
+ */
+export function isMfmSubmitter(roles: RoleInput): boolean {
+  return toList(roles).includes("mfm-submitter");
+}
+
+/** Who gets the More for More tab at all: leads, submitters, and admins. */
+export function canSeeMoreForMore(roles: RoleInput): boolean {
+  return canFillMoreForMore(roles) || isMfmSubmitter(roles);
 }
 
 /**
@@ -288,9 +311,12 @@ export const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: "installer-lead", label: "Installer Lead (More for More)" },
 ];
 
-export const ROLE_LABELS: Record<string, string> = Object.fromEntries(
-  ROLE_OPTIONS.map((r) => [r.value, r.label])
-);
+export const ROLE_LABELS: Record<string, string> = {
+  ...Object.fromEntries(ROLE_OPTIONS.map((r) => [r.value, r.label])),
+  // Not in ROLE_OPTIONS on purpose: it is handed out in the NWO hub, so it
+  // gets no checkbox on this app's Team page. Labelled here for badges only.
+  "mfm-submitter": "More for More Submitter",
+};
 
 export const ROLE_STYLES: Record<string, string> = {
   admin: "bg-primary/15 text-primary",
@@ -309,4 +335,5 @@ export const ROLE_STYLES: Record<string, string> = {
   "inventory-specialist": "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
   installer: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
   "installer-lead": "bg-stone-500/15 text-stone-700 dark:text-stone-300",
+  "mfm-submitter": "bg-rba-green/15 text-rba-green",
 };

@@ -36,7 +36,10 @@ export type UserRole =
   | "installer"
   // Install lead: restricted like installer (unless also field-manager), and
   // fills out More for More bonus sheets. See migration 045.
-  | "installer-lead";
+  | "installer-lead"
+  // Puts More for More sheets in for every crew, auto-approved. Additive (not
+  // restricted). Assigned in the NWO hub, not the calendar's Team page.
+  | "mfm-submitter";
 
 interface AuthState {
   user: User | null;

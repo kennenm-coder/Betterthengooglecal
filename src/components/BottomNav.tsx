@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { Calendar, Search, ScrollText, Wrench, BadgeDollarSign } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useMfmNotices } from "@/hooks/useMfmNotices";
-import { canSeeWriteUps, isAdmin, isInstaller, isInstallerLead } from "@/lib/roles";
+import { canSeeWriteUps, isAdmin, isInstaller, isInstallerLead, isMfmSubmitter } from "@/lib/roles";
 
 // Settings lives in the top-right of the calendar header, not the bottom nav.
 const NAV_ITEMS = [
@@ -41,7 +41,7 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
       (!i.writeUps || canSeeWriteUps(roles)) &&
       (!i.notInstaller || !(isInstaller(roles) || (isInstallerLead(roles) && !isAdmin(roles)))) &&
       // Admins always see everything, so they get it without the role.
-      (!i.installerLead || isInstallerLead(roles) || isAdmin(roles))
+      (!i.installerLead || isInstallerLead(roles) || isAdmin(roles) || isMfmSubmitter(roles))
   );
 
   return (

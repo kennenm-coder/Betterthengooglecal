@@ -11,7 +11,8 @@ import MoreForMoreForm from "@/components/MoreForMoreForm";
 import { useData } from "@/components/DataProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { refreshMfmNotices } from "@/hooks/useMfmNotices";
-import { canFillMoreForMore } from "@/lib/roles";
+import MoreForMoreSubmitter from "@/components/MoreForMoreSubmitter";
+import { canFillMoreForMore, isMfmSubmitter } from "@/lib/roles";
 import { crewsForDate, ownsOrder } from "@/lib/format-utils";
 import { searchOrders } from "@/lib/search";
 import { formatDateShort } from "@/lib/calendar-utils";
@@ -87,7 +88,17 @@ function latestPerJob(orders: WorkOrder[]): WorkOrder[] {
   return Array.from(byJob.values());
 }
 
+/**
+ * A More for More Submitter gets the every-crew view (which approves on
+ * submit); everyone else here is a lead, or an admin looking at the lead view.
+ */
 export default function MoreForMorePage() {
+  const { roles, loading } = useAuth();
+  if (!loading && isMfmSubmitter(roles)) return <MoreForMoreSubmitter />;
+  return <LeadView />;
+}
+
+function LeadView() {
   const { roles, user, crewNames, loading: authLoading } = useAuth();
   const { orders, loading: dataLoading } = useData();
   const [sheets, setSheets] = useState<MoreForMore[]>([]);

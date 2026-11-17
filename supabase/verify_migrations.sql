@@ -356,7 +356,15 @@ checks(migration, feature, verdict, checked) as (values
                      and p = 'field_workers_insert_field_work_orders' and body like '%installer%')
        then 'APPLIED' else 'NOT APPLIED' end,
   'both crew functions AND installer in the write-up insert policy — the '
-  'functions alone would leave installers unable to file a follow-up')
+  'functions alone would leave installers unable to file a follow-up'),
+
+ ('055', 'More for More Submitter role (auto-approved sheets)',
+  case when exists(select 1 from col where k = 'more_for_more.auto_approved')
+        and exists(select 1 from fn where k = 'mfm_job_status')
+        and exists(select 1 from pol where t = 'more_for_more'
+                     and p = 'mfm_insert' and body like '%mfm-submitter%')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'auto_approved column, mfm_job_status() AND mfm-submitter in the insert policy')
 )
 select migration, feature, verdict, checked
 from checks

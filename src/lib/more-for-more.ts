@@ -262,6 +262,11 @@ export interface MoreForMore {
   lead_ack_at?: string | null;
   /** Typed in by payroll from a paper sheet (048). */
   on_paper?: boolean;
+  /**
+   * Approved the moment a More for More Submitter sent it in (055). Clears when
+   * payroll opens and saves it — payroll has then looked at it.
+   */
+  auto_approved?: boolean;
 }
 
 export function emptyLeadData(leadName = ""): LeadData {
@@ -565,19 +570,36 @@ export async function submitLeadSheet(input: {
   job: JobSnapshot;
   lead: LeadData;
   createdByName: string;
-  status: "draft" | "submitted";
+  /**
+   * "approved" is the More for More Submitter's submit: the sheet goes straight
+   * to completed (the trigger in 055 does the bookkeeping and marks it
+   * auto_approved). Anyone else asking for it is turned down by the database.
+   */
+  status: "draft" | "submitted" | "approved";
   /** Today's rates from settings. Every lead save stamps them on the sheet. */
   currentRates: MfmRates;
+  /**
+   * Approving only: payroll's answers already on the sheet (a sent-back sheet
+   * being fixed), so the final pay keeps their deductions. Empty on a new one.
+   */
+  existingOffice?: Partial<OfficeData> | null;
+  /** Approving only: the submitter's name, shown as who completed it. */
+  approverName?: string;
 }): Promise<MoreForMore> {
   const lead: LeadData = { ...input.lead, rates: normalizeRates(input.currentRates) };
-  const { leadTotal } = calcSheet(lead);
-  const row = {
+  const approving = input.status === "approved";
+  const { leadTotal, finalTotal } = calcSheet(lead, approving ? input.existingOffice : null);
+  const row: Record<string, unknown> = {
     ...input.job,
     lead_data: lead,
     lead_total: leadTotal,
-    status: input.status,
+    status: approving ? "completed" : input.status,
     created_by_name: input.createdByName || null,
   };
+  if (approving) {
+    row.final_total = finalTotal;
+    row.completed_by_name = input.approverName || null;
+  }
   const q = input.id
     ? db().from(TABLE).update(row).eq("id", input.id).select("*").single()
     : db().from(TABLE).insert({ ...row, sheet_type: "bonus" }).select("*").single();
@@ -589,6 +611,32 @@ export async function submitLeadSheet(input: {
     throw new Error(error.message);
   }
   return fromRow(data);
+}
+
+/** What a submitter may know about a job's sheet: no money, just where it stands. */
+export interface JobSheetStatus {
+  order_number: string;
+  status: MfmStatus;
+  /** Whose name is on the sheet (the lead it is for). */
+  name: string | null;
+  /** True when the signed-in login made this sheet. */
+  mine: boolean;
+}
+
+/** Every job that already has a More for More, by order number (055). */
+export async function fetchJobSheetStatuses(): Promise<Map<string, JobSheetStatus>> {
+  const { data, error } = await db().rpc("mfm_job_status");
+  if (error) throw new Error(error.message);
+  const out = new Map<string, JobSheetStatus>();
+  for (const r of (data || []) as any[]) {
+    out.set(r.order_number, {
+      order_number: r.order_number,
+      status: r.status,
+      name: r.created_by_name ?? null,
+      mine: !!r.mine,
+    });
+  }
+  return out;
 }
 
 /** Payroll saves their half (and may correct the lead's), optionally completing it. */

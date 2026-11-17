@@ -288,6 +288,14 @@ export default function MoreForMoreOffice() {
                           IN PROGRESS
                         </span>
                       )}
+                      {s.status === "completed" && s.auto_approved && (
+                        <span
+                          className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400"
+                          title="Approved the moment a submitter sent it in. No deductions, and payroll hasn't opened it yet."
+                        >
+                          AUTO-APPROVED
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-muted truncate">
                       #{s.order_number} · {s.lead_data.leadName || s.created_by_name || s.created_by}

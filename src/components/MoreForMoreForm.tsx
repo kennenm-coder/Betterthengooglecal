@@ -63,7 +63,11 @@ import {
 } from "@/lib/more-for-more";
 
 interface Props {
-  mode: "lead" | "office";
+  /**
+   * "submitter" is the More for More Submitter: the lead's form, filled in for
+   * someone else's crew, where submitting approves the sheet on the spot.
+   */
+  mode: "lead" | "office" | "submitter";
   job: JobSnapshot;
   /** The work order, when known — used to pre-fill a new sheet's units. */
   order?: WorkOrder | null;
@@ -283,6 +287,7 @@ export default function MoreForMoreForm({
   useBackClose(onClose);
   const { name: myName, user } = useAuth();
   const isOffice = mode === "office";
+  const isSub = mode === "submitter";
 
   const [lead, setLead] = useState<LeadData>(() => {
     if (sheet) {
@@ -292,7 +297,9 @@ export default function MoreForMoreForm({
       return { ...l, ...extrasOf(l, sheet.office_data) };
     }
     const s = suggestQty(order ?? null);
-    return { ...emptyLeadData(myName), leadQty: s.qty, qtySource: s.source };
+    // A submitter is filling this in for someone else, so their own name is
+    // not the lead's; it is picked below from the job's crew when it matches.
+    return { ...emptyLeadData(isSub ? "" : myName), leadQty: s.qty, qtySource: s.source };
   });
   const [office, setOffice] = useState<OfficeData>(() => {
     const o = normalizeOffice(sheet?.office_data);
@@ -319,6 +326,19 @@ export default function MoreForMoreForm({
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current || sheet || isOffice) return;
+    if (isSub) {
+      // The lead is whoever ran the job: match the crew name to the people list.
+      const crew = (job.crew_name || "").trim().toLowerCase();
+      const match = crew ? roster.find((p) => p.active && p.name.trim().toLowerCase() === crew) : undefined;
+      if (!match) return;
+      prefilled.current = true;
+      setLead((l) => ({
+        ...l,
+        leadName: l.leadName.trim() ? l.leadName : match.name,
+        leadTier: l.leadTier ?? match.tier,
+      }));
+      return;
+    }
     const email = user?.email?.toLowerCase();
     const me = email ? roster.find((p) => p.email === email) : undefined;
     if (!me) return;
@@ -328,7 +348,7 @@ export default function MoreForMoreForm({
       leadName: !l.leadName.trim() || l.leadName === myName ? me.name : l.leadName,
       leadTier: l.leadTier ?? me.tier,
     }));
-  }, [roster, sheet, isOffice, user?.email, myName]);
+  }, [roster, sheet, isOffice, isSub, job.crew_name, user?.email, myName]);
   // The lead always works at today's rates (their save stamps them on the
   // sheet). Payroll sees the rates the sheet was saved with, so a rate change
   // since then doesn't move a sheet they're checking.
@@ -388,9 +408,16 @@ export default function MoreForMoreForm({
         id: sheet?.id,
         job,
         lead,
-        status,
-        createdByName: sheet?.created_by_name || myName || user?.email || "",
+        // A submitter's submit approves it. Payroll's lists and the Excel group
+        // by the name on the sheet, so it carries the LEAD's name (as for paper
+        // sheets), not the submitter's.
+        status: isSub && status === "submitted" ? "approved" : status,
+        createdByName: isSub
+          ? lead.leadName.trim() || myName || user?.email || ""
+          : sheet?.created_by_name || myName || user?.email || "",
         currentRates: liveRates,
+        existingOffice: isSub ? sheet?.office_data : null,
+        approverName: isSub ? myName : undefined,
       });
       onSaved(saved);
       if (status === "draft") onClose();
@@ -512,11 +539,15 @@ export default function MoreForMoreForm({
           <div className="max-w-md mx-auto text-center space-y-4">
             <CheckCircle2 className="w-14 h-14 text-rba-green mx-auto" />
             <div>
-              <h2 className="text-xl font-semibold">{sheet ? "Resubmitted" : "Submitted"}</h2>
+              <h2 className="text-xl font-semibold">
+                {isSub ? (sheet ? "Resubmitted and approved" : "Submitted and approved") : sheet ? "Resubmitted" : "Submitted"}
+              </h2>
               <p className="text-sm text-muted mt-1">
                 {submitted.job_name} · #{submitted.order_number}
               </p>
-              <p className="text-sm text-muted">Payroll will finish it from here.</p>
+              <p className="text-sm text-muted">
+                {isSub ? "It's approved and in payroll's completed list." : "Payroll will finish it from here."}
+              </p>
             </div>
             <div className="rounded-xl border border-border divide-y divide-border text-left">
               {done.people.map((p, i) => (
@@ -537,7 +568,9 @@ export default function MoreForMoreForm({
                 <span className="text-lg font-bold tabular-nums text-rba-green">{money(done.leadTotal)}</span>
               </div>
             </div>
-            <p className="text-[11px] text-muted">Before any deductions payroll applies.</p>
+            <p className="text-[11px] text-muted">
+              {isSub ? "No deductions applied. Payroll can still adjust it later." : "Before any deductions payroll applies."}
+            </p>
           </div>
         </div>
         <div className="border-t border-border p-3 safe-area-bottom">
@@ -660,10 +693,25 @@ export default function MoreForMoreForm({
             </div>
           )}
 
-          {!isOffice && wasCompleted && (
+          {!isOffice && !isSub && wasCompleted && (
             <div className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
               <RotateCcw className="w-4 h-4 shrink-0 mt-0.5" />
               <span>Payroll already finished this one. Resubmitting sends it back to them to check again.</span>
+            </div>
+          )}
+          {isSub && wasCompleted && (
+            <div className="flex gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted">
+              <Info className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>Already approved. You can fix it until payroll opens it. Resubmitting approves it again.</span>
+            </div>
+          )}
+          {isOffice && sheet?.auto_approved && (
+            <div className="flex gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+              <Info className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Approved automatically when {sheet.completed_by_name || sheet.completed_by || "a submitter"} sent it in. No deductions were applied and
+                nobody in payroll has looked at it yet. Saving it here marks it as reviewed.
+              </span>
             </div>
           )}
 
@@ -861,7 +909,7 @@ export default function MoreForMoreForm({
               </div>
             ))}
             <div className="flex items-center justify-between px-4 py-2.5 bg-surface">
-              <span className="text-sm font-semibold">{isOffice ? "Submitted total" : "Your total"}</span>
+              <span className="text-sm font-semibold">{isOffice ? "Submitted total" : isSub ? "Total" : "Your total"}</span>
               <span className="text-base font-bold tabular-nums">{money(calc.leadTotal)}</span>
             </div>
           </div>
@@ -1144,14 +1192,17 @@ export default function MoreForMoreForm({
             </div>
           ) : (
             <div className="flex gap-2">
-              <button
-                onClick={() => handleSubmit("draft")}
-                disabled={!!saving}
-                className="flex-1 rounded-lg border border-border py-3 font-semibold disabled:opacity-60"
-                title="Save what you have and finish it later"
-              >
-                {saving === "draft" ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : "Save progress"}
-              </button>
+              {/* An approved sheet can't go back to a draft; it is only resubmitted. */}
+              {!(isSub && wasCompleted) && (
+                <button
+                  onClick={() => handleSubmit("draft")}
+                  disabled={!!saving}
+                  className="flex-1 rounded-lg border border-border py-3 font-semibold disabled:opacity-60"
+                  title="Save what you have and finish it later"
+                >
+                  {saving === "draft" ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : "Save progress"}
+                </button>
+              )}
               <button
                 onClick={() => handleSubmit("submitted")}
                 disabled={!!saving}
@@ -1160,7 +1211,7 @@ export default function MoreForMoreForm({
                 {saving === "submit" ? (
                   <Loader2 className="w-5 h-5 animate-spin mx-auto" />
                 ) : (
-                  `${sheet && sheet.submit_count > 0 ? "Resubmit" : "Submit"} · ${money(calc.leadTotal)}`
+                  `${sheet && sheet.submit_count > 0 ? "Resubmit" : "Submit"}${isSub ? " & approve" : ""} · ${money(calc.leadTotal)}`
                 )}
               </button>
             </div>

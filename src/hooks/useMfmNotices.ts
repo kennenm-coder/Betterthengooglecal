@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { canFillMoreForMore } from "@/lib/roles";
+import { canSeeMoreForMore, isMfmSubmitter } from "@/lib/roles";
 import { getSupabase } from "@/lib/supabase";
 import { ackSheet, noticeKind, type MoreForMore } from "@/lib/more-for-more";
 
@@ -52,7 +52,7 @@ export function refreshMfmNotices() {
 export function useMfmNotices() {
   const { roles, user } = useAuth();
   const email = user?.email?.toLowerCase() || "";
-  const eligible = !!email && canFillMoreForMore(roles);
+  const eligible = !!email && canSeeMoreForMore(roles);
   const [sheets, setSheets] = useState<MoreForMore[]>(() =>
     cache && cache.email === email ? cache.sheets : []
   );
@@ -83,7 +83,10 @@ export function useMfmNotices() {
     }
   }, []);
 
-  const list = eligible ? sheets : [];
+  // A submitter approves their own sheets, so "payroll completed it" is no
+  // news to them; they only hear when one is sent back.
+  const submitterOnly = isMfmSubmitter(roles);
+  const list = eligible ? (submitterOnly ? sheets.filter((s) => s.status === "rejected") : sheets) : [];
   return {
     notices: list,
     /** Sheets sent back that the lead still has to fix — the tab's badge. */
