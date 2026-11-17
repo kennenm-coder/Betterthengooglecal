@@ -17,7 +17,7 @@ import MoreForMoreForm from "@/components/MoreForMoreForm";
 import { useData } from "@/components/DataProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { refreshMfmNotices } from "@/hooks/useMfmNotices";
-import { crewsForDate } from "@/lib/format-utils";
+import { crewName, crewsForDate } from "@/lib/format-utils";
 import { searchOrders } from "@/lib/search";
 import { formatDateShort } from "@/lib/calendar-utils";
 import type { WorkOrder } from "@/lib/types";
@@ -191,7 +191,10 @@ export default function MoreForMoreSubmitter() {
     if (r.paper && !r.status) return;
     if (r.status && !r.status.mine) return;
     if (r.sheet && !canEditMine(r.sheet)) return;
-    const crew = crewsForDate(r.order)[0] || null;
+    // The lead is the job's assigned resource (Primary Resource on the job
+    // card). crewsForDate() is every crew on every day, sorted A-Z, so its
+    // first name is often a helper crew, not the lead.
+    const crew = crewName(r.order) || crewsForDate(r.order)[0] || null;
     setOpen({ job: snapshotOf(r.order, crew), order: r.order, sheet: r.sheet });
   }
 

@@ -86,6 +86,20 @@ function fmtDay(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? iso : format(d, "MMM d, yyyy");
 }
 
+/** A name boiled down for matching: lowercase letters and single spaces. */
+function personKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Same person, words in any order, extra words allowed ("Jr", a middle name). */
+function sameWords(a: string, b: string): boolean {
+  const wa = a.split(" ").filter((w) => w.length > 1);
+  const wb = b.split(" ").filter((w) => w.length > 1);
+  if (wa.length < 2 || wb.length < 2) return false;
+  const [short, long] = wa.length <= wb.length ? [wa, wb] : [wb, wa];
+  return short.every((w) => long.includes(w));
+}
+
 function TierPicker({ value, onChange }: { value: Tier | null; onChange: (t: Tier) => void }) {
   return (
     <div className="flex gap-1.5">
@@ -330,16 +344,28 @@ export default function MoreForMoreForm({
   useEffect(() => {
     if (prefilled.current || sheet || isOffice) return;
     if (isSub) {
-      // The lead is whoever ran the job: match the crew name to the people list.
-      const crew = (job.crew_name || "").trim().toLowerCase();
-      const match = crew ? roster.find((p) => p.active && p.name.trim().toLowerCase() === crew) : undefined;
-      if (!match) return;
-      prefilled.current = true;
-      setLead((l) => ({
-        ...l,
-        leadName: l.leadName.trim() ? l.leadName : match.name,
-        leadTier: l.leadTier ?? match.tier,
-      }));
+      // The lead is the job's assigned resource. Fill it in straight away;
+      // when it matches someone on the people list, use their name as payroll
+      // has it and their tier. No match still fills the name (tier by hand).
+      const crew = (job.crew_name || "").trim();
+      if (!crew) return;
+      const key = personKey(crew);
+      const active = roster.filter((p) => p.active && personKey(p.name));
+      const match =
+        active.find((p) => personKey(p.name) === key) ||
+        // Loose: "Keith Morris" vs "Keith Morris Jr" or "Morris, Keith".
+        active.find((p) => sameWords(personKey(p.name), key));
+      setLead((l) => {
+        // Never over something already picked, only an empty box or our guess.
+        if (l.leadName.trim() && l.leadName.trim() !== crew) return l;
+        return {
+          ...l,
+          leadName: match ? match.name : crew,
+          leadTier: l.leadTier ?? match?.tier ?? null,
+        };
+      });
+      // The people list loads after the form opens: keep trying until it has.
+      if (roster.length) prefilled.current = true;
       return;
     }
     const email = user?.email?.toLowerCase();
