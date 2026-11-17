@@ -10,7 +10,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { differenceInCalendarDays } from "date-fns";
-import { BadgeDollarSign, Search, X, Loader2, ChevronRight } from "lucide-react";
+import Link from "next/link";
+import { BadgeDollarSign, Search, X, Loader2, ChevronRight, Inbox } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import MoreForMoreForm from "@/components/MoreForMoreForm";
 import { useData } from "@/components/DataProvider";
@@ -208,6 +209,15 @@ export default function MoreForMoreSubmitter() {
         <div className="flex items-center gap-2">
           <BadgeDollarSign className="w-5 h-5 text-rba-green" />
           <h1 className="text-lg font-semibold flex-1">More for More</h1>
+          {/* The office side: finish leads' sheets, send back, downloads. */}
+          <Link
+            href="/time-off?tab=mfm"
+            className="shrink-0 flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted hover:text-foreground hover:bg-surface"
+            title="Finish leads' sheets, send them back, and download PDFs or Excel"
+          >
+            <Inbox className="w-4 h-4" />
+            Office
+          </Link>
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted" />

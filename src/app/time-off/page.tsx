@@ -15,7 +15,7 @@ import {
   isPending,
 } from "@/lib/time-off-store";
 import KioskInboxSection from "@/components/kiosk-inbox/KioskInboxSection";
-import { canSeeShareLinks } from "@/lib/kiosk-inbox";
+import { canSeeShareLinks, canUseInbox } from "@/lib/kiosk-inbox";
 import {
   ArrowLeft,
   Plus,
@@ -135,22 +135,42 @@ function ApprovedBy({
   );
 }
 
+type PayrollTab = "timeoff" | "mfm" | "kiosk";
+
 function TimeOffContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const fromScheduler = searchParams.get("from") === "scheduler";
   const { roles, user, loading: authLoading } = useAuth();
-  // Payroll's second job on this screen: finishing More for More sheets.
+  // Three jobs on this screen, each its own tab, each shown only to the
+  // people who do it:
+  //   Time Off          — the time-off log (time-off managers)
+  //   More for More     — finishing bonus sheets (payroll + the submitter)
+  //   Kiosk Submissions — everything sent in at the kiosk (kiosk approvers)
+  const showTimeOff = canManageTimeOff(roles);
   const showMfm = canProcessMoreForMore(roles);
-  const [tab, setTab] = useState<"timeoff" | "mfm">(
-    searchParams.get("tab") === "mfm" ? "mfm" : "timeoff"
-  );
-  const activeTab = showMfm ? tab : "timeoff";
-  function pickTab(next: "timeoff" | "mfm") {
+  const showKiosk = canUseInbox(roles);
+  const tabs = (
+    [
+      ["timeoff", "Time Off", showTimeOff],
+      ["mfm", "More for More", showMfm],
+      ["kiosk", "Kiosk Submissions", showKiosk],
+    ] as const
+  ).filter(([, , show]) => show);
+  // ?tab=mfm / ?tab=kiosk open that tab. The kiosk's email links carry
+  // ?sub= or ?supply= to focus one submission, so they open Kiosk too.
+  const [tab, setTab] = useState<PayrollTab>(() => {
+    const t = searchParams.get("tab");
+    if (t === "mfm" || t === "kiosk") return t;
+    if (searchParams.get("sub") || searchParams.get("supply")) return "kiosk";
+    return "timeoff";
+  });
+  const activeTab: PayrollTab = tabs.some(([k]) => k === tab) ? tab : tabs[0]?.[0] ?? "timeoff";
+  function pickTab(next: PayrollTab) {
     setTab(next);
     const url = new URL(window.location.href);
-    if (next === "mfm") url.searchParams.set("tab", "mfm");
-    else url.searchParams.delete("tab");
+    if (next === "timeoff") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", next);
     window.history.replaceState(null, "", url.toString());
   }
   const [requests, setRequests] = useState<TimeOffRequest[]>([]);
@@ -193,7 +213,14 @@ function TimeOffContent() {
     setLoading(false);
   }
 
-  useEffect(() => { loadData(); }, []);
+  // Only time-off managers load time off. A More for More Submitter opens this
+  // screen too, and has no business with (or access to) the time-off log.
+  useEffect(() => {
+    if (authLoading) return;
+    if (showTimeOff) loadData();
+    else setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, showTimeOff]);
 
   const filteredRequests = useMemo(() => {
     // Decided rows only — pending ones live in the approval queue above.
@@ -362,14 +389,14 @@ function TimeOffContent() {
     );
   }
 
-  if (!canManageTimeOff(roles)) {
+  if (tabs.length === 0) {
     return (
       <div className="flex flex-col h-full bg-background items-center justify-center p-4">
         <div className="text-center space-y-3">
           <ShieldX className="w-12 h-12 text-muted mx-auto" />
           <p className="font-medium">Admin access required</p>
           <p className="text-sm text-muted">
-            Your account doesn&apos;t have permission to manage time off.
+            Your account doesn&apos;t have access to the Payroll Admin page.
           </p>
           <button
             onClick={() => fromScheduler ? window.close() : router.push("/")}
@@ -397,14 +424,9 @@ function TimeOffContent() {
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        {showMfm ? (
-          <div className="flex-1 min-w-0 flex items-center gap-1 rounded-lg bg-surface p-0.5 max-w-xs">
-            {(
-              [
-                ["timeoff", "Payroll Admin"],
-                ["mfm", "More for More"],
-              ] as const
-            ).map(([key, label]) => (
+        {tabs.length > 1 ? (
+          <div className="flex-1 min-w-0 flex items-center gap-1 rounded-lg bg-surface p-0.5 max-w-md">
+            {tabs.map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => pickTab(key)}
@@ -417,9 +439,9 @@ function TimeOffContent() {
             ))}
           </div>
         ) : (
-          <h1 className="text-lg font-semibold flex-1">Payroll Admin</h1>
+          <h1 className="text-lg font-semibold flex-1">{tabs[0]?.[1] ?? "Payroll Admin"}</h1>
         )}
-        {showMfm && <div className="flex-1" />}
+        {tabs.length > 1 && <div className="flex-1" />}
         {!loading && activeTab === "timeoff" && (
           <div className="flex items-center gap-1.5">
             {filteredRequests.length > 0 && (
@@ -453,6 +475,27 @@ function TimeOffContent() {
 
       {activeTab === "mfm" ? (
         <MoreForMoreOffice />
+      ) : activeTab === "kiosk" ? (
+        <div className="flex-1 overflow-auto">
+          <div className="max-w-3xl mx-auto w-full">
+            {/* Every kiosk submission waiting on a decision, the records of
+                past ones, and the share links. Pending time off is NOT on the
+                calendar yet, so it lives here rather than in the time-off log. */}
+            <KioskInboxSection
+              roles={roles}
+              focus={{
+                sub: searchParams.get("sub"),
+                supply: searchParams.get("supply"),
+              }}
+              showLinks={canSeeShareLinks(roles)}
+              onTimeOffDecided={(updated) =>
+                setRequests((prev) =>
+                  prev.map((r) => (r.id === updated.id ? updated : r))
+                )
+              }
+            />
+          </div>
+        </div>
       ) : (
       <div className="flex-1 overflow-auto">
         {loading ? (
@@ -515,23 +558,6 @@ function TimeOffContent() {
                 </div>
               </div>
             )}
-
-            {/* Every kiosk submission waiting on a decision, the records of
-                past ones, and the share links. Pending time off is NOT on the
-                calendar yet, so it lives here rather than in the log below. */}
-            <KioskInboxSection
-              roles={roles}
-              focus={{
-                sub: searchParams.get("sub"),
-                supply: searchParams.get("supply"),
-              }}
-              showLinks={canSeeShareLinks(roles)}
-              onTimeOffDecided={(updated) =>
-                setRequests((prev) =>
-                  prev.map((r) => (r.id === updated.id ? updated : r))
-                )
-              }
-            />
 
             <h2 className="px-4 pt-3 text-sm font-semibold">Time off log</h2>
 

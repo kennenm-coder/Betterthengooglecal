@@ -104,11 +104,22 @@ export function canSeeMoreForMore(roles: RoleInput): boolean {
 }
 
 /**
- * Who does the office part of a More for More — deductions, JIP, final pay,
- * completing, PDF and Excel. Payroll admins and admins only, by decision.
- * Mirrors has_any_role(['admin','payroll-admin']) in migration 045.
+ * Who does the office part of a More for More — deductions, final pay,
+ * completing, sending back, on-paper sheets, PDF and Excel: the More for More
+ * tab on the Payroll Admin page. Payroll admins, admins, and (056) the More for
+ * More Submitter. Mirrors the role lists in migration 056.
  */
 export function canProcessMoreForMore(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "payroll-admin", "mfm-submitter"]);
+}
+
+/**
+ * The parts of More for More that stay with payroll only: deleting a sheet
+ * and the settings page (bonus rates, people and tiers). Kennen, 2026-11-17:
+ * the submitter does everything else. Mirrors mfm_delete and the settings
+ * write policies (045, 047).
+ */
+export function canManageMoreForMore(roles: RoleInput): boolean {
   return hasAny(roles, ["admin", "payroll-admin"]);
 }
 

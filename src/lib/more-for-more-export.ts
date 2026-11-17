@@ -23,6 +23,7 @@ import {
   type MoreForMore,
 } from "./more-for-more";
 import { MFM_LAYOUT } from "./more-for-more-layout";
+import type { jsPDF as JsPdfDoc } from "jspdf";
 
 const TEMPLATE_URL = "/templates/more-for-more-bonus.xlsx";
 const SHEET_PATH = "xl/worksheets/sheet2.xml";
@@ -357,7 +358,12 @@ function tabName(rec: MoreForMore, used: Set<string>): string {
  * A date range of sheets: Summary first, then each sheet as its own filled
  * bonus-sheet tab — grouped by installer, in the same order as the Summary.
  */
-export async function downloadRangeXlsx(recs: MoreForMore[], from: string, to: string): Promise<void> {
+export async function downloadRangeXlsx(
+  recs: MoreForMore[],
+  from: string,
+  to: string,
+  basis: "submitted" | "installed" = "submitted"
+): Promise<void> {
   const zip = await loadTemplate();
   const templateXml = await zip.file(SHEET_PATH)!.async("string");
   // The template's own tab becomes the first job's; copies need no printer
@@ -405,7 +411,7 @@ export async function downloadRangeXlsx(recs: MoreForMore[], from: string, to: s
   zip.file("[Content_Types].xml", ct.replace("</Types>", `${types}</Types>`));
 
   const blob = await zip.generateAsync({ type: "blob", mimeType: XLSX_MIME, compression: "DEFLATE" });
-  saveBlob(blob, `more-for-more_${from || "start"}_to_${to || format(new Date(), "yyyy-MM-dd")}.xlsx`);
+  saveBlob(blob, `${rangeFileBase(from, to, basis)}.xlsx`);
 }
 
 // ─── PDF ────────────────────────────────────────────────────────────────────
@@ -444,10 +450,16 @@ function formatNumber(n: number, nf: string | undefined): string {
   return String(n);
 }
 
-/** The sheet as a one-page landscape PDF, drawn from the template's own grid. */
-export async function buildSheetPdf(rec: MoreForMore): Promise<Blob> {
-  const { jsPDF } = await import("jspdf");
-  const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "landscape" });
+/** Range downloads: "more-for-more_submitted_2026-11-01_to_2026-11-15". */
+function rangeFileBase(from: string, to: string, basis: "submitted" | "installed"): string {
+  return `more-for-more_${basis}_${from || "start"}_to_${to || format(new Date(), "yyyy-MM-dd")}`;
+}
+
+/**
+ * Draws one sheet onto the doc's CURRENT page, landscape letter, from the
+ * template's own grid. Shared by the one-sheet PDF and the range PDF.
+ */
+function drawSheet(doc: JsPdfDoc, rec: MoreForMore): void {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const M = 24;
@@ -565,8 +577,34 @@ export async function buildSheetPdf(rec: MoreForMore): Promise<Blob> {
     rec.completed_at ? `completed by ${rec.completed_by_name || rec.completed_by || "office"} on ${fmtDate(rec.completed_at)}` : "waiting on office",
   ].join(" · ");
   doc.text(foot, x0, pageH - 12);
+}
 
+/** The sheet as a one-page landscape PDF, drawn from the template's own grid. */
+export async function buildSheetPdf(rec: MoreForMore): Promise<Blob> {
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "landscape" });
+  drawSheet(doc, rec);
   return doc.output("blob");
+}
+
+/**
+ * Every sheet in a range as ONE PDF, one landscape page per sheet, in the
+ * order given (the list on screen), so they can be printed in one go.
+ */
+export async function downloadRangePdf(
+  recs: MoreForMore[],
+  from: string,
+  to: string,
+  basis: "submitted" | "installed" = "submitted"
+): Promise<void> {
+  if (!recs.length) throw new Error("No sheets in this range.");
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "pt", format: "letter", orientation: "landscape" });
+  recs.forEach((rec, i) => {
+    if (i > 0) doc.addPage("letter", "landscape");
+    drawSheet(doc, rec);
+  });
+  saveBlob(doc.output("blob"), `${rangeFileBase(from, to, basis)}.pdf`);
 }
 
 export async function downloadSheetPdf(rec: MoreForMore): Promise<void> {

@@ -599,6 +599,9 @@ export async function submitLeadSheet(input: {
   if (approving) {
     row.final_total = finalTotal;
     row.completed_by_name = input.approverName || null;
+    // Tells the database this is the submitter re-approving their own sheet,
+    // not the office working it (056) — so it stays marked auto-approved.
+    row.auto_approved = true;
   }
   const q = input.id
     ? db().from(TABLE).update(row).eq("id", input.id).select("*").single()

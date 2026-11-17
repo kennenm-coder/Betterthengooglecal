@@ -19,17 +19,38 @@ import { formatDateShort } from "@/lib/calendar-utils";
 import type { WorkOrder } from "@/lib/types";
 import {
   fetchJobFlags,
+  fetchJobSheetStatuses,
   fetchMoreForMores,
   money,
   snapshotOf,
   type JobFlag,
+  type JobSheetStatus,
   type JobSnapshot,
   type MoreForMore,
 } from "@/lib/more-for-more";
 
 type Open = { job: JobSnapshot; order: WorkOrder | null; sheet: MoreForMore | null };
 
-function StatusPill({ sheet, paper }: { sheet: MoreForMore | null; paper?: boolean }) {
+function StatusPill({
+  sheet,
+  paper,
+  other,
+}: {
+  sheet: MoreForMore | null;
+  paper?: boolean;
+  /** Someone else's sheet on this job (056: one sheet per job). */
+  other?: JobSheetStatus | null;
+}) {
+  if (!sheet && other) {
+    return (
+      <span
+        className="shrink-0 max-w-[45%] truncate rounded-full bg-surface border border-border px-2 py-0.5 text-[10px] font-semibold text-muted"
+        title={`Already submitted by ${other.name || "someone else"}`}
+      >
+        BY {(other.name || "SOMEONE ELSE").toUpperCase()}
+      </span>
+    );
+  }
   if (!sheet && paper) {
     return (
       <span className="shrink-0 rounded-full bg-surface border border-border px-2 py-0.5 text-[10px] font-semibold text-muted">
@@ -72,9 +93,9 @@ function StatusPill({ sheet, paper }: { sheet: MoreForMore | null; paper?: boole
   );
 }
 
-/** "To do" = no sheet yet (and none on paper), or one saved in progress. */
-function isTodo(r: { sheet: MoreForMore | null; paper: boolean }): boolean {
-  return (!r.sheet && !r.paper) || r.sheet?.status === "draft";
+/** "To do" = no sheet yet (none on paper, none by anyone else), or one saved in progress. */
+function isTodo(r: { sheet: MoreForMore | null; paper: boolean; other: JobSheetStatus | null }): boolean {
+  return (!r.sheet && !r.paper && !r.other) || r.sheet?.status === "draft";
 }
 
 /** One row per job: a multi-day install arrives as several appointments. */
@@ -131,6 +152,27 @@ function LeadView() {
 
   const sheetByJob = useMemo(() => new Map(sheets.map((s) => [s.order_number, s])), [sheets]);
 
+  // Jobs that already have a sheet from SOMEONE ELSE (another lead, the More
+  // for More Submitter, or payroll). There is one sheet per job (056), so the
+  // lead sees who has it instead of "Not submitted". No money comes back.
+  const [statuses, setStatuses] = useState<Map<string, JobSheetStatus>>(new Map());
+  useEffect(() => {
+    if (!allowed) return;
+    let live = true;
+    // Best effort: without it the list just can't say who else has a job.
+    fetchJobSheetStatuses()
+      .then((m) => live && setStatuses(m))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [allowed, sheets]);
+  const otherFor = (orderNumber: string): JobSheetStatus | null => {
+    if (sheetByJob.has(orderNumber)) return null;
+    const st = statuses.get(orderNumber);
+    return st && !st.mine ? st : null;
+  };
+
   // Payroll's marks: jobs whose sheet came in on paper, and (admin) jobs
   // excluded from More for More, which drop off this list.
   const [flags, setFlags] = useState<Map<string, JobFlag>>(new Map());
@@ -164,6 +206,7 @@ function LeadView() {
     order: WorkOrder | null;
     sheet: MoreForMore | null;
     paper: boolean;
+    other: JobSheetStatus | null;
     date: string;
   };
 
@@ -183,6 +226,7 @@ function LeadView() {
           order: o,
           sheet: sheetByJob.get(o.orderNumber) || null,
           paper: !!flags.get(o.orderNumber)?.paper,
+          other: otherFor(o.orderNumber),
           date: o.scheduledStart || "",
         };
       });
@@ -202,11 +246,13 @@ function LeadView() {
         order: orders.find((o) => o.orderNumber === s.order_number) || null,
         sheet: s,
         paper: !!flags.get(s.order_number)?.paper,
+        other: null,
         date: s.install_date || s.created_at,
       });
     }
     return out.sort((a, b) => b.date.localeCompare(a.date));
-  }, [myJobs, sheets, sheetByJob, orders, crewNames, flags]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myJobs, sheets, sheetByJob, orders, crewNames, flags, statuses]);
 
   // Open the sheet a notice linked to, once the list has it.
   useEffect(() => {
@@ -250,6 +296,8 @@ function LeadView() {
   }, [orders, trimmed]);
 
   function openOrder(o: WorkOrder) {
+    // Someone else already has this job's sheet: nothing to start here.
+    if (otherFor(o.orderNumber)) return;
     const crew = crewsForDate(o)[0] || null;
     setOpen({ job: snapshotOf(o, crew), order: o, sheet: sheetByJob.get(o.orderNumber) || null });
   }
@@ -362,7 +410,11 @@ function LeadView() {
                         {crewsForDate(o).length ? ` · ${crewsForDate(o).join(", ")}` : ""}
                       </p>
                     </div>
-                    <StatusPill sheet={sheetByJob.get(o.orderNumber) || null} paper={!!flags.get(o.orderNumber)?.paper} />
+                    <StatusPill
+                      sheet={sheetByJob.get(o.orderNumber) || null}
+                      paper={!!flags.get(o.orderNumber)?.paper}
+                      other={otherFor(o.orderNumber)}
+                    />
                     <ChevronRight className="w-4 h-4 text-muted shrink-0" />
                   </button>
                 </li>
@@ -389,8 +441,9 @@ function LeadView() {
             {shownRows.map((r) => (
               <li key={r.key}>
                 <button
-                  onClick={() => setOpen({ job: r.job, order: r.order, sheet: r.sheet })}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface"
+                  onClick={() => !r.other && setOpen({ job: r.job, order: r.order, sheet: r.sheet })}
+                  disabled={!!r.other}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface disabled:hover:bg-transparent disabled:cursor-default"
                 >
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{r.job.job_name || "—"}</p>
@@ -400,7 +453,7 @@ function LeadView() {
                       {r.sheet ? ` · ${money(r.sheet.lead_total)}` : ""}
                     </p>
                   </div>
-                  <StatusPill sheet={r.sheet} paper={r.paper} />
+                  <StatusPill sheet={r.sheet} paper={r.paper} other={r.other} />
                   <ChevronRight className="w-4 h-4 text-muted shrink-0" />
                 </button>
               </li>

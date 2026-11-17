@@ -1,13 +1,15 @@
 "use client";
 
-// Payroll's side of More for More, on the Time Off screen's second tab:
-//   Needs office — sheets leads have submitted (or resubmitted) that payroll
-//                  has not finished, oldest first.
+// The office side of More for More, on the Payroll Admin page's More for
+// More tab. Payroll and the More for More Submitter both work it (056).
+//   Needs office — sheets leads have submitted (or resubmitted) that the
+//                  office has not finished, oldest first.
 //   In progress  — drafts and sheets sent back; waiting on the lead.
-//   Completed    — finished sheets, filterable by SUBMITTED date (when the
-//                  lead last sent it in), downloadable as one Excel workbook
-//                  for the range, grouped by installer.
-// Opening any sheet gives the full form in office mode.
+//   Completed    — finished sheets, filterable by SUBMITTED date (the
+//                  default: when the lead last sent it in) or INSTALL date.
+//                  The range downloads as one Excel workbook (grouped by
+//                  installer) or as one PDF with every sheet, ready to print.
+// Every row has its own PDF button; opening a sheet gives the full form.
 
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
@@ -22,7 +24,10 @@ import {
   RotateCcw,
   BadgeDollarSign,
   Settings,
+  FileDown,
 } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { canManageMoreForMore } from "@/lib/roles";
 import MoreForMoreForm from "@/components/MoreForMoreForm";
 import MoreForMoreJobs from "@/components/MoreForMoreJobs";
 import type { WorkOrder } from "@/lib/types";
@@ -49,7 +54,18 @@ function matches(s: MoreForMore, q: string): boolean {
   return hay.includes(q.toLowerCase());
 }
 
+/** Which date the Completed range filters on. Submitted is the default. */
+type DateBasis = "submitted" | "installed";
+
+/** The day a sheet counts as, for the chosen basis (YYYY-MM-DD, or ""). */
+function basisDay(s: MoreForMore, basis: DateBasis): string {
+  return basis === "installed" ? (s.install_date || "").slice(0, 10) : localDay(s.submitted_at);
+}
+
 export default function MoreForMoreOffice() {
+  const { roles } = useAuth();
+  // Deleting sheets and the settings page stay with payroll (not the submitter).
+  const manager = canManageMoreForMore(roles);
   const [sheets, setSheets] = useState<MoreForMore[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -57,10 +73,13 @@ export default function MoreForMoreOffice() {
   const [query, setQuery] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [basis, setBasis] = useState<DateBasis>("submitted");
   const [open, setOpen] = useState<MoreForMore | null>(null);
   // Typing in a paper sheet for a job that has none yet.
   const [paperJob, setPaperJob] = useState<{ job: JobSnapshot; order: WorkOrder } | null>(null);
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState<"" | "xlsx" | "pdf">("");
+  // The one row whose PDF is being built.
+  const [rowPdf, setRowPdf] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -91,13 +110,18 @@ export default function MoreForMoreOffice() {
       sheets
         .filter((s) => {
           if (s.status !== "completed" || !matches(s, query.trim())) return false;
-          const day = localDay(s.submitted_at);
+          const day = basisDay(s, basis);
+          // A sheet with no install date can't be placed in an install range.
+          if ((from || to) && !day) return false;
           if (from && day < from) return false;
           if (to && day > to) return false;
           return true;
         })
-        .sort((a, b) => b.submitted_at.localeCompare(a.submitted_at)),
-    [sheets, query, from, to]
+        .sort(
+          (a, b) =>
+            basisDay(b, basis).localeCompare(basisDay(a, basis)) || b.submitted_at.localeCompare(a.submitted_at)
+        ),
+    [sheets, query, from, to, basis]
   );
 
   // With the lead: saved in progress, or sent back for a fix. Newest first.
@@ -113,15 +137,31 @@ export default function MoreForMoreOffice() {
   const progressCount = sheets.filter((s) => s.status === "draft" || s.status === "rejected").length;
   const list = view === "needs" ? needs : view === "progress" ? progress : done;
 
-  async function exportRange() {
-    setExporting(true);
+  async function exportRange(kind: "xlsx" | "pdf") {
+    setExporting(kind);
+    setError("");
     try {
-      const { downloadRangeXlsx } = await import("@/lib/more-for-more-export");
-      await downloadRangeXlsx(done, from, to);
+      const ex = await import("@/lib/more-for-more-export");
+      if (kind === "xlsx") await ex.downloadRangeXlsx(done, from, to, basis);
+      // Same sheets, same order as the list on screen.
+      else await ex.downloadRangePdf(done, from, to, basis);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not build the Excel file.");
+      setError(e instanceof Error ? e.message : `Could not build the ${kind === "xlsx" ? "Excel" : "PDF"} file.`);
     } finally {
-      setExporting(false);
+      setExporting("");
+    }
+  }
+
+  async function downloadOne(s: MoreForMore) {
+    setRowPdf(s.id);
+    setError("");
+    try {
+      const { downloadSheetPdf } = await import("@/lib/more-for-more-export");
+      await downloadSheetPdf(s);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not build the PDF.");
+    } finally {
+      setRowPdf(null);
     }
   }
 
@@ -177,7 +217,8 @@ export default function MoreForMoreOffice() {
                 </button>
               )}
             </div>
-            {/* Bonus rates and the people list the form suggests. */}
+            {/* Bonus rates and the people list the form suggests. Payroll only. */}
+            {manager && (
             <Link
               href="/more-for-more/settings"
               className="shrink-0 flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted hover:text-foreground hover:bg-surface"
@@ -186,11 +227,34 @@ export default function MoreForMoreOffice() {
               <Settings className="w-4 h-4" />
               <span className="hidden min-[400px]:inline">Settings</span>
             </Link>
+            )}
           </div>
           {view === "done" && (
             <div className="flex flex-wrap items-end gap-2">
+              {/* Which date the range uses. Submitted is the default. */}
+              <div className="w-full flex items-center gap-2 text-xs">
+                <span className="text-muted">Filter by</span>
+                <div className="flex rounded-lg bg-surface p-0.5">
+                  {(
+                    [
+                      ["submitted", "Submitted date"],
+                      ["installed", "Install date"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => setBasis(key)}
+                      className={`rounded-md px-2.5 py-1 font-medium ${
+                        basis === key ? "bg-background shadow-sm text-foreground" : "text-muted"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <label className="flex-1 min-w-[120px] space-y-0.5">
-                <span className="text-[11px] text-muted">Submitted from</span>
+                <span className="text-[11px] text-muted">{basis === "installed" ? "Installed" : "Submitted"} from</span>
                 <input
                   type="date"
                   value={from}
@@ -199,7 +263,7 @@ export default function MoreForMoreOffice() {
                 />
               </label>
               <label className="flex-1 min-w-[120px] space-y-0.5">
-                <span className="text-[11px] text-muted">Submitted to</span>
+                <span className="text-[11px] text-muted">{basis === "installed" ? "Installed" : "Submitted"} to</span>
                 <input
                   type="date"
                   value={to}
@@ -208,13 +272,22 @@ export default function MoreForMoreOffice() {
                 />
               </label>
               <button
-                onClick={exportRange}
-                disabled={exporting || done.length === 0}
+                onClick={() => exportRange("xlsx")}
+                disabled={!!exporting || done.length === 0}
                 className="flex items-center gap-1.5 rounded-lg bg-rba-green px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
                 title="One workbook: a Summary tab plus each bonus sheet filled in"
               >
-                {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
+                {exporting === "xlsx" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
                 Excel ({done.length})
+              </button>
+              <button
+                onClick={() => exportRange("pdf")}
+                disabled={!!exporting || done.length === 0}
+                className="flex items-center gap-1.5 rounded-lg border border-rba-green px-3 py-2 text-sm font-medium text-rba-green disabled:opacity-50"
+                title="One PDF with every sheet in the range, one page each, ready to print"
+              >
+                {exporting === "pdf" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+                PDF ({done.length})
               </button>
             </div>
           )}
@@ -262,8 +335,8 @@ export default function MoreForMoreOffice() {
         ) : (
           <ul className="divide-y divide-border">
             {list.map((s) => (
-              <li key={s.id}>
-                <button onClick={() => setOpen(s)} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface">
+              <li key={s.id} className="flex items-stretch">
+                <button onClick={() => setOpen(s)} className="flex-1 min-w-0 flex items-center gap-3 pl-4 pr-1 py-3 text-left hover:bg-surface">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <p className="text-sm font-medium truncate">{s.job_name || "—"}</p>
@@ -291,7 +364,7 @@ export default function MoreForMoreOffice() {
                       {s.status === "completed" && s.auto_approved && (
                         <span
                           className="shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400"
-                          title="Approved the moment a submitter sent it in. No deductions, and payroll hasn't opened it yet."
+                          title="Approved the moment a submitter sent it in. No deductions, and nobody in the office has opened it since."
                         >
                           AUTO-APPROVED
                         </span>
@@ -299,7 +372,8 @@ export default function MoreForMoreOffice() {
                     </div>
                     <p className="text-xs text-muted truncate">
                       #{s.order_number} · {s.lead_data.leadName || s.created_by_name || s.created_by}
-                      {s.lead_data.apprentices.length ? ` + ${s.lead_data.apprentices.length}` : ""} · submitted {fmtDay(s.submitted_at)}
+                      {s.lead_data.apprentices.length ? ` + ${s.lead_data.apprentices.length}` : ""}
+                      {s.install_date ? ` · installed ${fmtDay(s.install_date)}` : ""} · submitted {fmtDay(s.submitted_at)}
                       {s.status === "completed" && s.completed_at ? ` · done ${fmtDay(s.completed_at)}` : ""}
                     </p>
                   </div>
@@ -312,6 +386,16 @@ export default function MoreForMoreOffice() {
                     </p>
                   </div>
                   <ChevronRight className="w-4 h-4 text-muted shrink-0" />
+                </button>
+                {/* This one sheet's PDF, without opening it. */}
+                <button
+                  onClick={() => downloadOne(s)}
+                  disabled={rowPdf === s.id}
+                  className="shrink-0 px-3 text-muted hover:text-foreground hover:bg-surface disabled:opacity-60"
+                  title="Download this sheet's PDF"
+                  aria-label={`Download PDF for ${s.job_name || s.order_number}`}
+                >
+                  {rowPdf === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
                 </button>
               </li>
             ))}

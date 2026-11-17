@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useMfmSettings } from "@/hooks/useMfmSettings";
+import { canManageMoreForMore } from "@/lib/roles";
 import type { WorkOrder } from "@/lib/types";
 import type { MfmPerson } from "@/lib/more-for-more-settings";
 import {
@@ -285,7 +286,9 @@ export default function MoreForMoreForm({
   previewPeople,
 }: Props) {
   useBackClose(onClose);
-  const { name: myName, user } = useAuth();
+  const { name: myName, user, roles } = useAuth();
+  // Deleting a sheet stays with payroll; the submitter works sheets but can't delete.
+  const canDelete = canManageMoreForMore(roles);
   const isOffice = mode === "office";
   const isSub = mode === "submitter";
 
@@ -702,7 +705,7 @@ export default function MoreForMoreForm({
           {isSub && wasCompleted && (
             <div className="flex gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted">
               <Info className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>Already approved. You can fix it until payroll opens it. Resubmitting approves it again.</span>
+              <span>Already approved. You can fix it here until someone in the office saves it. Resubmitting approves it again.</span>
             </div>
           )}
           {isOffice && sheet?.auto_approved && (
@@ -710,7 +713,7 @@ export default function MoreForMoreForm({
               <Info className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
                 Approved automatically when {sheet.completed_by_name || sheet.completed_by || "a submitter"} sent it in. No deductions were applied and
-                nobody in payroll has looked at it yet. Saving it here marks it as reviewed.
+                nobody in the office has looked at it since. Saving it here marks it as reviewed.
               </span>
             </div>
           )}
@@ -1072,7 +1075,7 @@ export default function MoreForMoreForm({
                 </div>
               </div>
 
-              {sheet && (
+              {sheet && canDelete && (
                 <div className="pt-2">
                   {confirmDelete ? (
                     <div className="flex items-center gap-2 rounded-lg border border-danger/40 bg-danger/5 px-3 py-2">

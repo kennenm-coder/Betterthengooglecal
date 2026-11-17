@@ -364,7 +364,15 @@ checks(migration, feature, verdict, checked) as (values
         and exists(select 1 from pol where t = 'more_for_more'
                      and p = 'mfm_insert' and body like '%mfm-submitter%')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'auto_approved column, mfm_job_status() AND mfm-submitter in the insert policy')
+  'auto_approved column, mfm_job_status() AND mfm-submitter in the insert policy'),
+
+ ('056', 'More for More Submitter works the payroll tab; one sheet per job',
+  case when exists(select 1 from pol where t = 'more_for_more'
+                     and p = 'mfm_read' and body like '%mfm-submitter%')
+        and exists(select 1 from pol where t = 'more_for_more_jobs'
+                     and p = 'mfm_jobs_update' and body like '%mfm-submitter%')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'mfm-submitter in the sheet read policy AND the job-flags update policy')
 )
 select migration, feature, verdict, checked
 from checks

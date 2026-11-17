@@ -13,7 +13,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, ShieldX, Plus, Trash2, RotateCcw, Check, Users, BadgeDollarSign } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { refreshMfmSettings } from "@/hooks/useMfmSettings";
-import { canProcessMoreForMore } from "@/lib/roles";
+import { canManageMoreForMore } from "@/lib/roles";
 import {
   DEFAULT_RATES,
   normalizeRates,
@@ -229,7 +229,7 @@ function PersonRow({
 export default function MoreForMoreSettingsPage() {
   const router = useRouter();
   const { roles, user, loading: authLoading } = useAuth();
-  const allowed = canProcessMoreForMore(roles);
+  const allowed = canManageMoreForMore(roles);
 
   const [saved, setSaved] = useState<MfmRates | null>(null);
   const [rates, setRates] = useState<MfmRates>(normalizeRates(DEFAULT_RATES));
