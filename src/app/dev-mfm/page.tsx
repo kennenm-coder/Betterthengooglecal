@@ -120,7 +120,16 @@ const mockRejected: MoreForMore = {
   rejected_by_name: "Payroll Pat",
 };
 
-type Mode = "lead" | "office" | "lead-rejected" | "office-rejected" | "office-paper";
+type Mode =
+  | "lead"
+  | "office"
+  | "lead-rejected"
+  | "office-rejected"
+  | "office-paper"
+  | "sub-new"
+  | "sub-rejected"
+  | "sub-approved"
+  | "office-auto";
 
 export default function DevMfmPage() {
   const [mode, setMode] = useState<Mode | null>(null);
@@ -131,6 +140,10 @@ export default function DevMfmPage() {
     "lead-rejected": mockRejected,
     "office-rejected": mockRejected,
     "office-paper": null,
+    "sub-new": null,
+    "sub-rejected": mockRejected,
+    "sub-approved": { ...mockSheet, id: "dev-approved", status: "completed", auto_approved: true, completed_at: "2026-11-17T15:00:00Z", completed_by: "submitter@example.com", completed_by_name: "Sub Mitter", final_total: 0 },
+    "office-auto": { ...mockSheet, id: "dev-auto", status: "completed", auto_approved: true, completed_at: "2026-11-17T15:00:00Z", completed_by: "submitter@example.com", completed_by_name: "Sub Mitter", final_total: 0 },
   };
   return (
     <div className="p-4 space-y-3">
@@ -150,12 +163,26 @@ export default function DevMfmPage() {
       <button className="block rounded-lg border border-border px-4 py-2" onClick={() => setMode("office-paper")}>
         Office: type in a paper sheet
       </button>
+      <button className="block rounded-lg bg-rba-green px-4 py-2 text-white" onClick={() => setMode("sub-new")}>
+        Submitter: new sheet
+      </button>
+      <button className="block rounded-lg bg-danger px-4 py-2 text-white" onClick={() => setMode("sub-rejected")}>
+        Submitter: sent-back sheet
+      </button>
+      <button className="block rounded-lg border border-border px-4 py-2" onClick={() => setMode("sub-approved")}>
+        Submitter: already-approved sheet
+      </button>
+      <button className="block rounded-lg border border-amber-500 px-4 py-2 text-amber-700" onClick={() => setMode("office-auto")}>
+        Office: auto-approved sheet
+      </button>
       <div className="space-y-2 pt-4">
         {[
           ["Admin", ["admin"]],
           ["Admin + measure tech", ["admin", "measure-tech"]],
           ["Lead + field manager", ["installer-lead", "field-manager"]],
           ["Lead", ["installer-lead"]],
+          ["Submitter (plain member)", ["mfm-submitter"]],
+          ["Plain member (no tab)", ["member"]],
         ].map(([label, roles]) => (
           <div key={label as string} data-nav-preview={label as string}>
             <p className="text-xs text-muted">{label as string}</p>
@@ -165,9 +192,9 @@ export default function DevMfmPage() {
       </div>
       {mode && (
         <MoreForMoreForm
-          mode={mode.startsWith("office") ? "office" : "lead"}
+          mode={mode.startsWith("office") ? "office" : mode.startsWith("sub") ? "submitter" : "lead"}
           job={snapshotOf(mockOrder, "Keith Morris")}
-          order={mode === "lead" || mode === "office-paper" ? mockOrder : null}
+          order={mode === "lead" || mode === "office-paper" || mode === "sub-new" ? mockOrder : null}
           sheet={sheetFor[mode]}
           onClose={() => setMode(null)}
           onSaved={() => {}}
