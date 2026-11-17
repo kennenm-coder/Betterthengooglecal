@@ -192,6 +192,40 @@ export async function loadInboxItems(
   return { items, viewMissing: false };
 }
 
+/**
+ * One submission by its kiosk submission id: where an emailed link lands.
+ *
+ * Any status, so a link still works after somebody has decided it. A person who
+ * is not one of the row's approver roles gets `forbidden` and no detail at all,
+ * so the link cannot be used to read something they have no business with.
+ */
+export async function loadItemBySubmission(
+  admin: SupabaseClient,
+  user: AuthenticatedUser,
+  submissionId: string
+): Promise<{ item: InboxItem | null; forbidden: boolean; kind: InboxItem["kind"] | null }> {
+  const { data, error } = await admin
+    .from("kiosk_review_items")
+    .select(VIEW_COLUMNS)
+    .eq("submission_id", submissionId)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    if (isMissingRelation(error)) return { item: null, forbidden: false, kind: null };
+    throw new Error(error.message);
+  }
+  if (!data) return { item: null, forbidden: false, kind: null };
+
+  const row = data as ViewRow;
+  const approverRoles = row.approver_roles?.length ? row.approver_roles : ["admin"];
+  if (!holdsApproverRole(user.roles, approverRoles)) {
+    return { item: null, forbidden: true, kind: row.kind };
+  }
+  const item = toItem(row, user);
+  await attachDetail(admin, [item]);
+  return { item, forbidden: false, kind: row.kind };
+}
+
 export interface HistoryLoad extends InboxLoad {
   /** Rows matching the filters, across all pages. */
   total: number;

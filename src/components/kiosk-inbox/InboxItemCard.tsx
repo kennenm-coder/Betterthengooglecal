@@ -343,9 +343,10 @@ export default function InboxItemCard({
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const isTimeOff = item.kind === "time_off";
-  // Time off denials are emailed to the employee, so a reason is required.
-  const noteRequired = isTimeOff;
+  // A denial is emailed to whoever submitted it, with this reason and a link to
+  // try again, so the reason is required. Nominations are the exception: the
+  // nominator is often anonymous and there is no address to write to.
+  const noteRequired = item.kind !== "recognition";
 
   async function decide(status: "approved" | "denied") {
     setBusy(true);
@@ -470,7 +471,7 @@ export default function InboxItemCard({
         <div className="mt-2.5">
           <label className="block text-xs font-medium text-muted mb-1">
             {noteRequired
-              ? "Why is this denied? The employee is emailed this."
+              ? "Why is this denied? They are emailed this, with a link to try again."
               : "Why is this denied? (optional, kept on the record)"}
           </label>
           <textarea

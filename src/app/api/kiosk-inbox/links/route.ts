@@ -33,7 +33,11 @@ export async function GET() {
     const { data, error: linksError } = await admin
       .from("kiosk_share_links")
       .select("option_key, kind, template_id, token, is_active, expires_at")
-      .eq("is_active", true);
+      .eq("is_active", true)
+      // One-off "fix it and resubmit" links made after a denial live in this
+      // table too. They are private to the person who was emailed one, so they
+      // never appear in the list of links the office hands out.
+      .not("option_key", "like", "resubmit:%");
 
     if (linksError) {
       if (isMissingRelation(linksError)) {

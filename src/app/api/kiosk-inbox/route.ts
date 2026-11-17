@@ -5,8 +5,11 @@ import {
   kioskAppUrl,
   loadHistory,
   loadInboxItems,
+  loadItemBySubmission,
   parseHistoryFilters,
 } from "@/lib/kiosk-inbox-server";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +26,11 @@ export const dynamic = "force-dynamic";
  *                       kind, status, from, to (ISO), q (name / reference
  *                       code / nominee), page (0-based, 25 a page).
  *
+ *   GET ?sub=<id>       one submission by its kiosk submission id, in any
+ *                       status. This is where the link in a notification email
+ *                       lands. `forbidden` is true when the person is not one
+ *                       of that item's approver roles.
+ *
  * Opening the bell clears the BADGE, not the queue: rows stay until somebody
  * decides them, so a glance never silently dismisses anybody's request.
  */
@@ -32,6 +40,15 @@ export async function GET(request: NextRequest) {
 
   try {
     const admin = getAdminClient();
+
+    const sub = request.nextUrl.searchParams.get("sub");
+    if (sub) {
+      if (!UUID.test(sub)) {
+        return NextResponse.json({ item: null, forbidden: false, kind: null });
+      }
+      const found = await loadItemBySubmission(admin, user!, sub);
+      return NextResponse.json({ ...found, kioskUrl: kioskAppUrl() });
+    }
 
     if (request.nextUrl.searchParams.get("view") === "history") {
       const filters = parseHistoryFilters(request.nextUrl.searchParams);

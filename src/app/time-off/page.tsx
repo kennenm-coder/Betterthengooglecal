@@ -401,7 +401,7 @@ function TimeOffContent() {
           <div className="flex-1 min-w-0 flex items-center gap-1 rounded-lg bg-surface p-0.5 max-w-xs">
             {(
               [
-                ["timeoff", "Time Off"],
+                ["timeoff", "Payroll Admin"],
                 ["mfm", "More for More"],
               ] as const
             ).map(([key, label]) => (
@@ -417,7 +417,7 @@ function TimeOffContent() {
             ))}
           </div>
         ) : (
-          <h1 className="text-lg font-semibold flex-1">Time Off Requests</h1>
+          <h1 className="text-lg font-semibold flex-1">Payroll Admin</h1>
         )}
         {showMfm && <div className="flex-1" />}
         {!loading && activeTab === "timeoff" && (
@@ -520,6 +520,11 @@ function TimeOffContent() {
                 past ones, and the share links. Pending time off is NOT on the
                 calendar yet, so it lives here rather than in the log below. */}
             <KioskInboxSection
+              roles={roles}
+              focus={{
+                sub: searchParams.get("sub"),
+                supply: searchParams.get("supply"),
+              }}
               showLinks={canSeeShareLinks(roles)}
               onTimeOffDecided={(updated) =>
                 setRequests((prev) =>
@@ -527,6 +532,8 @@ function TimeOffContent() {
                 )
               }
             />
+
+            <h2 className="px-4 pt-3 text-sm font-semibold">Time off log</h2>
 
             {/* Date filter bar */}
             <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 bg-surface/50 border-b border-border">

@@ -13,6 +13,32 @@ export const runtime = "nodejs";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * Hand the submission id to the kiosk app. It re-reads the decision itself, so
+ * this call cannot be used to tell someone something that did not happen.
+ */
+async function notifyKiosk(submissionId: string): Promise<void> {
+  const base = process.env.KIOSK_APP_URL?.replace(/\/+$/, "");
+  const secret = process.env.KIOSK_INTERNAL_SECRET;
+  if (!base || !secret) {
+    console.warn(
+      "[kiosk-inbox] KIOSK_APP_URL / KIOSK_INTERNAL_SECRET not set — the submitter is emailed on the kiosk's next sweep"
+    );
+    return;
+  }
+  try {
+    const res = await fetch(`${base}/api/decisions/notify`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ submissionId }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) console.error("[kiosk-inbox] kiosk refused the decision ping", res.status);
+  } catch (e) {
+    console.error("[kiosk-inbox] could not reach the kiosk", e);
+  }
+}
+
+/**
  * Approve or deny a time card adjustment, a form that needs approval, or a
  * recognition nomination.
  *
@@ -145,6 +171,14 @@ export async function POST(request: NextRequest) {
       referenceCode: row.reference_code,
       note,
     });
+
+    // Tell the person who submitted it. A denial carries the reason and a
+    // one-off link to fix it and resubmit. Nominations are not emailed (the
+    // nominator is often anonymous). Best-effort: the decision is already saved,
+    // and the kiosk's own sweep catches a ping that does not land.
+    if (row.submission_id && (row.kind === "time_card" || row.kind === "form")) {
+      await notifyKiosk(row.submission_id);
+    }
 
     return NextResponse.json({
       ok: true,

@@ -40,8 +40,15 @@ function dayStartIso(day: string, addDays = 0): string {
  * Each row is a one-line summary (what, who, decided by whom and when, the
  * note); tapping it opens the full detail with the signed PDF.
  */
-export default function HistoryPanel({ refreshKey }: { refreshKey: number }) {
-  const [kind, setKind] = useState<KindFilter>("all");
+export default function HistoryPanel({
+  refreshKey,
+  fixedKind,
+}: {
+  refreshKey: number;
+  /** Inside a kind's own section: only that kind, and no kind filter shown. */
+  fixedKind?: InboxKind;
+}) {
+  const [kind, setKind] = useState<KindFilter>(fixedKind ?? "all");
   const [status, setStatus] = useState<HistoryStatus>("decided");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -101,7 +108,7 @@ export default function HistoryPanel({ refreshKey }: { refreshKey: number }) {
   }
 
   const byDecision = historyOrdersByDecision(status);
-  const hasFilters = kind !== "all" || status !== "decided" || from || to || search;
+  const hasFilters = (!fixedKind && kind !== "all") || status !== "decided" || from || to || search;
   const total = data?.total ?? 0;
   const pageSize = data?.pageSize ?? 25;
   const firstRow = total === 0 ? 0 : page * pageSize + 1;
@@ -111,6 +118,7 @@ export default function HistoryPanel({ refreshKey }: { refreshKey: number }) {
     <div className="pb-3">
       {/* Filters */}
       <div className="space-y-2 px-4 pb-2">
+        {!fixedKind && (
         <div className="flex flex-wrap items-center gap-1.5">
           {(["all", "time_off", "time_card", "form", "recognition"] as KindFilter[]).map((k) => (
             <button
@@ -126,6 +134,7 @@ export default function HistoryPanel({ refreshKey }: { refreshKey: number }) {
             </button>
           ))}
         </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <select
@@ -171,7 +180,7 @@ export default function HistoryPanel({ refreshKey }: { refreshKey: number }) {
           {hasFilters && (
             <button
               onClick={() => {
-                setKind("all");
+                setKind(fixedKind ?? "all");
                 setStatus("decided");
                 setFrom("");
                 setTo("");

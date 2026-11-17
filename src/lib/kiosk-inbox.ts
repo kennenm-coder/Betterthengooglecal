@@ -155,6 +155,70 @@ export const KIND_LABELS: Record<InboxKind, string> = {
   recognition: "Recognition",
 };
 
+/**
+ * The Payroll Admin page has one section per kind of kiosk submission, in this
+ * order. Supplies are not an InboxKind: they are a record with no decision, kept
+ * in their own table, so they get a section of their own rather than a row in
+ * the review view.
+ */
+export type SectionKind = InboxKind | "supply";
+
+export const SECTION_ORDER: SectionKind[] = [
+  "time_off",
+  "time_card",
+  "form",
+  "supply",
+  "recognition",
+];
+
+export const SECTION_TITLES: Record<SectionKind, string> = {
+  time_off: "Time off",
+  time_card: "Time cards",
+  form: "Signed forms",
+  supply: "Supply requests",
+  recognition: "Difference Makers",
+};
+
+/**
+ * Roles that always see a kind's section, even while it is empty. They match
+ * the approver roles the kiosk gives each kind. Forms are set per template (and
+ * default to admin), so for forms a section also shows to anyone who holds a
+ * row's approver roles, which is every row they are sent.
+ */
+export const SECTION_ROLES: Record<SectionKind, string[]> = {
+  time_off: ["admin", "payroll-admin", "payroll-approver"],
+  time_card: ["admin", "payroll-admin"],
+  form: ["admin"],
+  supply: ["admin", "payroll-admin"],
+  recognition: ["admin", "field-manager"],
+};
+
+/** Who can read the supply log. Supplies have no decision yet; see the kiosk's SUPPLY-REQUEST-PLAN. */
+export const SUPPLY_ROLES = SECTION_ROLES.supply;
+
+/** What an emailed link asks for: one submission, or one supply request. */
+export interface InboxFocus {
+  sub: string | null;
+  supply: string | null;
+}
+
+/** One supply request, as the supply log shows it. */
+export interface SupplyLogItem {
+  id: string;
+  sheet_number: number;
+  employee_name: string;
+  department: string;
+  item: string;
+  quantity: number;
+  quantity_unit: string | null;
+  item_url: string | null;
+  reason: string;
+  timeline: string;
+  notes: string | null;
+  submitted_at: string;
+  sheet_status: "pending" | "synced" | "failed";
+}
+
 /** Copied from the kiosk (RECOGNITION_CATEGORY_LABELS in src/lib/kiosk/types.ts). */
 export const RECOGNITION_CATEGORY_LABELS: Record<string, string> = {
   above_and_beyond: "Going Above and Beyond",
