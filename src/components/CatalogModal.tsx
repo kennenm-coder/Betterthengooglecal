@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBackClose } from "@/hooks/useBackClose";
+import { PartSourceBadge, sourceLabel } from "@/components/PartSourceBadge";
 import {
   PartsCatalogItem,
   PartsBundle,
@@ -65,7 +66,7 @@ export default function CatalogModal({ onClose }: { onClose: () => void }) {
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="flex gap-1 px-4 pt-3 shrink-0 overflow-x-auto">
+        <div className="flex flex-wrap gap-1 px-4 pt-3 shrink-0">
           {TABS.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -309,7 +310,7 @@ function PartsEditor() {
             </div>
           </div>
           {/* Which catalog it is in — only worth saying when the list mixes them. */}
-          {multiSection && activeSection === "All" && <Badge tone="muted">{p.section}</Badge>}
+          {multiSection && activeSection === "All" && <PartSourceBadge section={p.section} className="shrink-0" />}
           <Badge tone="category">{p.category || "—"}</Badge>
           {open ? <ChevronDown className="w-4 h-4 text-muted shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted shrink-0" />}
         </button>
@@ -789,7 +790,7 @@ function PartSearchList({
                 <span className="font-normal text-muted">
                   {p.position ? ` · ${p.position}` : ""}
                   {p.productType ? ` · ${p.productType}` : ""}
-                  {multiSection ? ` · ${p.section}` : ""}
+                  {multiSection ? ` · ${sourceLabel(p.section)}` : ""}
                   {hit ? ` · Part # ${hit}` : ""}
                 </span>
               </span>

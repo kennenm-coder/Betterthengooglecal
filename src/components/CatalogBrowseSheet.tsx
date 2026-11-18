@@ -17,7 +17,7 @@
 // Built for ~700 parts on a phone: categories first as big tiles, a grid drawn
 // in steps of GRID_STEP with "Show more", and lazy images.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackClose } from "@/hooks/useBackClose";
 import {
@@ -41,6 +41,7 @@ import {
   choiceHint,
   type VariantPick,
 } from "@/lib/part-variants";
+import { PartSourceBadge } from "@/components/PartSourceBadge";
 import { ArrowLeft, Check, ImageOff, Layers, Plus, Search, X } from "lucide-react";
 
 /** Cards drawn at once; "Show more" draws the next batch. */
@@ -307,116 +308,130 @@ export default function CatalogBrowseSheet({
   );
 
   return createPortal(
-    <div className="fixed inset-0 z-[65] bg-background flex flex-col" role="dialog" aria-modal="true" aria-label="Parts catalog">
-      {/* Header: back/close, title, the running count, Done. */}
-      <div className="shrink-0 border-b border-border bg-background">
-        <div className="max-w-5xl mx-auto px-3 pt-2.5 pb-2 space-y-2">
-          <div className="flex items-center gap-2">
-            {category && !q ? (
-              <button
-                type="button"
-                onClick={() => setCategory(null)}
-                className="p-2 -ml-1 rounded-lg hover:bg-surface text-muted"
-                aria-label="Back to categories"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-            ) : (
-              <button type="button" onClick={onClose} className="p-2 -ml-1 rounded-lg hover:bg-surface text-muted" aria-label="Close catalog">
-                <X className="w-5 h-5" />
-              </button>
-            )}
-            <h2 className="flex-1 min-w-0 text-base font-semibold truncate">{title}</h2>
-            {added > 0 && (
-              <span className="shrink-0 text-xs font-semibold text-green-700 bg-green-500/10 border border-green-600/30 rounded-full px-2.5 py-1 tabular-nums">
-                Added {added}
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={onClose}
-              className="shrink-0 px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-bold"
-            >
-              Done
-            </button>
-          </div>
-
-          <div className="relative">
-            <Search className="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search name, nickname or part #"
-              enterKeyHint="search"
-              className="w-full rounded-xl border border-border bg-surface pl-9 pr-10 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery("")}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-full text-muted hover:bg-background"
-                aria-label="Clear search"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-
-          {multiSection && (
-            <div className="flex gap-1.5 overflow-x-auto -mx-3 px-3 pb-0.5 [scrollbar-width:none]">
-              {["All", ...sections].map((s) => (
+    <div className="fixed inset-0 z-[65] bg-background flex flex-col break-words" role="dialog" aria-modal="true" aria-label="Parts catalog">
+      {/* One scroller holds the header and the grid. The header sticks to the top
+          of it — except on a short landscape phone, where it would eat the screen
+          and so scrolls away with the parts. */}
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+        {/* Header: back/close, title, the running count, Done. */}
+        <div className="sticky top-0 z-10 border-b border-border bg-background pt-[env(safe-area-inset-top)] [@media(max-height:500px)]:static">
+          <div className="max-w-5xl mx-auto px-3 pt-1.5 pb-2 space-y-1.5">
+            <div className="flex items-center gap-2">
+              {category && !q ? (
                 <button
-                  key={s}
                   type="button"
-                  onClick={() => pickSection(s)}
-                  className={`shrink-0 px-3.5 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border ${
-                    activeSection === s ? "bg-foreground text-background border-foreground" : "bg-background text-muted border-border"
-                  }`}
+                  onClick={() => setCategory(null)}
+                  className="w-10 h-10 -ml-1 shrink-0 flex items-center justify-center rounded-lg hover:bg-surface text-muted"
+                  aria-label="Back to categories"
                 >
-                  {s}
+                  <ArrowLeft className="w-5 h-5" />
                 </button>
-              ))}
+              ) : (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-10 h-10 -ml-1 shrink-0 flex items-center justify-center rounded-lg hover:bg-surface text-muted"
+                  aria-label="Close catalog"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+              <h2 className="flex-1 min-w-0 text-base font-semibold truncate">{title}</h2>
+              {added > 0 && (
+                <span className="shrink-0 text-xs font-semibold text-green-700 bg-green-500/10 border border-green-600/30 rounded-full px-2.5 py-1 tabular-nums">
+                  Added {added}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="shrink-0 min-h-10 px-4 rounded-lg bg-amber-500 text-white text-sm font-bold"
+              >
+                Done
+              </button>
             </div>
-          )}
 
-          {(typeChips.length > 0 || !matcher.empty) && (
-            <div className="flex gap-1.5 overflow-x-auto -mx-3 px-3 pb-0.5 [scrollbar-width:none]">
-              {!matcher.empty && (
+            <div className="relative">
+              <Search className="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search name, nickname or part #"
+                enterKeyHint="search"
+                className="w-full rounded-xl border border-border bg-surface pl-9 pr-11 py-2 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  className="absolute right-0 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-full text-muted hover:bg-background"
+                  aria-label="Clear search"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {multiSection && (
+              <div className="flex flex-wrap gap-1.5">
+                {["All", ...sections].map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => pickSection(s)}
+                    className={`min-h-10 flex-1 sm:flex-none px-2 sm:px-3 rounded-lg max-sm:text-xs text-sm font-semibold border ${
+                      activeSection === s ? "bg-foreground text-background border-foreground" : "bg-background text-muted border-border"
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {(typeChips.length > 0 || !matcher.empty) && (
+              <ChipArea>
+                {!matcher.empty && (
+                  <Chip
+                    active={typeMode.kind === "units"}
+                    onClick={() => {
+                      setTypeMode({ kind: "units" });
+                      setCategory(null);
+                    }}
+                  >
+                    These units
+                  </Chip>
+                )}
                 <Chip
-                  active={typeMode.kind === "units"}
+                  active={typeMode.kind === "all"}
                   onClick={() => {
-                    setTypeMode({ kind: "units" });
+                    setTypeMode({ kind: "all" });
                     setCategory(null);
                   }}
                 >
-                  These units
+                  All types
                 </Chip>
-              )}
-              <Chip
-                active={typeMode.kind === "all"}
-                onClick={() => {
-                  setTypeMode({ kind: "all" });
-                  setCategory(null);
-                }}
-              >
-                All types
-              </Chip>
-              {typeChips.map((c) => (
-                <Chip key={c.type} active={c.on} soft onClick={() => toggleType(c.type)}>
-                  {c.type}
-                </Chip>
-              ))}
-            </div>
-          )}
+                {typeChips.map((c) => (
+                  <Chip key={c.type} active={c.on} soft onClick={() => toggleType(c.type)}>
+                    {c.type}
+                  </Chip>
+                ))}
+              </ChipArea>
+            )}
+          </div>
         </div>
-      </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-        <div className="max-w-5xl mx-auto p-3 pb-24">{body}</div>
+        <div className="max-w-5xl mx-auto p-3 pb-[max(6rem,calc(env(safe-area-inset-bottom)+4rem))]">{body}</div>
       </div>
 
       {flash && (
-        <div className="pointer-events-none fixed left-1/2 -translate-x-1/2 bottom-6 z-[67] max-w-[90vw]">
+        <div
+          className={`pointer-events-none fixed left-1/2 -translate-x-1/2 z-[67] max-w-[calc(100vw-2rem)] ${
+            // With a part open its Add bar is at the bottom: the toast goes up
+            // under the header instead of over it.
+            detail ? "top-[calc(env(safe-area-inset-top)+4rem)]" : "bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.75rem))]"
+          }`}
+        >
           <div className="flex items-center gap-2 rounded-full bg-green-700 text-white text-sm font-semibold px-4 py-2.5 shadow-lg">
             <Check className="w-4 h-4 shrink-0" />
             <span className="truncate">{flash.text}</span>
@@ -440,6 +455,49 @@ export default function CatalogBrowseSheet({
   );
 }
 
+/**
+ * The product-type chips, wrapped onto as many lines as they need. On a phone
+ * they are held to two rows and a bit (they scroll inside that box, and the
+ * peeking third row fades out as the cue that there are more) so the header
+ * leaves room for the parts — likewise on a short landscape phone. From
+ * tablet width up, at a normal height, they all just show.
+ */
+function ChipArea({ children }: { children: React.ReactNode }) {
+  const inner = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const check = () => {
+    const el = box.current;
+    if (el) setMore(el.scrollHeight > el.clientHeight + 1 && el.scrollTop + el.clientHeight < el.scrollHeight - 4);
+  };
+  useEffect(() => {
+    const el = inner.current;
+    if (!el) return;
+    // The observer's first callback fires on observe(), so this also measures once.
+    const ro = new ResizeObserver(() => {
+      const b = box.current;
+      if (b) setMore(b.scrollHeight > b.clientHeight + 1 && b.scrollTop + b.clientHeight < b.scrollHeight - 4);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div
+      ref={box}
+      onScroll={check}
+      className={`overflow-y-auto overscroll-contain max-sm:max-h-[7.25rem] [@media(max-height:500px)]:max-h-[7.25rem] sm:[@media(min-height:501px)]:overflow-visible ${
+        more
+          ? "max-sm:[mask-image:linear-gradient(to_bottom,black_calc(100%-1.5rem),transparent)] [@media(max-height:500px)]:[mask-image:linear-gradient(to_bottom,black_calc(100%-1.5rem),transparent)]"
+          : ""
+      }`}
+    >
+      <div ref={inner} className="flex flex-wrap gap-1.5">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function Chip({
   active,
   soft,
@@ -459,7 +517,7 @@ function Chip({
     <button
       type="button"
       onClick={onClick}
-      className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border ${
+      className={`min-h-10 max-w-full px-3 py-1 rounded-full text-xs font-semibold leading-tight text-left border ${
         active ? on : "bg-background text-muted border-border"
       }`}
     >
@@ -514,13 +572,13 @@ function CategoryTile({
       <div className="relative">
         <Photo path={photo} alt={name} className="w-full aspect-[4/3]" />
         {icon && (
-          <span className="absolute top-2 left-2 flex items-center gap-1 rounded-full bg-black/70 text-white text-[10px] font-bold uppercase px-2 py-0.5">
+          <span className="absolute top-2 left-2 flex items-center gap-1 rounded-full bg-black/70 text-white text-xs font-bold uppercase px-2 py-0.5">
             <Layers className="w-3 h-3" /> Packs
           </span>
         )}
       </div>
       <div className="px-2.5 py-2 flex items-start gap-2">
-        <span className="flex-1 min-w-0 text-sm font-semibold leading-snug line-clamp-2">{name}</span>
+        <span className="flex-1 min-w-0 text-sm font-semibold leading-snug line-clamp-2 break-words">{name}</span>
         <span className="shrink-0 text-xs font-semibold text-muted tabular-nums bg-surface rounded-full px-2 py-0.5">{count}</span>
       </div>
     </button>
@@ -547,13 +605,16 @@ function PartCard({
   return (
     <div className="relative rounded-xl border border-border bg-background overflow-hidden">
       <button type="button" onClick={onOpen} className="w-full text-left active:opacity-80">
-        <Photo path={part.photoPath} alt={part.partName} className="w-full aspect-square" />
+        <div className="relative">
+          <Photo path={part.photoPath} alt={part.partName} className="w-full aspect-square" />
+          <PartSourceBadge section={part.section} corner className="!max-w-[calc(100%-3.75rem)]" />
+        </div>
         <div className="px-2.5 py-2">
           <div className="text-sm font-semibold leading-snug line-clamp-2">
             {part.partName}
             {part.position && <span className="font-normal text-muted"> · {part.position}</span>}
           </div>
-          <div className="text-[11px] text-muted mt-0.5 truncate">
+          <div className="text-xs text-muted mt-0.5 truncate">
             {matchedNumber ? (
               <>
                 Part # <span className="font-mono text-foreground">{matchedNumber}</span>
@@ -568,7 +629,7 @@ function PartCard({
             {price != null && <span> · {money(price)}</span>}
           </div>
           {offType && (
-            <div className="mt-1 inline-block text-[10px] font-semibold uppercase tracking-wide text-muted bg-surface border border-border rounded-full px-1.5 py-0.5 max-w-full truncate">
+            <div className="mt-1 inline-block text-xs font-semibold uppercase tracking-wide text-muted bg-surface border border-border rounded-full px-1.5 py-0.5 max-w-full truncate">
               {offType}
             </div>
           )}
@@ -599,16 +660,16 @@ function BundleCard({
 }) {
   const [count, setCount] = useState(1);
   const price = bundlePrice(bundle, partsById);
-  const names = bundle.members
+  const parts = bundle.members
     .map((m) => partsById.get(m.partId))
-    .filter((p): p is PartsCatalogItem => !!p)
-    .map((p) => p.partName);
+    .filter((p): p is PartsCatalogItem => !!p);
+  const SHOWN_MEMBERS = 6;
   return (
     <div className="flex gap-3 rounded-xl border border-border bg-background p-2.5">
       <Photo path={bundle.photoPath} alt={bundle.name} className="w-20 h-20 shrink-0 rounded-lg" />
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold leading-snug">{bundle.name}</div>
-        <div className="text-[11px] text-muted truncate">
+        <div className="text-sm font-semibold leading-snug break-words">{bundle.name}</div>
+        <div className="text-xs text-muted truncate">
           {[
             `${bundle.members.length} part${bundle.members.length === 1 ? "" : "s"}`,
             bundle.productType || null,
@@ -617,8 +678,18 @@ function BundleCard({
             .filter(Boolean)
             .join(" · ")}
         </div>
-        {names.length > 0 && <div className="text-[11px] text-muted line-clamp-2 mt-0.5">{names.join(", ")}</div>}
-        <div className="flex items-center gap-2 mt-2">
+        {parts.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted mt-1">
+            {parts.slice(0, SHOWN_MEMBERS).map((p, i) => (
+              <span key={`${p.id}-${i}`} className="inline-flex items-center gap-1 min-w-0 max-w-full">
+                <span className="truncate">{p.partName}</span>
+                <PartSourceBadge section={p.section} className="shrink-0" />
+              </span>
+            ))}
+            {parts.length > SHOWN_MEMBERS && <span>+{parts.length - SHOWN_MEMBERS} more</span>}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2 mt-2">
           <Stepper value={count} onChange={setCount} label={bundle.name} />
           <button
             type="button"
@@ -626,7 +697,7 @@ function BundleCard({
               onAdd(count);
               setCount(1);
             }}
-            className="ml-auto px-3.5 py-2 rounded-lg bg-amber-500 text-white text-sm font-bold"
+            className="ml-auto min-h-10 px-3.5 rounded-lg bg-amber-500 text-white text-sm font-bold"
           >
             Add pack
           </button>
@@ -699,18 +770,24 @@ function PartDetail({
 
   return (
     <div className="absolute inset-0 z-[66] bg-background flex flex-col" role="dialog" aria-modal="true" aria-label={part.partName}>
-      <div className="shrink-0 border-b border-border">
-        <div className="max-w-3xl mx-auto px-3 py-2.5 flex items-center gap-2">
-          <button type="button" onClick={onClose} className="p-2 -ml-1 rounded-lg hover:bg-surface text-muted" aria-label="Back to parts">
+      <div className="shrink-0 border-b border-border pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+        <div className="max-w-3xl mx-auto px-3 py-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-10 h-10 -ml-1 shrink-0 flex items-center justify-center rounded-lg hover:bg-surface text-muted"
+            aria-label="Back to parts"
+          >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <h3 className="flex-1 min-w-0 text-base font-semibold truncate">{part.partName}</h3>
+          <PartSourceBadge section={part.section} className="shrink-0" />
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
         <div className="max-w-3xl mx-auto p-3 space-y-4 md:grid md:grid-cols-2 md:gap-5 md:space-y-0">
-          <Photo path={part.photoPath} alt={part.partName} fit="contain" className="w-full aspect-square max-h-[42vh] md:max-h-none rounded-xl border border-border" />
+          <Photo path={part.photoPath} alt={part.partName} fit="contain" className="w-full aspect-square max-h-[42vh] md:max-h-[70vh] rounded-xl border border-border" />
 
           <div className="space-y-4">
             <div>
@@ -736,7 +813,7 @@ function PartDetail({
 
             {colors.length > 0 && (colors.length > 1 || sizes.length > 1) && (
               <div>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-muted mb-1.5">Colour</div>
+                <div className="text-xs font-bold uppercase tracking-wide text-muted mb-1.5">Colour</div>
                 <div className="flex flex-wrap gap-2">
                   {colors.map((c) => {
                     const on = pick.color === c;
@@ -746,12 +823,12 @@ function PartDetail({
                         key={c}
                         type="button"
                         onClick={() => choose("color", c)}
-                        className={`text-left rounded-xl border px-3 py-2 min-h-[44px] max-w-full ${
+                        className={`text-left rounded-xl border px-3 py-2 min-h-11 max-w-full break-words ${
                           on ? "border-amber-500 bg-amber-500/15 ring-1 ring-amber-500" : "border-border bg-background"
                         }`}
                       >
                         <span className="block text-sm font-semibold">{c}</span>
-                        {hint && <span className="block text-[11px] text-muted line-clamp-2">{hint}</span>}
+                        {hint && <span className="block text-xs text-muted line-clamp-2">{hint}</span>}
                       </button>
                     );
                   })}
@@ -761,7 +838,7 @@ function PartDetail({
 
             {sizes.length > 0 && (sizes.length > 1 || colors.length > 1) && (
               <div>
-                <div className="text-[11px] font-bold uppercase tracking-wide text-muted mb-1.5">
+                <div className="text-xs font-bold uppercase tracking-wide text-muted mb-1.5">
                   Size{pick.color && !pick.size ? ` in ${pick.color}` : ""}
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -773,12 +850,12 @@ function PartDetail({
                         key={s}
                         type="button"
                         onClick={() => choose("size", s)}
-                        className={`text-left rounded-xl border px-3 py-2 min-h-[44px] max-w-full ${
+                        className={`text-left rounded-xl border px-3 py-2 min-h-11 max-w-full break-words ${
                           on ? "border-amber-500 bg-amber-500/15 ring-1 ring-amber-500" : "border-border bg-background"
                         }`}
                       >
                         <span className="block text-sm font-semibold">{s}</span>
-                        {hint && <span className="block text-[11px] text-muted line-clamp-2">{hint}</span>}
+                        {hint && <span className="block text-xs text-muted line-clamp-2">{hint}</span>}
                       </button>
                     );
                   })}
@@ -808,13 +885,13 @@ function PartDetail({
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-border bg-background">
-        <div className="max-w-3xl mx-auto px-3 py-2.5 flex items-center gap-3">
+      <div className="shrink-0 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+        <div className="max-w-3xl mx-auto px-3 py-2 flex items-center gap-3">
           <Stepper value={qty} onChange={setQty} label={part.partName} />
           <button
             type="button"
             onClick={() => onAdd(pick, qty)}
-            className="flex-1 py-3 rounded-xl bg-amber-500 text-white text-base font-bold flex items-center justify-center gap-2 active:scale-[0.99]"
+            className="flex-1 min-h-12 py-2 rounded-xl bg-amber-500 text-white text-base font-bold flex items-center justify-center gap-2 active:scale-[0.99]"
           >
             <Plus className="w-5 h-5" /> Add to write-up
           </button>

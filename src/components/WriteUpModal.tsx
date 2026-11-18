@@ -91,6 +91,7 @@ import {
 import { getWriteUpEmails } from "@/lib/action-settings";
 import { dedupeRecipients } from "@/lib/email-recipients";
 import { crewsToText, textToCrews } from "@/lib/writeup-crews";
+import { PartSourceBadge } from "@/components/PartSourceBadge";
 import {
   X,
   Plus,
@@ -4313,7 +4314,13 @@ function PartsPicker({
                 return (
                   <div key={`${g.section}\u0000${g.type}`}>
                     <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-muted bg-surface sticky top-0">
-                      {multiSection ? `${g.section} › ${g.type || "No model"}` : g.type}
+                      {multiSection ? (
+                        <>
+                          <PartSourceBadge section={g.section} /> {g.type || "No model"}
+                        </>
+                      ) : (
+                        g.type
+                      )}
                     </div>
                     {items.map((c) => {
                       const nick = nicknameReason(c);
