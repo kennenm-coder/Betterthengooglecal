@@ -38,7 +38,14 @@ import {
 } from "@/lib/purchase-orders";
 import { addressKey } from "@/lib/address-match";
 import { useAuth } from "@/hooks/useAuth";
-import { canCheckOffWriteUps, canEditLegacyLink, canSeeMeasureTiles, canSeeWriteUps } from "@/lib/roles";
+import {
+  canCheckOffWriteUps,
+  canEditLegacyLink,
+  canSeeJobCompletions,
+  canSeeMeasureTiles,
+  canSeeWriteUps,
+} from "@/lib/roles";
+import { fetchCompletionTags, type JcTag } from "@/lib/job-complete";
 import { getSupabase } from "@/lib/supabase";
 
 const CALENDAR_VISIBLE_TYPES = new Set(["Install", "Service", "Job Site Visit"]);
@@ -84,6 +91,14 @@ interface DataContextType {
    * first paint rather than popping a line in afterwards.
    */
   partsFor: (orderNumber: string) => PurchaseOrderRollup | null;
+  /**
+   * The Job Complete tag for a job (migration 058), or null. Only the roles
+   * that can read the reports ever load any, so for everyone else this is
+   * always null and tiles are unchanged.
+   */
+  completionFor: (orderNumber: string) => JcTag | null;
+  /** Re-pull the tags after a report is filed or reviewed. */
+  refreshCompletions: () => Promise<void>;
 }
 
 const DataContext = createContext<DataContextType>({
@@ -102,6 +117,8 @@ const DataContext = createContext<DataContextType>({
   activeWriteUpsAt: () => [],
   refreshActiveWriteUps: async () => {},
   partsFor: () => null,
+  completionFor: () => null,
+  refreshCompletions: async () => {},
 });
 
 export function useData() {
@@ -139,6 +156,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   const [linkedJobsStale, setLinkedJobsStale] = useState(false);
   const [activeWriteUps, setActiveWriteUps] = useState<Map<string, ActiveWriteUpRef[]>>(new Map());
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderIndex>(new Map());
+  const [completionTags, setCompletionTags] = useState<Map<string, JcTag>>(new Map());
   const abortRef = useRef<AbortController | null>(null);
   const genRef = useRef(0);
   const loadedMonthsRef = useRef<Set<string>>(new Set());
@@ -474,6 +492,31 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     refreshPurchaseOrders();
   }, [refreshPurchaseOrders, userId]);
 
+  // Job Complete tags (migration 058). Pulled only by the roles that may read
+  // the reports, so no one else's calendar does any extra work -- or changes.
+  // A failed pull (say, the migration isn't applied yet) just leaves no tags.
+  const canSeeCompletions = canSeeJobCompletions(roles);
+  const refreshCompletions = useCallback(async () => {
+    const tags = await fetchCompletionTags().catch(() => null);
+    if (tags) setCompletionTags(tags);
+  }, []);
+  useEffect(() => {
+    if (!canSeeCompletions || !userId) {
+      setCompletionTags(new Map());
+      return;
+    }
+    refreshCompletions();
+  }, [canSeeCompletions, userId, refreshCompletions]);
+
+  const completionFor = useCallback(
+    (orderNumber: string): JcTag | null => {
+      if (!canSeeCompletions) return null;
+      const key = (orderNumber || "").trim();
+      return key ? (completionTags.get(key) ?? null) : null;
+    },
+    [completionTags, canSeeCompletions]
+  );
+
   const partsFor = useCallback(
     (orderNumber: string): PurchaseOrderRollup | null => {
       const key = (orderNumber || "").trim();
@@ -622,6 +665,8 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         activeWriteUpsAt,
         refreshActiveWriteUps,
         partsFor,
+        completionFor,
+        refreshCompletions,
       }}
     >
       {children}

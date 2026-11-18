@@ -125,6 +125,37 @@ export function canManageMoreForMore(roles: RoleInput): boolean {
 }
 
 /**
+ * Who files a Job Complete report from an install tile: install leads, and
+ * admins (to test). Nobody else sees the button, so until someone is given
+ * the installer-lead role this feature is invisible. Mirrors the jc_insert
+ * policy in migration 058.
+ */
+export function canSubmitJobComplete(roles: RoleInput): boolean {
+  return hasAny(roles, ["installer-lead", "admin"]);
+}
+
+/**
+ * Who can READ Job Complete reports (the tile tag, and the Write-Ups page
+ * section): the leads (their own), and the office roles. Mirrors jc_read in
+ * migration 058.
+ */
+export function canSeeJobCompletions(roles: RoleInput): boolean {
+  return hasAny(roles, [
+    "installer-lead",
+    "admin",
+    "field-manager",
+    "payroll-admin",
+    "scheduling",
+    "scheduling_manager",
+  ]);
+}
+
+/** Who marks a flagged Job Complete reviewed. Mirrors jc_update in 058. */
+export function canReviewJobCompletions(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "field-manager", "payroll-admin"]);
+}
+
+/**
  * Roles that cannot be held alongside `installer`.
  *
  * Because the role subtracts, pairing it with anything else is always a

@@ -23,6 +23,7 @@ import {
   BadgeDollarSign,
   Link2,
   Users,
+  CheckCircle2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -31,7 +32,9 @@ import WriteUpModal from "./WriteUpModal";
 import ProductSpecs from "./ProductSpecs";
 import JobReferencePanel from "./JobReferencePanel";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork, canEditLegacyLink } from "@/lib/roles";
+import { canDoFieldWork, canEditLegacyLink, canSubmitJobComplete } from "@/lib/roles";
+import JobCompleteModal from "./JobCompleteModal";
+import JobCompleteTag from "./JobCompleteTag";
 import { upsertLegacyLink, deleteLegacyLink } from "@/lib/store";
 import { useData } from "./DataProvider";
 import { parseISO, isSameDay } from "date-fns";
@@ -115,7 +118,8 @@ export default function JobCard({
   const [showAction, setShowAction] = useState(false);
   const [showWriteUp, setShowWriteUp] = useState(false);
   const { user, roles } = useAuth();
-  const { applyLegacyLink, activeWriteUpsAt, refreshActiveWriteUps, partsFor } = useData();
+  const { applyLegacyLink, activeWriteUpsAt, refreshActiveWriteUps, partsFor, completionFor } = useData();
+  const [showJobComplete, setShowJobComplete] = useState(false);
   // A Tech Measure is a visit to measure, not work to write up or install
   // from: no write-up / log-action buttons, no install-document or product
   // status, no legacy install link on it.
@@ -140,6 +144,13 @@ export default function JobCard({
   }, [order.dayCrews]);
   const mat = order.materialJob;
   const legacyUrl = order.legacyInstallUrl || null;
+  // Job Complete (migration 058): install tiles only. The tag shows for the
+  // roles that can read reports; the button only for install leads (and
+  // admins), on their own jobs. With no installer-lead accounts yet, neither
+  // appears for anyone but an admin.
+  const isInstall = order.workOrderType === "Install";
+  const completion = isInstall ? completionFor(order.orderNumber) : null;
+  const canJobComplete = isInstall && canSubmitJobComplete(roles) && order.isMine !== false;
 
   // A service job's own number finds nothing: the write-ups a crew needs were
   // filed against the install. They're found by address, from the index the
@@ -253,6 +264,7 @@ export default function JobCard({
                     Multi-day
                   </span>
                 )}
+                {completion && <JobCompleteTag tag={completion} compact />}
               </div>
             </div>
           </div>
@@ -311,6 +323,7 @@ export default function JobCard({
                     Multi-day
                   </span>
                 )}
+                {completion && <JobCompleteTag tag={completion} />}
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
@@ -581,6 +594,22 @@ export default function JobCard({
             </button>
           )}
 
+          {/* Job Complete — the install lead's "this job is done" report. */}
+          {canJobComplete && (
+            <button
+              type="button"
+              onClick={() => setShowJobComplete(true)}
+              className={`mt-3 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium active:scale-[0.98] transition-transform ${
+                completion
+                  ? "border border-green-600/40 bg-green-600/10 text-green-800 dark:text-green-300"
+                  : "bg-green-600 text-white"
+              }`}
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              {completion ? "Job Complete — view / update" : "Job Complete"}
+            </button>
+          )}
+
           {/* Open Install Instructions — navigates to full page */}
           {mat && (
             <button
@@ -679,6 +708,8 @@ export default function JobCard({
       {showAction && (
         <ActionModal order={order} onClose={() => setShowAction(false)} />
       )}
+
+      {showJobComplete && <JobCompleteModal order={order} onClose={() => setShowJobComplete(false)} />}
 
       {showWriteUp && (
         <WriteUpModal

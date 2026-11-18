@@ -28,6 +28,7 @@ import { groupWriteUpSections, isReadyToClose, isSectionDone, padSeq, pcsOf, spl
 import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibility";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
 import WriteUpPicker from "@/components/WriteUpPicker";
+import JobCompletionsPanel from "@/components/JobCompletionsPanel";
 import JobReferencePanel, { referenceJobFromWriteUp } from "@/components/JobReferencePanel";
 import { useData } from "@/components/DataProvider";
 import ServicePartsCard from "@/components/ServicePartsCard";
@@ -777,6 +778,11 @@ export default function WorkOrdersPage() {
       </header>
 
       <main className="flex-1 overflow-y-auto p-4">
+        {/* Install leads' Job Complete reports (migration 058). Draws nothing
+            until the first one is filed. */}
+        <div className="no-print">
+          <JobCompletionsPanel />
+        </div>
         {filter === "job_closed" && (
           <div className="mb-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm no-print">
             <p className="font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
