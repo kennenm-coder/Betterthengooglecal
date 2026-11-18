@@ -380,7 +380,15 @@ checks(migration, feature, verdict, checked) as (values
         and exists(select 1 from pol where t = 'more_for_more_people'
                      and p = 'mfm_people_update' and body like '%mfm-submitter%')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'lead_id and training columns AND mfm-submitter in the people update policy')
+  'lead_id and training columns AND mfm-submitter in the people update policy'),
+
+ ('060', 'parts catalog sections (Location / Renewal / IQ Parts)',
+  case when exists(select 1 from col where k = 'parts_catalog.section')
+        and exists(select 1 from col where k = 'parts_catalog.source_ref')
+        and exists(select 1 from col where k = 'parts_catalog.details')
+        and exists(select 1 from idx where k = 'uq_parts_catalog_source_ref')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'parts_catalog.section + source_ref + details AND the unique source_ref index')
 )
 select migration, feature, verdict, checked
 from checks

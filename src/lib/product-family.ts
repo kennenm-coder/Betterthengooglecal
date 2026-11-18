@@ -25,8 +25,13 @@
 // Nothing here BLOCKS anything. The picker uses it to decide what to show
 // first and what to tag; the person can always reach the rest of the catalog.
 
-/** A part type that belongs to every unit — never filtered out. */
-const UNIVERSAL = /^(universal|any|all|custom|n\/?a|generic|misc\.?|miscellaneous)$/;
+/**
+ * A part type that belongs to every unit — never filtered out. "Installation
+ * Parts" is the Renewal catalog's bucket for caulk, fasteners, shims and the
+ * like: it names no window model, so without this it would match no family,
+ * vanish from the picker and flag an amber mismatch on every unit.
+ */
+const UNIVERSAL = /^(universal|any|all|custom|n\/?a|generic|misc\.?|miscellaneous|installation|installation parts?)$/;
 
 /**
  * Families, in the order they are tested. Order matters: "Gliding Patio Door"

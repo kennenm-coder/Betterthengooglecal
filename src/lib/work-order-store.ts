@@ -368,6 +368,15 @@ export interface PartsCatalogItem {
   variants: PartVariant[];
   /** false = auto-added from a write-up, awaiting an admin/field-manager review. */
   verified: boolean;
+  /** Which catalog the part lives in ("Location Parts", "Renewal Parts", …).
+   *  Migration 060; a database without it reads every part as Location Parts. */
+  section: string;
+  /** Where an imported part came from ("rba:2:177"), so a re-import updates the
+   *  row instead of duplicating it. null for hand-made parts. */
+  sourceRef: string | null;
+  /** Everything about an imported part with no column of its own — vintage
+   *  compatibility, notes, service-reimbursable, catalog line names. */
+  details: Record<string, unknown>;
   /** Other names people call this part. The write-up picker SEARCHES these and
    *  shows the matched one in parentheses; the saved line keeps the real name. */
   nicknames: string[];
@@ -382,13 +391,49 @@ export interface PartsCatalogItem {
   updatedAt: string | null;
 }
 
-const PART_SELECT =
+/** The catalog a part belongs to when nothing says otherwise. */
+export const DEFAULT_PART_SECTION = "Location Parts";
+
+/** Sections in the order the catalog screens list them. A section not named
+ *  here (a future one) sorts after these, alphabetically. */
+const SECTION_ORDER = [DEFAULT_PART_SECTION, "Renewal Parts", "IQ Parts"];
+
+/** The sections worth offering, in display order: the ones that have parts,
+ *  each once, with a blank section counted as the default. */
+export function sectionsInUse(parts: { section?: string | null }[]): string[] {
+  const seen = new Set(parts.map((p) => (p.section || "").trim() || DEFAULT_PART_SECTION));
+  return [...seen].sort((a, b) => {
+    const ai = SECTION_ORDER.indexOf(a);
+    const bi = SECTION_ORDER.indexOf(b);
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi) || a.localeCompare(b);
+  });
+}
+
+// The select is tried newest column set first and steps down on an error, so
+// the app works against a database that is behind the code (migration 060 or
+// 031 not run yet) as well as one that has caught up:
+//   full    → with section / source_ref / details       (migration 060)
+//   rich    → with nicknames / price / photo / audit    (migration 031)
+//   legacy  → the original columns
+//   basic   → before even `colors` / `verified` existed
+const PART_SELECT_RICH =
   "id, product_type, category, part_name, position, colors, sizes, variants, " +
   "verified, nicknames, price, photo_path, created_by, updated_by, updated_at";
+
+const PART_SELECT = PART_SELECT_RICH + ", section, source_ref, details";
 
 /** Everything that existed before migration 031 — the fallback select. */
 const PART_SELECT_LEGACY =
   "id, product_type, category, part_name, position, colors, sizes, variants, verified";
+
+const PART_SELECT_BASIC = "id, product_type, category, part_name, position";
+
+const PART_SELECT_TIERS: { select: string; hasVerified: boolean }[] = [
+  { select: PART_SELECT, hasVerified: true },
+  { select: PART_SELECT_RICH, hasVerified: true },
+  { select: PART_SELECT_LEGACY, hasVerified: true },
+  { select: PART_SELECT_BASIC, hasVerified: false },
+];
 
 /** numeric(10,2) comes back from PostgREST as a string; null stays null. */
 function num(v: unknown): number | null {
@@ -412,6 +457,12 @@ function rowToPart(r: Record<string, unknown>): PartsCatalogItem {
     sizes: Array.isArray(r.sizes) ? (r.sizes as string[]) : [],
     variants: Array.isArray(r.variants) ? (r.variants as PartVariant[]) : [],
     verified: r.verified !== false,
+    section: String(r.section || "").trim() || DEFAULT_PART_SECTION,
+    sourceRef: (r.source_ref as string) || null,
+    details:
+      r.details && typeof r.details === "object" && !Array.isArray(r.details)
+        ? (r.details as Record<string, unknown>)
+        : {},
     nicknames: strList(r.nicknames),
     price: num(r.price),
     photoPath: (r.photo_path as string) || null,
@@ -426,6 +477,31 @@ export function partPrice(part: PartsCatalogItem, color?: string, size?: string)
   const v = part.variants.find((x) => (x.color || "") === (color || "") && (x.size || "") === (size || ""));
   const vp = num(v?.price);
   return vp != null ? vp : part.price;
+}
+
+/** Lowercase letters and digits only — "0123-456 A" and "0123456a" compare equal. */
+function partKey(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * The first of a part's part numbers (any colour/size variant) that the search
+ * text finds, or undefined. Matches the text as typed, and also with dashes,
+ * dots and spaces ignored once there are three or more characters to go on, so
+ * a number typed off a box without its punctuation still lands. Callers show
+ * the returned number, so whoever searched sees why the part came back.
+ */
+export function matchingPartNumber(part: Pick<PartsCatalogItem, "variants">, query: string): string | undefined {
+  const raw = query.trim().toLowerCase();
+  if (!raw) return undefined;
+  const loose = partKey(raw);
+  for (const v of part.variants) {
+    const pn = (v.partNumber || "").trim();
+    if (!pn) continue;
+    if (pn.toLowerCase().includes(raw)) return pn;
+    if (loose.length >= 3 && partKey(pn).includes(loose)) return pn;
+  }
+  return undefined;
 }
 
 // ─── Who is editing ────────────────────────────────────────────────────────
@@ -458,6 +534,67 @@ function isMissingColumn(error: { message?: string } | null): boolean {
   return /column .* does not exist|schema cache/i.test(error?.message || "");
 }
 
+/** PostgREST returns at most this many rows per request, silently. */
+const PAGE_SIZE = 1000;
+/** A backstop against a loop that never sees a short page (50,000 rows). */
+const MAX_PAGES = 50;
+
+type PageResult = { data: unknown[] | null; error: { message?: string } | null };
+
+/**
+ * Read every row of a query, not just the first thousand. PostgREST truncates a
+ * select at its row cap WITHOUT an error, so a catalog that has outgrown it
+ * would lose its tail with nothing to say so. Pages with .range() until a short
+ * page comes back. `page` must use a stable order ending in a unique column
+ * (id), or rows can repeat or vanish across pages.
+ *
+ * A failure on the FIRST page is flagged so the caller can try an older column
+ * set. A failure on a later page returns `rows: null` without the flag —
+ * half a catalog presented as the whole thing is worse than none.
+ */
+async function readAllPages(
+  page: (from: number, to: number) => PromiseLike<PageResult>
+): Promise<{ rows: Record<string, unknown>[] | null; firstPageError: boolean }> {
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const from = i * PAGE_SIZE;
+    const res = await page(from, from + PAGE_SIZE - 1);
+    if (res.error) return { rows: null, firstPageError: i === 0 };
+    const got = (res.data || []) as Record<string, unknown>[];
+    rows.push(...got);
+    if (got.length < PAGE_SIZE) return { rows, firstPageError: false };
+  }
+  return { rows, firstPageError: false };
+}
+
+/**
+ * Active parts, every page, newest column set that this database has. Returns
+ * null when nothing could be read. `verifiedOnly` feeds the write-up picker;
+ * the catalog editor wants unverified ones too, listed first so they get seen.
+ */
+async function readParts(verifiedOnly: boolean): Promise<Record<string, unknown>[] | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  for (const tier of PART_SELECT_TIERS) {
+    const res = await readAllPages((from, to) => {
+      let q = supabase.from("parts_catalog").select(tier.select).eq("active", true);
+      if (verifiedOnly && tier.hasVerified) q = q.eq("verified", true);
+      if (!verifiedOnly && tier.hasVerified) q = q.order("verified", { ascending: true });
+      return q
+        .order("product_type", { ascending: true })
+        .order("category", { ascending: true })
+        .order("part_name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult>;
+    });
+    if (res.rows) return res.rows;
+    // A failure past the first page is not a column problem; don't step down to
+    // a thinner select and hand back a catalog with its details missing.
+    if (!res.firstPageError) return null;
+  }
+  return null;
+}
+
 let _partsCache: PartsCatalogItem[] | null = null;
 export function invalidatePartsCache() {
   _partsCache = null;
@@ -466,38 +603,10 @@ export function invalidatePartsCache() {
 /** Verified parts only — feeds the write-up "Parts needed" suggestions. */
 export async function fetchPartsCatalog(): Promise<PartsCatalogItem[]> {
   if (_partsCache) return _partsCache;
-  const supabase = getSupabase();
-  if (!supabase) return [];
-  const rich = await supabase
-    .from("parts_catalog")
-    .select(PART_SELECT)
-    .eq("active", true)
-    .eq("verified", true)
-    .order("product_type", { ascending: true })
-    .order("category", { ascending: true });
-  let rows = rich.data as Record<string, unknown>[] | null;
-  // Fallback for a database that hasn't caught up with the code yet (018's
-  // columns, or 031's nicknames/price/audit): the older column sets still work,
-  // so the picker keeps suggesting parts instead of going blank.
-  if (rich.error) {
-    const mid = await supabase
-      .from("parts_catalog")
-      .select(PART_SELECT_LEGACY)
-      .eq("active", true)
-      .eq("verified", true)
-      .order("product_type", { ascending: true })
-      .order("category", { ascending: true });
-    rows = mid.data as Record<string, unknown>[] | null;
-    if (mid.error) {
-      const basic = await supabase
-        .from("parts_catalog")
-        .select("id, product_type, category, part_name, position")
-        .eq("active", true)
-        .order("product_type", { ascending: true })
-        .order("category", { ascending: true });
-      rows = basic.data as Record<string, unknown>[] | null;
-    }
-  }
+  // Falls back through older column sets (see PART_SELECT_TIERS) so a database
+  // that hasn't caught up with the code still suggests parts instead of going
+  // blank.
+  const rows = await readParts(true);
   if (!rows) return [];
   const mapped = rows.map(rowToPart);
   // Don't cache an empty read (RLS may return 0 rows before auth resolves).
@@ -507,30 +616,10 @@ export async function fetchPartsCatalog(): Promise<PartsCatalogItem[]> {
 
 /** Every active part (verified + unverified) — for the settings catalog editor. */
 export async function fetchAllParts(): Promise<PartsCatalogItem[]> {
-  const supabase = getSupabase();
-  if (!supabase) return [];
-  const rich = await supabase
-    .from("parts_catalog")
-    .select(PART_SELECT)
-    .eq("active", true)
-    .order("verified", { ascending: true })
-    .order("product_type", { ascending: true })
-    .order("category", { ascending: true });
-  let rows = rich.data as Record<string, unknown>[] | null;
-  // Same reason as fetchPartsCatalog: don't empty the catalog editor just
-  // because migration 031 hasn't been run on this database yet.
-  if (rich.error) {
-    const legacy = await supabase
-      .from("parts_catalog")
-      .select(PART_SELECT_LEGACY)
-      .eq("active", true)
-      .order("verified", { ascending: true })
-      .order("product_type", { ascending: true })
-      .order("category", { ascending: true });
-    rows = legacy.data as Record<string, unknown>[] | null;
-  }
-  if (!rows) return [];
-  return rows.map(rowToPart);
+  // Same fallback as fetchPartsCatalog: the editor must not go empty just
+  // because migration 060 (or 031) hasn't been run on this database yet.
+  const rows = await readParts(false);
+  return rows ? rows.map(rowToPart) : [];
 }
 
 export interface PartInput {
@@ -546,6 +635,14 @@ export interface PartInput {
   nicknames?: string[];
   price?: number | null;
   photoPath?: string | null;
+  /** Sent only when defined, so a form that doesn't know about sections (or an
+   *  import that doesn't touch it) can't overwrite one. A new part with none
+   *  defined takes the database default, Location Parts. */
+  section?: string;
+  /** Importer key — sent only when defined, like `section`. */
+  sourceRef?: string | null;
+  /** Sent only when defined; an edit form that leaves it out keeps what's there. */
+  details?: Record<string, unknown>;
 }
 
 export async function upsertPart(input: PartInput): Promise<{ ok: boolean; error: string | null }> {
@@ -571,12 +668,28 @@ export async function upsertPart(input: PartInput): Promise<{ ok: boolean; error
     updated_by: who,
     updated_at: new Date().toISOString(),
   };
+  // Migration 060's columns, added only when the caller actually has a value.
+  const sectionName = input.section?.trim();
+  const sectionCols: Record<string, unknown> = {};
+  if (sectionName) sectionCols.section = sectionName;
+  if (input.sourceRef !== undefined) sectionCols.source_ref = input.sourceRef || null;
+  if (input.details !== undefined) sectionCols.details = input.details;
   const send = (r: Record<string, unknown>) =>
     input.id
       ? supabase.from("parts_catalog").update(r).eq("id", input.id)
       : supabase.from("parts_catalog").insert({ ...r, created_by: who });
 
-  let { error } = await send(row);
+  let { error } = await send({ ...row, ...sectionCols });
+  // Before migration 060 the section columns don't exist. A part meant for the
+  // default section loses nothing by dropping them; one meant for any OTHER
+  // section would silently land in Location Parts, so refuse that instead.
+  if (error && isMissingColumn(error) && Object.keys(sectionCols).length > 0) {
+    if (sectionName && sectionName !== DEFAULT_PART_SECTION) {
+      console.error("upsertPart failed:", error);
+      return { ok: false, error: "Sections aren't set up on this database yet — migration 060 hasn't been run." };
+    }
+    ({ error } = await send(row));
+  }
   // Before migration 031 those columns don't exist. Save what we can rather
   // than refusing the edit outright — nicknames, price and the photo are then
   // dropped, which the editor shows plainly, instead of silent corruption.
@@ -710,23 +823,35 @@ export function invalidateBundlesCache() {
 async function readBundles(): Promise<PartsBundle[] | null> {
   const supabase = getSupabase();
   if (!supabase) return null;
-  const rich = await supabase
-    .from("parts_bundles")
-    .select(BUNDLE_SELECT)
-    .eq("active", true)
-    .order("product_type", { ascending: true })
-    .order("name", { ascending: true });
-  let rows = rich.data as Record<string, unknown>[] | null;
-  if (rich.error) {
-    const legacy = await supabase
+  const rich = await readAllPages((from, to) =>
+    supabase
       .from("parts_bundles")
-      .select(BUNDLE_SELECT_LEGACY)
+      .select(BUNDLE_SELECT)
       .eq("active", true)
-      .order("name", { ascending: true });
-    if (legacy.error) return null;
-    rows = legacy.data as Record<string, unknown>[] | null;
+      .order("product_type", { ascending: true })
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<PageResult>
+  );
+  let rows = rich.rows;
+  if (!rows) {
+    // Only a first-page failure means "older column set"; a later one is a
+    // dropped connection, and the legacy select would hide it behind a
+    // plausible-looking half list.
+    if (!rich.firstPageError) return null;
+    const legacy = await readAllPages((from, to) =>
+      supabase
+        .from("parts_bundles")
+        .select(BUNDLE_SELECT_LEGACY)
+        .eq("active", true)
+        .order("name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult>
+    );
+    if (!legacy.rows) return null;
+    rows = legacy.rows;
   }
-  return (rows || []).map(rowToBundle);
+  return rows.map(rowToBundle);
 }
 
 /**
