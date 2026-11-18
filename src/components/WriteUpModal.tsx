@@ -54,6 +54,15 @@ import {
 import { canDoFieldWork } from "@/lib/roles";
 import type { MaterialCatalog } from "@/lib/nwo-builder";
 import { familyMatcher, isUniversalType } from "@/lib/product-family";
+import {
+  partLabel,
+  partDescription,
+  settleVariant,
+  variantColors,
+  variantSizes,
+  type VariantPick,
+} from "@/lib/part-variants";
+import CatalogBrowseSheet from "./CatalogBrowseSheet";
 import { autoVendorFor, isInHouse, isOrderable } from "@/lib/trim-vendor";
 import {
   sendTrimToOrdering, syncEditedTrim, handoffFailed,
@@ -98,6 +107,7 @@ import {
   StickyNote,
   AlertTriangle,
   FileText,
+  LayoutGrid,
 } from "lucide-react";
 
 export type WriteUpTarget = Pick<
@@ -201,6 +211,9 @@ interface PartItem {
   /** The Andersen part number for that colour + size, so whoever places the
    *  order doesn't have to look it up a second time. */
   partNumber?: string;
+  /** The catalog's description of that part number. Set and cleared with it;
+   *  never folded into `name`, which is what lines merge and search on. */
+  description?: string;
 }
 
 /** One unit's two lists on a work item. */
@@ -283,6 +296,7 @@ const partFromDraft = (p: DraftPart): PartItem => ({
   color: p.color,
   size: p.size,
   partNumber: p.partNumber,
+  description: p.partNumber ? p.description : undefined,
 });
 
 const partToDraft = (p: PartItem): DraftPart => ({
@@ -296,7 +310,33 @@ const partToDraft = (p: PartItem): DraftPart => ({
   color: p.color,
   size: p.size,
   partNumber: p.partNumber,
+  description: p.partNumber ? p.description : undefined,
 });
+
+/**
+ * A saved part line back as a part row, for editing a submitted write-up. The
+ * line was saved as "<name> (<model>)" (see partToMaterial), so the model is
+ * split back off — which also lets the picker find the catalog part again by
+ * name and model (catalogPartOf). Saving puts the same text back together, so
+ * the round trip is exact even for a custom name that happens to end in
+ * brackets.
+ */
+function partFromSavedLine(m: WriteUpMaterialItem): PartItem {
+  const item = (m.item || "").trim();
+  const hit = /^(.*\S) \(([^()]+)\)$/.exec(item);
+  return {
+    key: crypto.randomUUID(),
+    name: hit ? hit[1] : item,
+    productType: hit ? hit[2] : undefined,
+    qty: m.qty > 0 ? m.qty : 1,
+    custom: m.custom,
+    unitKeys: [],
+    color: m.color || undefined,
+    size: m.size || undefined,
+    partNumber: m.partNumber || undefined,
+    description: (m.partNumber && m.description) || undefined,
+  };
+}
 
 /** A draft item's per-unit lists. A draft saved before materials went per unit
  *  carried one list for the whole item: it's dropped into the bucket it now
@@ -792,7 +832,13 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         const buckets = listsByIssue.get(target.key) || {};
         const k = bucketFor(target, unitKey);
         const cur = buckets[k] || EMPTY_LISTS;
-        buckets[k] = { materials: [...cur.materials, m], parts: cur.parts };
+        // A part line goes back to the parts list, so it reopens with its
+        // colour / size pickers, part number and description — not as a trim
+        // line it never was. Lines with no kind are trim, as they always were.
+        buckets[k] =
+          m.kind === "part"
+            ? { materials: cur.materials, parts: [...cur.parts, partFromSavedLine(m)] }
+            : { materials: [...cur.materials, m], parts: cur.parts };
         listsByIssue.set(target.key, buckets);
       }
       for (const p of r.photos) {
@@ -1381,6 +1427,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
         kind: "part",
         partNumber: p.partNumber || undefined,
         size: p.size || undefined,
+        // Only alongside the number it describes; a line without one saves as
+        // it always has.
+        description: (p.partNumber && p.description?.trim()) || undefined,
         workSeq: seq,
       });
       targets.forEach((a, idx) => {
@@ -3577,26 +3626,27 @@ function IssueCard({
   );
 }
 
-/** The Andersen part number for a colour + size, or "" when that combination
- *  isn't in the catalog. Loose on a blank: a part listed with one size and
- *  several colours still resolves once the colour is picked. */
-function partNumberFor(part: PartsCatalogItem, color: string, size: string): string {
-  const hit = part.variants.find(
-    (v) => (!color || (v.color || "") === color) && (!size || (v.size || "") === size)
-  );
-  return hit?.partNumber || "";
+/** A line's variant fields for a settled pick: colour, size, and the part
+ *  number with its catalog description — or no number, while the pick is
+ *  still open. See lib/part-variants.ts for when a pick counts as settled. */
+function variantFields(item: PartsCatalogItem, pick: VariantPick): Pick<PartItem, "color" | "size" | "partNumber" | "description"> {
+  return {
+    color: pick.color || undefined,
+    size: pick.size || undefined,
+    partNumber: pick.partNumber || undefined,
+    description: pick.partNumber ? partDescription(item, pick.partNumber) : undefined,
+  };
 }
 
-/** A fresh part row. A part with exactly one variant has only one possible part
- *  number, so there's nothing to ask — take it; otherwise the row asks for
- *  colour + size. */
+/** A fresh part row. When the part's variants leave only one part number
+ *  there's nothing to ask — take it; otherwise the row asks for colour + size. */
 function newPartRow(
   name: string,
   productType?: string,
   custom?: boolean,
-  item?: PartsCatalogItem
+  item?: PartsCatalogItem,
+  pick?: VariantPick
 ): PartItem {
-  const only = item && item.variants.length === 1 ? item.variants[0] : undefined;
   return {
     key: crypto.randomUUID(),
     name,
@@ -3605,10 +3655,21 @@ function newPartRow(
     custom,
     unitKeys: [],
     catalogId: item?.id,
-    color: only?.color || undefined,
-    size: only?.size || undefined,
-    partNumber: only?.partNumber || undefined,
+    ...(item ? variantFields(item, settleVariant(item, pick?.color, pick?.size)) : {}),
   };
+}
+
+/** The catalog part a line came from: by its stored id, or — for a line
+ *  reopened from a saved write-up, which keeps no id — by the name and model
+ *  it was saved under. A custom part never links. */
+function catalogPartOf(
+  p: PartItem,
+  byId: Map<string, PartsCatalogItem>,
+  byLabel: Map<string, PartsCatalogItem>
+): PartsCatalogItem | undefined {
+  if (p.catalogId) return byId.get(p.catalogId);
+  if (p.custom) return undefined;
+  return byLabel.get(`${p.name.trim()}\u0000${(p.productType || "").trim()}`);
 }
 
 /** Part rows drawn in the dropdown at once; "Show more" draws the next batch.
@@ -3673,6 +3734,8 @@ function PartsPicker({
   // How many of each bundle to add. Stepped with buttons rather than a text
   // input so the search box never loses focus and close the dropdown.
   const [bundleCounts, setBundleCounts] = useState<Record<string, number>>({});
+  // The photo catalog sheet, opened over the write-up by "Browse catalog".
+  const [browsing, setBrowsing] = useState(false);
   const q = query.trim().toLowerCase();
 
   // Sections that actually have parts. A catalog with just one (before the
@@ -3721,8 +3784,7 @@ function PartsPicker({
     [matcher]
   );
 
-  const label = (c: PartsCatalogItem) =>
-    c.position ? `${c.category} — ${c.partName} · ${c.position}` : `${c.category} — ${c.partName}`;
+  const label = partLabel;
 
   // The nickname that put this part in the results — only when the visible
   // label doesn't already contain what was typed. Someone who searched "cam
@@ -3742,6 +3804,12 @@ function PartsPicker({
   const fmtPrice = (n: number | null) => (n == null ? "" : `$${n.toFixed(2)}`);
 
   const partsById = useMemo(() => new Map(catalog.map((c) => [c.id, c])), [catalog]);
+  // A line reopened from a saved write-up carries its name and model, not an
+  // id; this finds its catalog part again so its colour / size pickers return.
+  const partsByLabel = useMemo(
+    () => new Map(catalog.map((c) => [`${partLabel(c).trim()}\u0000${c.productType.trim()}`, c])),
+    [catalog]
+  );
 
   // Narrowing applies to the browse list only. A search covers the whole
   // catalog, as it always has — someone who types a part name is asking for
@@ -3817,20 +3885,37 @@ function PartsPicker({
     setOpen(false);
   }
 
-  /** Set a row's colour or size. The part number is resolved by the caller —
-   *  which already has the catalog part in hand — so only plain strings cross
-   *  into the update and nothing holds on to a catalog object. */
-  function setVariant(key: string, patch: { color?: string; size?: string; partNumber?: string }) {
-    onChange(parts.map((p) => (p.key === key ? { ...p, ...patch } : p)));
+  /** A part picked in the photo catalog, with its colour / size and quantity. */
+  function addFromBrowser(item: PartsCatalogItem, pick: VariantPick, qty: number) {
+    onChange([...parts, { ...newPartRow(label(item), item.productType, false, item, pick), qty: Math.max(1, qty) }]);
+  }
+
+  /** Change a row's colour or size. The pick is settled against the part's
+   *  variants — an impossible pairing drops the other half, a single choice
+   *  fills in — and the part number and its description follow it, or clear
+   *  while more than one number is still possible. Only plain strings cross
+   *  into the row; nothing holds on to a catalog object. */
+  function setVariant(key: string, item: PartsCatalogItem, dim: "color" | "size", value: string) {
+    onChange(
+      parts.map((p) => {
+        if (p.key !== key) return p;
+        const pick =
+          dim === "color"
+            ? settleVariant(item, value, p.size, "color")
+            : settleVariant(item, p.color, value, "size");
+        return { ...p, catalogId: item.id, ...variantFields(item, pick) };
+      })
+    );
   }
 
   /**
    * A bundle is a shortcut, not a thing in its own right: it drops its members
    * in as ordinary part lines and disappears. Each line can then be re-counted
    * or removed like any other, and nothing downstream has to know bundles
-   * exist. `count` multiplies every member's quantity.
+   * exist. `count` multiplies every member's quantity. Returns how many lines
+   * came through.
    */
-  function addBundle(b: PartsBundle, count: number) {
+  function addBundle(b: PartsBundle, count: number): number {
     const added: PartItem[] = [];
     for (const m of b.members) {
       const part = partsById.get(m.partId);
@@ -3845,6 +3930,7 @@ function PartsPicker({
     if (added.length) onChange([...parts, ...added]);
     setQuery("");
     setOpen(false);
+    return added.length;
   }
   function setQty(key: string, qty: number) {
     onChange(parts.map((p) => (p.key === key ? { ...p, qty: Math.max(1, qty) } : p)));
@@ -3895,12 +3981,23 @@ function PartsPicker({
       {parts.length > 0 && (
         <div className="mt-2 space-y-2">
           {parts.map((p) => {
-            const part = p.catalogId ? partsById.get(p.catalogId) : undefined;
-            const colors = part?.colors || [];
-            const sizes = part?.sizes || [];
+            const part = catalogPartOf(p, partsById, partsByLabel);
+            // Only combinations that exist are offered. A dimension already
+            // picked lists all its values (switching drops a pairing that no
+            // longer exists); one not yet picked lists only what goes with the
+            // other pick.
+            const allColors = part ? variantColors(part) : [];
+            const allSizes = part ? variantSizes(part) : [];
+            const withCurrent = (list: string[], cur?: string) => (cur && !list.includes(cur) ? [cur, ...list] : list);
+            const colors = part ? withCurrent(p.color ? allColors : variantColors(part, p.size), p.color) : [];
+            const sizes = part ? withCurrent(p.size ? allSizes : variantSizes(part, p.color), p.size) : [];
+            const showColor = allColors.length > 1;
+            const showSize = allSizes.length > 1;
             // Only worth asking when the part has more than one variant — with
             // one there's a single possible part number and it's already set.
-            const asksVariant = !!part && part.variants.length > 1 && (colors.length > 0 || sizes.length > 0);
+            const asksVariant = !!part && part.variants.length > 1 && (showColor || showSize);
+            const missingColor = showColor && !p.color;
+            const missingSize = showSize && !p.size;
             const mismatch = unitMismatch(p);
             return (
             <div key={p.key} className="rounded-lg border border-border bg-background px-2.5 py-2 space-y-2">
@@ -3908,6 +4005,14 @@ function PartsPicker({
                 <div className="flex-1 min-w-0">
                   <div className="text-sm truncate">{p.name}</div>
                   {p.productType && <div className="text-[11px] text-muted truncate">{p.productType}</div>}
+                  {/* The part number and the catalog's words for it, so the
+                      line says exactly what will be ordered. */}
+                  {p.partNumber && (
+                    <div className="text-[11px] text-muted">
+                      Part # <span className="font-mono font-semibold text-foreground">{p.partNumber}</span>
+                      {p.description && <span> &mdash; {p.description}</span>}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
@@ -3938,19 +4043,14 @@ function PartsPicker({
               {/* Colour + size pick the part number, which is what an order
                   actually needs. Without it whoever orders has to look the
                   part up again from the name. */}
-              {asksVariant && (
+              {asksVariant && part && (
                 <div className="grid grid-cols-2 gap-2">
-                  {colors.length > 0 && (
+                  {showColor && (
                     <div>
                       <label className="text-[11px] text-muted block mb-1">Colour</label>
                       <select
                         value={p.color || ""}
-                        onChange={(e) =>
-                          setVariant(p.key, {
-                            color: e.target.value,
-                            partNumber: part ? partNumberFor(part, e.target.value, p.size || "") : p.partNumber,
-                          })
-                        }
+                        onChange={(e) => setVariant(p.key, part, "color", e.target.value)}
                         className="w-full rounded-md border border-border bg-background px-2 py-2 text-sm"
                       >
                         <option value="">Pick…</option>
@@ -3960,17 +4060,12 @@ function PartsPicker({
                       </select>
                     </div>
                   )}
-                  {sizes.length > 0 && (
+                  {showSize && (
                     <div>
                       <label className="text-[11px] text-muted block mb-1">Size</label>
                       <select
                         value={p.size || ""}
-                        onChange={(e) =>
-                          setVariant(p.key, {
-                            size: e.target.value,
-                            partNumber: part ? partNumberFor(part, p.color || "", e.target.value) : p.partNumber,
-                          })
-                        }
+                        onChange={(e) => setVariant(p.key, part, "size", e.target.value)}
                         className="w-full rounded-md border border-border bg-background px-2 py-2 text-sm"
                       >
                         <option value="">Pick…</option>
@@ -3990,16 +4085,12 @@ function PartsPicker({
                   </span>
                 </div>
               )}
-              {p.partNumber ? (
+              {!p.partNumber && asksVariant && (
                 <div className="text-[11px] text-muted">
-                  Part #<span className="font-mono font-semibold text-foreground">{p.partNumber}</span>
-                </div>
-              ) : asksVariant ? (
-                <div className="text-[11px] text-muted">
-                  Pick {colors.length > 0 && sizes.length > 0 ? "colour and size" : colors.length > 0 ? "a colour" : "a size"} to
+                  Pick {missingColor && missingSize ? "colour and size" : missingColor ? "a colour" : missingSize ? "a size" : "colour and size"} to
                   pin down the part number.
                 </div>
-              ) : null}
+              )}
 
               {pinUnits && affectedUnits.length > 0 && (
                 <div>
@@ -4028,14 +4119,40 @@ function PartsPicker({
       )}
 
       <div className="relative mt-2">
-        <input
-          value={query}
-          onChange={(e) => { setQuery(e.target.value); setShownCount(RESULT_STEP); }}
-          onFocus={() => { setOpen(true); setShowAll(false); setShownCount(RESULT_STEP); }}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          placeholder={catalog.length ? "Search parts, or type a custom part…" : "Type a part…"}
-          className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
-        />
+        <div className="flex gap-2">
+          <input
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setShownCount(RESULT_STEP); }}
+            onFocus={() => { setOpen(true); setShowAll(false); setShownCount(RESULT_STEP); }}
+            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            placeholder={catalog.length ? "Search parts, or type a custom part…" : "Type a part…"}
+            className="flex-1 min-w-0 rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+          />
+          {/* The photo catalog — for when the name isn't known. Opens over
+              the write-up and hands picked parts back to this list. */}
+          {(catalog.length > 0 || bundles.length > 0) && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); setBrowsing(true); }}
+              className="shrink-0 flex items-center gap-1.5 rounded-lg bg-amber-500 text-white px-3 text-sm font-bold leading-tight active:scale-[0.98]"
+            >
+              <LayoutGrid className="w-5 h-5 shrink-0" />
+              <span className="text-left">
+                Browse<br className="sm:hidden" /> catalog
+              </span>
+            </button>
+          )}
+        </div>
+        {browsing && (
+          <CatalogBrowseSheet
+            catalog={catalog}
+            bundles={bundles}
+            unitTypes={affectedUnits.map((u) => u.unitType)}
+            onAddPart={addFromBrowser}
+            onAddBundle={addBundle}
+            onClose={() => setBrowsing(false)}
+          />
+        )}
         {open && (
           <div className="absolute z-20 left-0 right-0 mt-1 rounded-xl border border-border bg-background shadow-lg max-h-72 flex flex-col overflow-hidden">
             {/* Section chips. mousedown is cancelled so tapping one keeps focus
