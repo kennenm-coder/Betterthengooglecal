@@ -15,6 +15,8 @@
 // Each report stores a COPY of the questions it was filled in with, so
 // changing the questions later never rewrites an old report.
 
+import type { WorkOrder } from "./types";
+
 
 export type JcOutcome = "complete" | "complete_issues" | "not_complete";
 
@@ -75,7 +77,10 @@ export const DEFAULT_TEMPLATES: JcTemplates = {
     { id: "signed", type: "yesno", title: "Completion paperwork signed by the customer?", required: true, flagIf: "no" },
     { id: "walkthrough", type: "yesno", title: "Walked the finished job through with the customer?", required: true, flagIf: "no" },
     { id: "cleanup", type: "yesno", title: "Job site cleaned up and debris hauled?", required: true, flagIf: "no" },
-    { id: "photos", type: "photo", title: "Photos of the finished job", help: "Every window and door, inside and out.", required: true, minPhotos: 4 },
+    // Question ids are unique across outcomes unless the question means the
+    // same thing in both ("collected"): an answer only carries over when a
+    // lead taps Change if it still answers the new form's question.
+    { id: "done_photos", type: "photo", title: "Photos of the finished job", help: "Every window and door, inside and out.", required: true, minPhotos: 4 },
     { id: "notes", type: "longtext", title: "Anything else the office should know?", required: false },
   ],
   complete_issues: [
@@ -89,7 +94,7 @@ export const DEFAULT_TEMPLATES: JcTemplates = {
     },
     { id: "customer_knows", type: "yesno", title: "Does the customer know?", required: true },
     { id: "collected", type: "yesno", title: "Final payment collected?", required: true, flagIf: "no" },
-    { id: "photos", type: "photo", title: "Photos of the issues", required: true, minPhotos: 1 },
+    { id: "issue_photos", type: "photo", title: "Photos of the issues", required: true, minPhotos: 1 },
     { id: "needs", type: "longtext", title: "What does it need to get fixed?", required: false },
   ],
   not_complete: [
@@ -103,7 +108,7 @@ export const DEFAULT_TEMPLATES: JcTemplates = {
     },
     { id: "return", type: "yesno", title: "Does it need a return trip scheduled?", required: true },
     { id: "secure", type: "yesno", title: "Is the site safe and secured?", required: true, flagIf: "no" },
-    { id: "photos", type: "photo", title: "Photos of where things stand", required: true, minPhotos: 1 },
+    { id: "state_photos", type: "photo", title: "Photos of where things stand", required: true, minPhotos: 1 },
   ],
 };
 
@@ -208,3 +213,68 @@ export function answerText(q: JcQuestion, a: JcAnswer | undefined): string {
   return t;
 }
 
+
+// ─── When a Job Complete is due ─────────────────────────────────────────────
+//
+// A job's report opens on the LAST day it is scheduled (a multi-day install
+// arrives as one order spanning days, or several appointments under one order
+// number; the last day is the latest of all of them) and stays open from then
+// on. It is never open earlier: a crew that is still mid-job has nothing to
+// report yet. A crew that runs out of time on the last day files "not
+// complete", which is what that outcome is for.
+
+/** Jobs whose last day is before this are never listed as "needed" -- the
+ *  list would otherwise open with every install done before the feature
+ *  existed. (A lead can still file one for an older job by searching for it.) */
+export const JOB_COMPLETE_START = "2026-11-19";
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Today as YYYY-MM-DD in this device's local time (the calendar's times are wall-clock). */
+export function localToday(now: Date = new Date()): string {
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${m}-${d}`;
+}
+
+/** The last day an install is scheduled, across every appointment under its order number. */
+export function jobLastDay(orders: WorkOrder[], orderNumber: string): string | null {
+  let last: string | null = null;
+  const see = (v: string | null | undefined) => {
+    const day = (v || "").slice(0, 10);
+    if (DAY.test(day) && (!last || day > last)) last = day;
+  };
+  for (const o of orders) {
+    if (o.orderNumber !== orderNumber || o.workOrderType !== "Install") continue;
+    see(o.scheduledStart);
+    see(o.scheduledEnd);
+    for (const d of Object.keys(o.dayCrews || {})) see(d);
+  }
+  return last;
+}
+
+/** Every install's last day at once, by order number (one pass, for lists). */
+export function jobLastDays(orders: WorkOrder[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const see = (num: string, v: string | null | undefined) => {
+    const day = (v || "").slice(0, 10);
+    if (DAY.test(day) && day > (out.get(num) || "")) out.set(num, day);
+  };
+  for (const o of orders) {
+    if (o.workOrderType !== "Install" || !o.orderNumber) continue;
+    see(o.orderNumber, o.scheduledStart);
+    see(o.orderNumber, o.scheduledEnd);
+    for (const d of Object.keys(o.dayCrews || {})) see(o.orderNumber, d);
+  }
+  return out;
+}
+
+/** Has the job reached its last scheduled day (today counts)? */
+export function jobCompleteDue(lastDay: string | null, today: string = localToday()): boolean {
+  return !!lastDay && lastDay <= today;
+}
+
+/** Due, and recent enough to be chased (see JOB_COMPLETE_START). */
+export function jobCompleteNeeded(lastDay: string | null, today: string = localToday()): boolean {
+  return jobCompleteDue(lastDay, today) && !!lastDay && lastDay >= JOB_COMPLETE_START;
+}

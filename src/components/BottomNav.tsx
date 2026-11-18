@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Calendar, Search, ScrollText, Wrench, BadgeDollarSign } from "lucide-react";
+import { Calendar, Search, ScrollText, Wrench, BadgeDollarSign, ClipboardCheck } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useMfmNotices } from "@/hooks/useMfmNotices";
+import { useJobCompleteTodo } from "@/hooks/useJobCompleteTodo";
 import { canSeeWriteUps, isAdmin, isInstaller, isInstallerLead, isMfmSubmitter } from "@/lib/roles";
 
 // Settings lives in the top-right of the calendar header, not the bottom nav.
@@ -33,8 +34,14 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
   const pathname = usePathname();
   const auth = useAuth();
   const roles = previewRoles ?? auth.roles;
-  // Sheets payroll sent back that this lead still has to fix.
+  // Sheets payroll sent back that this lead still has to fix, plus installs
+  // that reached their last day with no Job Complete filed yet.
   const { rejectedCount } = useMfmNotices();
+  const jobCompleteDue = useJobCompleteTodo().length;
+  const badgeCount = rejectedCount + jobCompleteDue;
+  // Install leads (and admins) get the combined tab; a More for More Submitter
+  // who isn't a lead still just sees More for More.
+  const submissions = isInstallerLead(roles) || isAdmin(roles);
   // Hide the Write-Ups tab from regular members during the soft rollout.
   const items = NAV_ITEMS.filter(
     (i) =>
@@ -52,7 +59,11 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
         paddingRight: "env(safe-area-inset-right, 0px)",
       }}
     >
-      {items.map(({ href, label, icon: Icon }) => {
+      {items.map((item) => {
+        const { href } = item;
+        const isSubs = href === "/more-for-more" && submissions;
+        const label = isSubs ? "Submissions" : item.label;
+        const Icon = isSubs ? ClipboardCheck : item.icon;
         const active = pathname === href;
         return (
           <Link
@@ -64,12 +75,12 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
           >
             <span className="relative shrink-0">
               <Icon className="w-6 h-6" />
-              {href === "/more-for-more" && rejectedCount > 0 && (
+              {href === "/more-for-more" && badgeCount > 0 && (
                 <span
                   className="absolute -top-1.5 -right-2 min-w-[18px] h-[18px] rounded-full bg-danger text-white text-[10px] font-bold leading-[18px] text-center px-1"
-                  aria-label={`${rejectedCount} sent back to fix`}
+                  aria-label={`${badgeCount} need your attention`}
                 >
-                  {rejectedCount}
+                  {badgeCount}
                 </span>
               )}
             </span>

@@ -5,14 +5,18 @@
 // for any job — even one they were not scheduled on.
 
 import { useEffect, useMemo, useState } from "react";
-import { BadgeDollarSign, Search, X, Loader2, ShieldX, ChevronRight } from "lucide-react";
+import { BadgeDollarSign, ClipboardCheck, Search, X, Loader2, ShieldX } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import MoreForMoreForm from "@/components/MoreForMoreForm";
+import JobCompleteModal from "@/components/JobCompleteModal";
+import JobCompleteTag from "@/components/JobCompleteTag";
 import { useData } from "@/components/DataProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { refreshMfmNotices } from "@/hooks/useMfmNotices";
 import MoreForMoreSubmitter from "@/components/MoreForMoreSubmitter";
-import { canFillMoreForMore, isMfmSubmitter } from "@/lib/roles";
+import { canFillMoreForMore, canSubmitJobComplete, isAdmin, isInstallerLead, isMfmSubmitter } from "@/lib/roles";
+import { jobCompleteDue, jobCompleteNeeded, jobLastDays, localToday } from "@/lib/job-complete-core";
+import type { JcTag } from "@/lib/job-complete";
 import { crewsForDate, ownsOrder } from "@/lib/format-utils";
 import { searchOrders } from "@/lib/search";
 import { formatDateShort } from "@/lib/calendar-utils";
@@ -110,24 +114,135 @@ function latestPerJob(orders: WorkOrder[]): WorkOrder[] {
 }
 
 /**
- * A More for More Submitter gets the every-crew view (which approves on
- * submit); everyone else here is a lead, or an admin looking at the lead view.
+ * The Submissions tab. An install lead sees their crew's jobs with BOTH things
+ * they owe: the More for More sheet and the Job Complete report. A More for
+ * More Submitter who isn't a lead gets the every-crew view (which approves on
+ * submit). An admin is both at once, so they get a switch.
  */
 export default function MoreForMorePage() {
   const { roles, loading } = useAuth();
-  if (!loading && isMfmSubmitter(roles)) return <MoreForMoreSubmitter />;
+  if (loading) return <LeadView />;
+  if (isAdmin(roles)) return <AdminSwitch />;
+  if (isMfmSubmitter(roles) && !isInstallerLead(roles)) return <MoreForMoreSubmitter />;
   return <LeadView />;
+}
+
+/** Admins can open both views: the submitter's, and the install lead's Submissions. */
+function AdminSwitch() {
+  const [view, setView] = useState<"submitter" | "lead">("submitter");
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surface border-b border-border text-xs">
+        <span className="text-muted">View as</span>
+        {(
+          [
+            ["submitter", "Submitter"],
+            ["lead", "Install lead"],
+          ] as const
+        ).map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setView(k)}
+            className={`rounded-full px-3 py-1 font-medium border ${
+              view === k ? "bg-foreground text-background border-foreground" : "border-border text-muted"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="flex-1 min-h-0">{view === "lead" ? <LeadView /> : <MoreForMoreSubmitter />}</div>
+    </div>
+  );
+}
+
+/** One job's two submissions side by side: More for More, and Job Complete. */
+function SubmissionRow({
+  name,
+  meta,
+  sheet,
+  paper,
+  other,
+  hasOrder,
+  jcTag,
+  jcLastDay,
+  jcAllowed,
+  onMfm,
+  onJc,
+}: {
+  name: string;
+  meta: string;
+  sheet: MoreForMore | null;
+  paper: boolean;
+  other: JobSheetStatus | null;
+  hasOrder: boolean;
+  jcTag: JcTag | null;
+  jcLastDay: string | null;
+  /** The lead may file this job's Job Complete (their own job). */
+  jcAllowed: boolean;
+  onMfm: () => void;
+  onJc: () => void;
+}) {
+  const due = jobCompleteDue(jcLastDay);
+  const jcOpen = jcAllowed && hasOrder && (due || !!jcTag);
+  return (
+    <li className="px-4 py-3">
+      <p className="text-sm font-medium truncate">{name || "—"}</p>
+      <p className="text-xs text-muted truncate">{meta}</p>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <button
+          onClick={onMfm}
+          disabled={!!other}
+          className="flex flex-col items-start gap-1 rounded-lg border border-border px-3 py-2 text-left active:bg-surface disabled:opacity-70"
+        >
+          <span className="flex items-center gap-1 text-xs font-semibold text-muted">
+            <BadgeDollarSign className="w-3.5 h-3.5" /> More for More
+          </span>
+          <StatusPill sheet={sheet} paper={paper} other={other} />
+        </button>
+        {jcAllowed && hasOrder ? (
+          <button
+            onClick={onJc}
+            disabled={!jcOpen}
+            className="flex flex-col items-start gap-1 rounded-lg border border-border px-3 py-2 text-left active:bg-surface disabled:opacity-60"
+          >
+            <span className="flex items-center gap-1 text-xs font-semibold text-muted">
+              <ClipboardCheck className="w-3.5 h-3.5" /> Job Complete
+            </span>
+            {jcTag ? (
+              <JobCompleteTag tag={jcTag} compact />
+            ) : due ? (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                NOT SUBMITTED
+              </span>
+            ) : (
+              <span className="text-[10px] text-muted">
+                {jcLastDay ? `Opens ${formatDateShort(jcLastDay)}` : "Opens on the last day"}
+              </span>
+            )}
+          </button>
+        ) : (
+          <div />
+        )}
+      </div>
+    </li>
+  );
 }
 
 function LeadView() {
   const { roles, user, crewNames, loading: authLoading } = useAuth();
-  const { orders, loading: dataLoading } = useData();
+  const { orders, loading: dataLoading, completionFor } = useData();
+  const [jcOpen, setJcOpen] = useState<WorkOrder | null>(null);
+  const jcRole = canSubmitJobComplete(roles);
+  // Each install's last scheduled day, once: a Job Complete opens on that day.
+  const lastDays = useMemo(() => jobLastDays(orders), [orders]);
+  const today = localToday();
   const [sheets, setSheets] = useState<MoreForMore[]>([]);
   const [sheetsLoading, setSheetsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<Open | null>(null);
-  const [filter, setFilter] = useState<"all" | "fix" | "todo" | "office" | "done">("all");
+  const [filter, setFilter] = useState<"all" | "fix" | "mfm" | "jc" | "office" | "done">("all");
   // ?open=<sheet id> — a notice on the calendar links straight to a sheet.
   const [openId, setOpenId] = useState<string | null>(null);
   useEffect(() => {
@@ -264,14 +379,24 @@ function LeadView() {
     window.history.replaceState(null, "", "/more-for-more");
   }, [openId, rows]);
 
+  // The Job Complete half of a job: what's filed, the job's last day, and
+  // whether one is now owed (the last day has come, nothing filed, recent).
+  const jcOf = (orderNumber: string) => {
+    const tag = jcRole ? completionFor(orderNumber) : null;
+    const lastDay = lastDays.get(orderNumber) || null;
+    return { tag, lastDay, needed: jcRole && !tag && jobCompleteNeeded(lastDay, today) };
+  };
+
   const counts = useMemo(
     () => ({
       fix: rows.filter((r) => r.sheet?.status === "rejected").length,
-      todo: rows.filter(isTodo).length,
+      mfm: rows.filter(isTodo).length,
+      jc: rows.filter((r) => r.order && r.order.isMine !== false && jcOf(r.key).needed).length,
       office: rows.filter((r) => r.sheet?.status === "submitted").length,
       done: rows.filter((r) => r.sheet?.status === "completed").length,
     }),
-    [rows]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, lastDays, completionFor, jcRole, today]
   );
 
   const shownRows = rows
@@ -280,14 +405,21 @@ function LeadView() {
         ? true
         : filter === "fix"
           ? r.sheet?.status === "rejected"
-          : filter === "todo"
+          : filter === "mfm"
             ? isTodo(r)
-            : filter === "office"
-              ? r.sheet?.status === "submitted"
-              : r.sheet?.status === "completed"
+            : filter === "jc"
+              ? !!r.order && r.order.isMine !== false && jcOf(r.key).needed
+              : filter === "office"
+                ? r.sheet?.status === "submitted"
+                : r.sheet?.status === "completed"
     )
-    // Sent-back sheets float to the top: they need doing first.
-    .sort((a, b) => Number(b.sheet?.status === "rejected") - Number(a.sheet?.status === "rejected"));
+    // Sent-back sheets float to the top, then jobs owing a Job Complete:
+    // they need doing first.
+    .sort(
+      (a, b) =>
+        Number(b.sheet?.status === "rejected") - Number(a.sheet?.status === "rejected") ||
+        Number(jcOf(b.key).needed) - Number(jcOf(a.key).needed)
+    );
 
   const trimmed = query.trim();
   const searchResults = useMemo(() => {
@@ -322,7 +454,7 @@ function LeadView() {
         <div className="flex-1 flex items-center justify-center p-6 text-center">
           <div className="space-y-2">
             <ShieldX className="w-12 h-12 text-muted mx-auto" />
-            <p className="font-medium">More for More is for install leads</p>
+            <p className="font-medium">Submissions are for install leads</p>
             <p className="text-sm text-muted">Ask an admin to add the Installer Lead role to your account.</p>
           </div>
         </div>
@@ -337,8 +469,8 @@ function LeadView() {
     <div className="flex flex-col h-full">
       <header className="bg-background border-b border-border px-3 pt-3 pb-2 z-20 space-y-2">
         <div className="flex items-center gap-2">
-          <BadgeDollarSign className="w-5 h-5 text-rba-green" />
-          <h1 className="text-lg font-semibold flex-1">More for More</h1>
+          <ClipboardCheck className="w-5 h-5 text-rba-green" />
+          <h1 className="text-lg font-semibold flex-1">Submissions</h1>
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted" />
@@ -366,7 +498,9 @@ function LeadView() {
                 ["all", `All ${rows.length}`],
                 // Only shown when something has been sent back.
                 ...(counts.fix ? ([["fix", `Sent back ${counts.fix}`]] as const) : []),
-                ["todo", `To do ${counts.todo}`],
+                ["mfm", `Need More for More ${counts.mfm}`],
+                // Job Complete only exists for install leads.
+                ...(jcRole ? ([["jc", `Need Job Complete ${counts.jc}`]] as const) : []),
                 ["office", `With office ${counts.office}`],
                 ["done", `Completed ${counts.done}`],
               ] as const
@@ -399,26 +533,27 @@ function LeadView() {
             <p className="px-4 py-6 text-sm text-muted text-center">No jobs match “{trimmed}”.</p>
           ) : (
             <ul className="divide-y divide-border">
-              {searchResults.map((o) => (
-                <li key={o.orderNumber}>
-                  <button onClick={() => openOrder(o)} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{o.customerName || o.accountName || "—"}</p>
-                      <p className="text-xs text-muted truncate">
-                        #{o.orderNumber} · {o.workOrderType}
-                        {o.scheduledStart ? ` · ${formatDateShort(o.scheduledStart)}` : ""}
-                        {crewsForDate(o).length ? ` · ${crewsForDate(o).join(", ")}` : ""}
-                      </p>
-                    </div>
-                    <StatusPill
-                      sheet={sheetByJob.get(o.orderNumber) || null}
-                      paper={!!flags.get(o.orderNumber)?.paper}
-                      other={otherFor(o.orderNumber)}
-                    />
-                    <ChevronRight className="w-4 h-4 text-muted shrink-0" />
-                  </button>
-                </li>
-              ))}
+              {searchResults.map((o) => {
+                const jc = jcOf(o.orderNumber);
+                return (
+                  <SubmissionRow
+                    key={o.orderNumber}
+                    name={o.customerName || o.accountName || "—"}
+                    meta={`#${o.orderNumber} · ${o.workOrderType}${o.scheduledStart ? ` · ${formatDateShort(o.scheduledStart)}` : ""}${
+                      crewsForDate(o).length ? ` · ${crewsForDate(o).join(", ")}` : ""
+                    }`}
+                    sheet={sheetByJob.get(o.orderNumber) || null}
+                    paper={!!flags.get(o.orderNumber)?.paper}
+                    other={otherFor(o.orderNumber)}
+                    hasOrder
+                    jcTag={jc.tag}
+                    jcLastDay={jc.lastDay}
+                    jcAllowed={jcRole && o.workOrderType === "Install" && o.isMine !== false}
+                    onMfm={() => openOrder(o)}
+                    onJc={() => setJcOpen(o)}
+                  />
+                );
+              })}
             </ul>
           )
         ) : listLoading ? (
@@ -438,26 +573,27 @@ function LeadView() {
           </div>
         ) : (
           <ul className="divide-y divide-border">
-            {shownRows.map((r) => (
-              <li key={r.key}>
-                <button
-                  onClick={() => !r.other && setOpen({ job: r.job, order: r.order, sheet: r.sheet })}
-                  disabled={!!r.other}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface disabled:hover:bg-transparent disabled:cursor-default"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{r.job.job_name || "—"}</p>
-                    <p className="text-xs text-muted truncate">
-                      #{r.job.order_number}
-                      {r.job.install_date ? ` · ${formatDateShort(r.job.install_date)}` : ""}
-                      {r.sheet ? ` · ${money(r.sheet.lead_total)}` : ""}
-                    </p>
-                  </div>
-                  <StatusPill sheet={r.sheet} paper={r.paper} other={r.other} />
-                  <ChevronRight className="w-4 h-4 text-muted shrink-0" />
-                </button>
-              </li>
-            ))}
+            {shownRows.map((r) => {
+              const jc = jcOf(r.key);
+              return (
+                <SubmissionRow
+                  key={r.key}
+                  name={r.job.job_name}
+                  meta={`#${r.job.order_number}${r.job.install_date ? ` · ${formatDateShort(r.job.install_date)}` : ""}${
+                    r.sheet ? ` · ${money(r.sheet.lead_total)}` : ""
+                  }`}
+                  sheet={r.sheet}
+                  paper={r.paper}
+                  other={r.other}
+                  hasOrder={!!r.order}
+                  jcTag={jc.tag}
+                  jcLastDay={jc.lastDay}
+                  jcAllowed={jcRole && !!r.order && r.order.isMine !== false}
+                  onMfm={() => !r.other && setOpen({ job: r.job, order: r.order, sheet: r.sheet })}
+                  onJc={() => r.order && setJcOpen(r.order)}
+                />
+              );
+            })}
           </ul>
         )}
       </div>
@@ -474,6 +610,8 @@ function LeadView() {
           onSaved={onSaved}
         />
       )}
+
+      {jcOpen && <JobCompleteModal order={jcOpen} onClose={() => setJcOpen(null)} />}
     </div>
   );
 }

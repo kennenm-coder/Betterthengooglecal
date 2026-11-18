@@ -100,12 +100,14 @@ export async function fetchCompletionTags(): Promise<Map<string, JcTag>> {
     .from("job_completions")
     .select("id, order_number, outcome, flagged, review_status")
     .gte("created_at", since)
-    .order("created_at", { ascending: true })
+    // NEWEST first, so if there are ever more than the limit it's the oldest
+    // that fall off -- never the jobs on this week's calendar.
+    .order("created_at", { ascending: false })
     .limit(2000);
   if (error) throw new Error(error.message);
   const map = new Map<string, JcTag>();
-  for (const r of data || []) {
-    // Ascending by date: on a tie the newer report overwrites.
+  // Walk oldest to newest so that on a tie the newer report wins (worseTag).
+  for (const r of [...(data || [])].reverse()) {
     const tag: JcTag = { id: r.id, outcome: r.outcome, flagged: !!r.flagged, review_status: r.review_status };
     const prev = map.get(r.order_number);
     map.set(r.order_number, worseTag(prev, tag));
@@ -165,33 +167,43 @@ export async function saveCompletion(input: SaveInput): Promise<JobCompletion> {
   const supabase = getSupabase();
   if (!supabase) throw new Error("Not connected — try again.");
   const snap = snapshotOf(input.order, input.crew);
+  // Keep only answers to the questions on THIS outcome's form. Answers typed
+  // under another outcome before the lead tapped "Change" are left behind.
+  const ids = new Set(input.template.map((q) => q.id));
+  const answers: JcAnswers = Object.fromEntries(Object.entries(input.answers).filter(([k]) => ids.has(k)));
   const body = {
     ...snap,
     outcome: input.outcome,
-    flagged: isFlagged(input.outcome, input.template, input.answers),
+    flagged: isFlagged(input.outcome, input.template, answers),
     template: input.template,
-    answers: input.answers,
+    answers,
     created_by_name: input.byName || null,
   };
   const q = input.existingId
     ? supabase.from("job_completions").update(body).eq("id", input.existingId)
     : supabase.from("job_completions").insert(body);
   const { data, error } = await q.select("*").single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    // One report per lead per job (058). Only reached if the check for an
+    // existing one failed when the form opened (say, a dropped signal).
+    if (error.code === "23505") {
+      throw new Error("You already filed a report for this job. Close this and open it again to update that one.");
+    }
+    throw new Error(error.message);
+  }
   return toCompletion(data);
 }
 
-/** Office: mark a flagged report reviewed (or put it back). */
-export async function setReviewed(id: string, reviewed: boolean, byEmail: string, byName: string | null) {
+/**
+ * Office: mark a flagged report reviewed (or put it back). The database
+ * stamps who and when from the login (059); only the display name is ours.
+ */
+export async function setReviewed(id: string, reviewed: boolean, byName: string | null) {
   const supabase = getSupabase();
   if (!supabase) throw new Error("Not connected — try again.");
   const { error } = await supabase
     .from("job_completions")
-    .update(
-      reviewed
-        ? { review_status: "reviewed", reviewed_by: byEmail.toLowerCase(), reviewed_by_name: byName, reviewed_at: new Date().toISOString() }
-        : { review_status: "new", reviewed_by: null, reviewed_by_name: null, reviewed_at: null }
-    )
+    .update(reviewed ? { review_status: "reviewed", reviewed_by_name: byName } : { review_status: "new" })
     .eq("id", id);
   if (error) throw new Error(error.message);
 }

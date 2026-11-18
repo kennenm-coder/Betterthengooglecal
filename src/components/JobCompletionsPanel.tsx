@@ -63,7 +63,7 @@ export default function JobCompletionsPanel() {
     setBusy(r.id);
     setError("");
     try {
-      await setReviewed(r.id, r.review_status !== "reviewed", user.email, name || user.email.split("@")[0]);
+      await setReviewed(r.id, r.review_status !== "reviewed", name || user.email.split("@")[0]);
       await load();
       await refreshCompletions();
     } catch (e) {

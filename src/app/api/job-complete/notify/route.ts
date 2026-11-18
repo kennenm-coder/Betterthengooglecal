@@ -90,7 +90,16 @@ export async function POST(request: Request) {
 
   const info = OUTCOME_INFO[rep.outcome];
   const flagNote = rep.flagged && rep.outcome === "complete" ? " (flagged — a checklist answer needs a look)" : "";
-  const subject = `Job ${rep.outcome === "complete" && !rep.flagged ? "complete" : info.tag.toLowerCase()}: ${rep.job_name || "Job"} · #${rep.order_number}`;
+  const headline =
+    rep.outcome === "not_complete"
+      ? "Job NOT complete"
+      : rep.outcome === "complete_issues"
+        ? "Job complete, with issues"
+        : rep.flagged
+          ? "Job complete, needs a look"
+          : "Job complete";
+  // Names come from rForce; keep the subject to one line.
+  const subject = `${headline}: ${(rep.job_name || "Job").replace(/[\r\n]+/g, " ")} · #${rep.order_number}`;
   const template: JcQuestion[] = Array.isArray(rep.template) ? rep.template : [];
   const lines = [
     `${info.label}${flagNote}`,

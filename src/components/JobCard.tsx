@@ -33,6 +33,7 @@ import ProductSpecs from "./ProductSpecs";
 import JobReferencePanel from "./JobReferencePanel";
 import { useAuth } from "@/hooks/useAuth";
 import { canDoFieldWork, canEditLegacyLink, canSubmitJobComplete } from "@/lib/roles";
+import { jobCompleteDue, jobLastDay } from "@/lib/job-complete-core";
 import JobCompleteModal from "./JobCompleteModal";
 import JobCompleteTag from "./JobCompleteTag";
 import { upsertLegacyLink, deleteLegacyLink } from "@/lib/store";
@@ -118,7 +119,7 @@ export default function JobCard({
   const [showAction, setShowAction] = useState(false);
   const [showWriteUp, setShowWriteUp] = useState(false);
   const { user, roles } = useAuth();
-  const { applyLegacyLink, activeWriteUpsAt, refreshActiveWriteUps, partsFor, completionFor } = useData();
+  const { orders, applyLegacyLink, activeWriteUpsAt, refreshActiveWriteUps, partsFor, completionFor } = useData();
   const [showJobComplete, setShowJobComplete] = useState(false);
   // A Tech Measure is a visit to measure, not work to write up or install
   // from: no write-up / log-action buttons, no install-document or product
@@ -148,9 +149,17 @@ export default function JobCard({
   // roles that can read reports; the button only for install leads (and
   // admins), on their own jobs. With no installer-lead accounts yet, neither
   // appears for anyone but an admin.
+  // The button opens on the job's LAST scheduled day (across all its days and
+  // appointments) and stays open after; a filed report can always be viewed.
   const isInstall = order.workOrderType === "Install";
   const completion = isInstall ? completionFor(order.orderNumber) : null;
-  const canJobComplete = isInstall && canSubmitJobComplete(roles) && order.isMine !== false;
+  const jcRole = isInstall && canSubmitJobComplete(roles) && order.isMine !== false;
+  // The tile's own appointment is included: a job opened from Search may sit
+  // outside the dates the calendar has loaded.
+  const jcLastDay = jcRole ? jobLastDay([...orders, order], order.orderNumber) : null;
+  const jcDue = jobCompleteDue(jcLastDay);
+  const canJobComplete = jcRole && (jcDue || !!completion);
+  const jcOpensOn = jcRole && !canJobComplete && jcLastDay ? jcLastDay : null;
 
   // A service job's own number finds nothing: the write-ups a crew needs were
   // filed against the install. They're found by address, from the index the
@@ -608,6 +617,12 @@ export default function JobCard({
               <CheckCircle2 className="w-4 h-4" />
               {completion ? "Job Complete — view / update" : "Job Complete"}
             </button>
+          )}
+
+          {jcOpensOn && (
+            <p className="mt-3 text-xs text-muted text-center">
+              Job Complete opens on the job&apos;s last day ({formatDateShort(jcOpensOn)}).
+            </p>
           )}
 
           {/* Open Install Instructions — navigates to full page */}
