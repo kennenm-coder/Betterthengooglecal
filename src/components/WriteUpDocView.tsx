@@ -4,7 +4,7 @@ import { ReactNode, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FieldWorkOrder } from "@/lib/types";
 import { writeUpsToPlainText } from "@/lib/work-order-store";
-import { groupWriteUpSections, isSectionDone, openUnitsOf, padSeq } from "@/lib/writeup-sections";
+import { groupWriteUpSections, isSectionDone, openUnitsOf, padSeq, pcsOf, splitInstalled, splitMaterialLines } from "@/lib/writeup-sections";
 import { downloadWriteUpZip } from "@/lib/writeup-export";
 import JobMaterialTotal from "./JobMaterialTotal";
 import ShownVendorText from "./ShownVendorText";
@@ -359,69 +359,134 @@ export default function WriteUpDocView({
               )}
             </div>
 
-            {/* 4. This write-up's own material / trim list */}
-            {sec.materials.length > 0 && (
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full border-collapse text-left">
-                  <thead>
-                    <tr style={{ background: "#1a1a1a" }}>
-                      <th className={thStyle} style={{ width: 55 }}>
-                        QTY: {sec.outstandingPcs}
-                      </th>
-                      <th className={thStyle} style={{ width: 55 }}>
-                        Unit
-                      </th>
-                      <th className={thStyle}>Item</th>
-                      <th className={thStyle}>Color</th>
-                      <th className={thStyle} style={{ width: 90 }}>
-                        Species
-                      </th>
-                      <th className={thStyle}>Lengths</th>
-                      <th className={thStyle} style={{ width: 110 }}>
-                        Vendor
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sec.materials.flatMap((m, i) => {
-                      const strike = m.installed ? " line-through text-muted" : "";
-                      return [
-                        ...(m.installed && (i === 0 || !sec.materials[i - 1].installed)
-                          ? [
-                              <tr key="installed" className="bg-background">
-                                <td colSpan={7} className={`${tdStyle} text-[9px] font-bold uppercase tracking-wider text-muted`}>
-                                  ✓ Already installed — no longer needed
+            {/* 4. This write-up's own lists: trim, then parts. Two tables
+                   because they are two orders to two suppliers, and a part's
+                   useful columns (size, part number) aren't trim's. A line
+                   with no kind is trim, so an old write-up reads as before. */}
+            {(() => {
+              const { trim, parts } = splitMaterialLines(sec.materials);
+              const installedBand = (list: typeof trim, i: number, cols: number) =>
+                list[i].installed && (i === 0 || !list[i - 1].installed)
+                  ? [
+                      <tr key="installed" className="bg-background">
+                        <td colSpan={cols} className={`${tdStyle} text-[9px] font-bold uppercase tracking-wider text-muted`}>
+                          ✓ Already installed — no longer needed
+                        </td>
+                      </tr>,
+                    ]
+                  : [];
+              const workRefs = (m: (typeof trim)[number]) =>
+                m.installed && m.workNumbers.length > 0 ? (
+                  <span className="ml-1.5 text-[10px] font-normal text-muted no-underline">
+                    ({m.workNumbers.map(padSeq).join(", ")})
+                  </span>
+                ) : null;
+              return (
+                <>
+                  {trim.length > 0 && (
+                    <div className="mt-3 overflow-x-auto">
+                      {parts.length > 0 && <div className={lbl}>Trim / material</div>}
+                      <table className="w-full border-collapse text-left">
+                        <thead>
+                          <tr style={{ background: "#1a1a1a" }}>
+                            <th className={thStyle} style={{ width: 55 }}>
+                              QTY: {pcsOf(splitInstalled(trim).needed)}
+                            </th>
+                            <th className={thStyle} style={{ width: 55 }}>
+                              Unit
+                            </th>
+                            <th className={thStyle}>Item</th>
+                            <th className={thStyle}>Color</th>
+                            <th className={thStyle} style={{ width: 90 }}>
+                              Species
+                            </th>
+                            <th className={thStyle}>Lengths</th>
+                            <th className={thStyle} style={{ width: 110 }}>
+                              Vendor
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {trim.flatMap((m, i) => {
+                            const strike = m.installed ? " line-through text-muted" : "";
+                            return [
+                              ...installedBand(trim, i, 7),
+                              <tr key={i} className={i % 2 === 0 ? "bg-surface" : "bg-background"}>
+                                <td className={`${tdStyle} font-bold${strike}`}>
+                                  {m.qty} {m.unit}
+                                </td>
+                                <td className={`${tdStyle} text-muted${strike}`}>{m.unitLabel || "—"}</td>
+                                <td className={`${tdStyle} font-semibold${strike}`}>
+                                  {m.item || "—"}
+                                  {workRefs(m)}
+                                </td>
+                                <td className={`${tdStyle} text-muted${strike}`}>{m.color || "—"}</td>
+                                <td className={`${tdStyle} text-muted${strike}`}>{m.species || "—"}</td>
+                                <td className={`${tdStyle} text-muted font-mono text-[11px]${strike}`}>{m.lengths || "—"}</td>
+                                <td className={`${tdStyle} font-bold text-[11px]${strike}`} style={{ color: accentText }}>
+                                  <ShownVendorText shown={shownVendor(m, vendorsByOrder?.[secOrder.trim()])} />
                                 </td>
                               </tr>,
-                            ]
-                          : []),
-                        <tr key={i} className={i % 2 === 0 ? "bg-surface" : "bg-background"}>
-                          <td className={`${tdStyle} font-bold${strike}`}>
-                            {m.qty} {m.unit}
-                          </td>
-                          <td className={`${tdStyle} text-muted${strike}`}>{m.unitLabel || "—"}</td>
-                          <td className={`${tdStyle} font-semibold${strike}`}>
-                            {m.item || "—"}
-                            {m.installed && m.workNumbers.length > 0 && (
-                              <span className="ml-1.5 text-[10px] font-normal text-muted no-underline">
-                                ({m.workNumbers.map(padSeq).join(", ")})
-                              </span>
-                            )}
-                          </td>
-                          <td className={`${tdStyle} text-muted${strike}`}>{m.color || "—"}</td>
-                          <td className={`${tdStyle} text-muted${strike}`}>{m.species || "—"}</td>
-                          <td className={`${tdStyle} text-muted font-mono text-[11px]${strike}`}>{m.lengths || "—"}</td>
-                          <td className={`${tdStyle} font-bold text-[11px]${strike}`} style={{ color: accentText }}>
-                            <ShownVendorText shown={shownVendor(m, vendorsByOrder?.[secOrder.trim()])} />
-                          </td>
-                        </tr>,
-                      ];
-                    })}
-                  </tbody>
-                </table>
-                <div className="border-b-2" style={{ borderColor: accent }} />
-              </div>
-            )}
+                            ];
+                          })}
+                        </tbody>
+                      </table>
+                      <div className="border-b-2" style={{ borderColor: accent }} />
+                    </div>
+                  )}
+                  {parts.length > 0 && (
+                    <div className="mt-3 overflow-x-auto">
+                      <div className={lbl}>Parts</div>
+                      <table className="w-full border-collapse text-left">
+                        <thead>
+                          <tr style={{ background: "#1a1a1a" }}>
+                            <th className={thStyle} style={{ width: 55 }}>
+                              QTY: {pcsOf(splitInstalled(parts).needed)}
+                            </th>
+                            <th className={thStyle} style={{ width: 55 }}>
+                              Unit
+                            </th>
+                            <th className={thStyle}>Part</th>
+                            <th className={thStyle}>Color</th>
+                            <th className={thStyle} style={{ width: 80 }}>
+                              Size
+                            </th>
+                            <th className={thStyle} style={{ width: 110 }}>
+                              Part #
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {parts.flatMap((m, i) => {
+                            const strike = m.installed ? " line-through text-muted" : "";
+                            return [
+                              ...installedBand(parts, i, 6),
+                              <tr key={i} className={i % 2 === 0 ? "bg-surface" : "bg-background"}>
+                                <td className={`${tdStyle} font-bold${strike}`}>
+                                  {m.qty} {m.unit}
+                                </td>
+                                <td className={`${tdStyle} text-muted${strike}`}>{m.unitLabel || "—"}</td>
+                                <td className={`${tdStyle} font-semibold${strike}`}>
+                                  {m.item || "—"}
+                                  {workRefs(m)}
+                                  {m.description && (
+                                    <span className="block text-[11px] font-normal text-muted">{m.description}</span>
+                                  )}
+                                </td>
+                                <td className={`${tdStyle} text-muted${strike}`}>{m.color || "—"}</td>
+                                <td className={`${tdStyle} text-muted${strike}`}>{m.size || "—"}</td>
+                                <td className={`${tdStyle} font-mono font-bold text-[11px]${strike}`}>{m.partNumber || "—"}</td>
+                              </tr>,
+                            ];
+                          })}
+                        </tbody>
+                      </table>
+                      <div className="border-b-2" style={{ borderColor: accent }} />
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* 5. Photos */}
             {sec.photos.length > 0 && (

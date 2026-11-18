@@ -187,8 +187,27 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     y += 16;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
+    // A part's catalog description rides under its name, wrapped to the Part
+    // column, in smaller type. Every other cell stays one clipped line, and a
+    // row without a description is the same fixed height as ever.
+    const DESC_SIZE = 7;
+    const DESC_LINE = 8.5;
+    const DESC_MAX_LINES = 3;
+    const descLines = (m: SectionMaterialLine): string[] => {
+      const text = kind === "part" ? (m.description || "").trim() : "";
+      if (!text) return [];
+      doc.setFontSize(DESC_SIZE);
+      const all = doc.splitTextToSize(text, cols[2].w - 4) as string[];
+      doc.setFontSize(8.5);
+      if (all.length <= DESC_MAX_LINES) return all;
+      const kept = all.slice(0, DESC_MAX_LINES);
+      kept[DESC_MAX_LINES - 1] = kept[DESC_MAX_LINES - 1].replace(/\s*\S*$/, "") + "…";
+      return kept;
+    };
     const row = (m: SectionMaterialLine & { writeUps?: number[] }, done: boolean) => {
-      ensure(14);
+      const desc = descLines(m);
+      const extra = desc.length * DESC_LINE;
+      ensure(14 + extra);
       const bought = done && m.workNumbers.length > 0 ? `  (${m.workNumbers.map(padSeq).join(", ")})` : "";
       const cells =
         kind === "part"
@@ -209,7 +228,16 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
         }
         x += cols[i].w;
       }
-      y += 13;
+      if (desc.length) {
+        // Under the Part cell (third column), muted, never struck through:
+        // it describes the part number, which stays readable when done.
+        doc.setFontSize(DESC_SIZE);
+        setColor(MUTED);
+        const dx = M + 4 + cols[0].w + cols[1].w;
+        desc.forEach((l, li) => doc.text(l, dx, y + 9 + DESC_LINE * (li + 1)));
+        doc.setFontSize(8.5);
+      }
+      y += 13 + extra;
       doc.setDrawColor(230, 230, 230);
       doc.setLineWidth(0.5);
       doc.line(M, y, M + contentW, y);

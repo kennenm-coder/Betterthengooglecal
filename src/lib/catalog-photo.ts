@@ -1,8 +1,10 @@
 // ─── CATALOG PHOTOS ─────────────────────────────────────────────────────────
-// One optional picture per service part or parts bundle, shown ONLY on the
-// Manage Catalogs screen. It never reaches a write-up, a PDF, an email, an
-// install doc or the Job Auditor — it exists so somebody maintaining the
-// catalog can tell at a glance which part a row means.
+// One optional picture per service part or parts bundle, shown on the Manage
+// Catalogs screen and in the write-up's photo catalog (CatalogBrowseSheet)
+// while a part is being PICKED. It is never saved on a write-up and never
+// reaches a PDF, an email, an install doc or the Job Auditor — it exists so
+// whoever is maintaining or picking from the catalog can tell at a glance
+// which part a row means.
 //
 // Files live in the shared `catalog-photos` bucket (migration 031), which is
 // public-read: these are pictures of window parts, and a public bucket means a

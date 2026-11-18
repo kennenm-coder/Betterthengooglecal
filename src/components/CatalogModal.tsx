@@ -14,8 +14,9 @@
 //    time-to-complete per unit.
 // Custom entries typed on a write-up land here as "unverified" for review.
 //
-// Photos are a catalog-screen aid only — never on a write-up, a PDF or an
-// email. See lib/catalog-photo.ts.
+// Photos are a picking aid only — shown here and in the write-up's photo
+// catalog, never saved on a write-up, a PDF or an email. See
+// lib/catalog-photo.ts.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBackClose } from "@/hooks/useBackClose";

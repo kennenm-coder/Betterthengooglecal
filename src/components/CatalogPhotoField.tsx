@@ -5,8 +5,10 @@
 // bundle may carry, plus the thumbnail used on the catalog rows. Mirrors the
 // material-list app's control so the two editors behave the same way.
 //
-// The photo is a catalog-screen aid only: it never appears on a write-up, a
-// PDF, an email, an install doc, or anything the field or the customer sees.
+// The photo is a picking aid only: it shows on the catalog screen and in the
+// write-up's photo catalog while a part is chosen, but it is never saved on a
+// write-up and never appears on a PDF, an email, an install doc, or anything
+// the customer sees.
 //
 // Uploading happens as soon as a file is picked, not on save, so the person can
 // see what they chose before committing the rest of the form. That trades a

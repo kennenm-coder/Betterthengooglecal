@@ -1644,6 +1644,9 @@ function ReviewSection({
                     <td className={`px-2 py-1 text-xs border-b border-border font-semibold${strike}`}>
                       {m.item}
                       <InstalledFor line={m} />
+                      {m.description && (
+                        <span className="block text-[11px] font-normal text-muted">{m.description}</span>
+                      )}
                     </td>
                     <td className={`px-2 py-1 text-xs border-b border-border text-muted${strike}`}>{m.color || "—"}</td>
                     <td className={`px-2 py-1 text-xs border-b border-border text-muted${strike}`}>{m.size || "—"}</td>

@@ -383,8 +383,9 @@ export interface PartsCatalogItem {
   /** Each, before any variant override. null = no price recorded (show a dash,
    *  never a confident $0.00). Shown while picking; never saved on a write-up. */
   price: number | null;
-  /** Path in the catalog-photos bucket. Shown on the catalog screen ONLY —
-   *  never on a write-up, a PDF, an email or an install doc. */
+  /** Path in the catalog-photos bucket. Shown on the catalog screen and in
+   *  the write-up's photo catalog while PICKING a part — never saved on a
+   *  write-up, and never on a PDF, an email or an install doc. */
   photoPath: string | null;
   createdBy: string | null;
   updatedBy: string | null;
@@ -773,7 +774,8 @@ export interface PartsBundle {
   members: BundleMember[];
   /** Set only when the bundle is quoted as a kit; otherwise sum the members. */
   priceOverride: number | null;
-  /** Catalog-screen photo only — see lib/catalog-photo.ts. */
+  /** Picking-aid photo only (catalog screen, write-up photo catalog) — see
+   *  lib/catalog-photo.ts. */
   photoPath: string | null;
   /** false keeps it out of the write-up picker. Nothing in either app sets it
    *  false today — the material-list app's bundle form doesn't carry the field,
@@ -1771,7 +1773,9 @@ export function writeUpsToPlainText(writeUps: FieldWorkOrder[]): string {
       lines.push("  Parts to order:");
       for (const m of partLines) {
         lines.push(
-          `   - ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${m.size ? ` ${m.size}` : ""}${m.partNumber ? ` Part# ${m.partNumber}` : ""}`
+          `   - ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${m.size ? ` ${m.size}` : ""}${m.partNumber ? ` Part# ${m.partNumber}` : ""}${
+            m.partNumber && m.description ? ` — ${m.description}` : ""
+          }`
         );
       }
     }
@@ -1875,9 +1879,15 @@ export function buildWriteUpEmailContent(
     for (const c of e.specChanges) lines.push(`   - Spec: ${c.field} -> ${c.newValue}`);
     for (const m of e.materialItems)
       lines.push(
-        `   - Material: ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${
-          m.lengths ? ` ${m.lengths}` : ""
-        }${m.vendor ? ` (${m.vendor})` : ""}`
+        m.kind === "part"
+          ? // A part is ordered by its number: size, Part # and the catalog's
+            // description of it, the way the doc and the PDF show it.
+            `   - Part: ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${m.size ? ` ${m.size}` : ""}${
+              m.partNumber ? ` Part# ${m.partNumber}` : ""
+            }${m.partNumber && m.description ? ` — ${m.description}` : ""}`
+          : `   - Material: ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${
+              m.lengths ? ` ${m.lengths}` : ""
+            }${m.vendor ? ` (${m.vendor})` : ""}`
       );
     if (e.photos.length) lines.push(`   - ${e.photos.length} photo(s) attached to the write-up`);
     if (e.notes) lines.push(`   - Notes: ${e.notes}`);
@@ -2237,7 +2247,9 @@ export function buildNotCompleteEmailContent(input: {
     lines.push("", "Now needs:");
     for (const m of input.materials)
       lines.push(
-        `   - ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${m.partNumber ? ` #${m.partNumber}` : ""}${
+        `   - ${m.qty} ${m.unit} ${m.item}${m.color ? ` ${m.color}` : ""}${m.size ? ` ${m.size}` : ""}${
+          m.partNumber ? ` #${m.partNumber}` : ""
+        }${m.partNumber && m.description ? ` — ${m.description}` : ""}${
           m.lengths ? ` ${m.lengths}` : ""
         }${m.vendor ? ` (${m.vendor})` : ""}`
       );

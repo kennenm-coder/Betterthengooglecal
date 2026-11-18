@@ -113,7 +113,10 @@ export default function JobMaterialTotal({
                     {m.qty} {m.unit}
                   </td>
                   <td className={`${td} text-muted`}>{m.unitLabel || "—"}</td>
-                  <td className={`${td} font-semibold`}>{m.item || "—"}</td>
+                  <td className={`${td} font-semibold`}>
+                    {m.item || "—"}
+                    {m.description && <span className="block text-[11px] font-normal text-muted">{m.description}</span>}
+                  </td>
                   <td className={`${td} text-muted`}>{m.color || "—"}</td>
                   <td className={`${td} text-muted`}>{m.size || "—"}</td>
                   <td className={`${td} font-mono font-bold`}>{m.partNumber || "—"}</td>
