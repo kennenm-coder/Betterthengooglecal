@@ -27,6 +27,9 @@ import {
   PartVariant,
   fetchAllParts,
   upsertPart,
+  sectionsInUse,
+  matchingPartNumber,
+  DEFAULT_PART_SECTION,
   deletePart,
   fetchAllBundles,
   upsertBundle,
@@ -89,6 +92,9 @@ function money(n: number | null | undefined): string {
 }
 
 const label = "text-[11px] font-bold uppercase tracking-wide text-muted mb-1";
+/** A part with more colour × size variants than this folds its matrix away. */
+const MATRIX_FOLD_ABOVE = 8;
+
 const field = "w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50";
 
 function Pill({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
@@ -113,12 +119,73 @@ function Badge({ tone, children }: { tone: "category" | "muted" | "review"; chil
 }
 
 /* ───────────────────────── Parts ───────────────────────── */
+// The catalog is split into SECTIONS (Location Parts, Renewal Parts, later IQ
+// Parts). The screen narrows Section → Model → Category, and a long result is
+// shown as collapsible category groups instead of one wall of cards. A bundle
+// can still hold parts from any section — bundles refer to parts by id.
+
+/** Remembered between visits, per device. Never required: private windows and
+ *  blocked storage throw, and the screen just opens on "All". */
+const SECTION_KEY = "catalog.parts.section";
+
+function readSavedSection(): string {
+  try {
+    return window.localStorage.getItem(SECTION_KEY) || "All";
+  } catch {
+    return "All";
+  }
+}
+
+function saveSection(section: string) {
+  try {
+    window.localStorage.setItem(SECTION_KEY, section);
+  } catch {
+    /* storage unavailable — the choice just isn't remembered */
+  }
+}
+
+/** Past this many parts on screen the list is grouped by category and starts
+ *  collapsed — 700 cards in a row is not something a phone can use. */
+const GROUP_ABOVE = 60;
+/** Cards drawn at once; "Show more" draws the next batch. */
+const RENDER_STEP = 100;
+/** More categories than this and the chips become a dropdown. */
+const MAX_CATEGORY_CHIPS = 12;
+
+const REVIEW_GROUP = "\u0000review";
+
+const uniqSorted = (list: string[]) => [...new Set(list.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+/** Does this part answer the search? Name, category, position, nicknames, or any
+ *  variant's part number. `q` is already trimmed and lowercased. */
+function partMatches(p: PartsCatalogItem, q: string): boolean {
+  if (!q) return true;
+  return (
+    `${p.partName} ${p.category} ${p.position || ""} ${p.nicknames.join(" ")}`.toLowerCase().includes(q) ||
+    matchingPartNumber(p, q) !== undefined
+  );
+}
+
+/** How many rows each group may draw so the total stays within `limit`, in order. */
+function takeCounts(sizes: number[], limit: number): number[] {
+  let left = limit;
+  return sizes.map((n) => {
+    const take = Math.max(0, Math.min(n, left));
+    left -= take;
+    return take;
+  });
+}
 
 function PartsEditor() {
   const [parts, setParts] = useState<PartsCatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [section, setSection] = useState<string>(() => (typeof window === "undefined" ? "All" : readSavedSection()));
+  const [typeFilter, setTypeFilter] = useState("All");
   const [catFilter, setCatFilter] = useState("All");
+  // Category groups the person has flipped from how they would open by default.
+  const [flipped, setFlipped] = useState<Set<string>>(new Set());
+  const [limit, setLimit] = useState(RENDER_STEP);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
@@ -129,44 +196,258 @@ function PartsEditor() {
     reload().finally(() => setLoading(false));
   }, []);
 
-  const productTypes = [...new Set(parts.map((p) => p.productType).filter(Boolean))].sort();
-  const categories = [...new Set(parts.map((p) => p.category).filter(Boolean))].sort();
+  /** Any change to what is being looked at starts the list afresh. */
+  function resetView() {
+    setFlipped(new Set());
+    setLimit(RENDER_STEP);
+  }
+
+  const sections = useMemo(() => sectionsInUse(parts), [parts]);
+  // A remembered section that has no parts any more (or none loaded yet) is "All".
+  const activeSection = section !== "All" && sections.includes(section) ? section : "All";
+  const inSection = useMemo(
+    () => (activeSection === "All" ? parts : parts.filter((p) => p.section === activeSection)),
+    [parts, activeSection]
+  );
+
+  const productTypes = useMemo(() => uniqSorted(inSection.map((p) => p.productType)), [inSection]);
+  const activeType = typeFilter !== "All" && productTypes.includes(typeFilter) ? typeFilter : "All";
+  const inType = useMemo(
+    () => (activeType === "All" ? inSection : inSection.filter((p) => p.productType === activeType)),
+    [inSection, activeType]
+  );
+
+  const categories = useMemo(() => uniqSorted(inType.map((p) => p.category)), [inType]);
+  const activeCat = catFilter !== "All" && categories.includes(catFilter) ? catFilter : "All";
+  const categoryCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of inType) m.set(p.category, (m.get(p.category) || 0) + 1);
+    return m;
+  }, [inType]);
+
+  // What the forms offer as suggestions — the whole catalog, not just this view.
+  const allProductTypes = useMemo(() => uniqSorted(parts.map((p) => p.productType)), [parts]);
+  const allCategories = useMemo(() => uniqSorted(parts.map((p) => p.category)), [parts]);
+
   const q = search.trim().toLowerCase();
-  const shown = parts.filter(
-    (p) =>
-      (catFilter === "All" || p.productType === catFilter) &&
-      (!q || `${p.partName} ${p.category} ${p.position || ""}`.toLowerCase().includes(q))
+  const shown = useMemo(
+    () => inType.filter((p) => (activeCat === "All" || p.category === activeCat) && partMatches(p, q)),
+    [inType, activeCat, q]
+  );
+
+  const grouped = shown.length > GROUP_ABOVE;
+  const groups = useMemo(() => {
+    if (!grouped) return [];
+    const review: PartsCatalogItem[] = [];
+    const byCat = new Map<string, PartsCatalogItem[]>();
+    for (const p of shown) {
+      // Parts awaiting review get a group of their own, open — buried in a
+      // collapsed category they would never be seen.
+      if (!p.verified) { review.push(p); continue; }
+      const key = p.category || "(No category)";
+      const arr = byCat.get(key) || [];
+      arr.push(p);
+      byCat.set(key, arr);
+    }
+    const out = [...byCat.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([key, items]) => ({ key, title: key, items }));
+    if (review.length) out.unshift({ key: REVIEW_GROUP, title: "Needs review", items: review });
+    return out;
+  }, [shown, grouped]);
+
+  /** A group opens by default while searching, when it is the only one, and for
+   *  the review pile; otherwise it starts closed. The person's taps flip that. */
+  const groupOpen = (key: string) => {
+    const byDefault = q !== "" || groups.length === 1 || key === REVIEW_GROUP;
+    return byDefault !== flipped.has(key);
+  };
+  const flip = (key: string) =>
+    setFlipped((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const multiSection = sections.length > 1;
+  const addSection = activeSection !== "All" ? activeSection : DEFAULT_PART_SECTION;
+  const addScope = [activeSection !== "All" ? activeSection : "", activeType !== "All" ? activeType : ""]
+    .filter(Boolean)
+    .join(" · ");
+
+  function pickSection(s: string) {
+    setSection(s);
+    saveSection(s);
+    setTypeFilter("All");
+    setCatFilter("All");
+    resetView();
+  }
+
+  function renderCard(p: PartsCatalogItem) {
+    const open = expanded === p.id;
+    const hit = q ? matchingPartNumber(p, q) : undefined;
+    return (
+      <div key={p.id} className="rounded-lg border border-border bg-surface overflow-hidden">
+        <button onClick={() => setExpanded(open ? null : p.id)} className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
+          <CatalogThumb path={p.photoPath} alt={p.partName} />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold truncate flex items-center gap-2">
+              {p.partName}
+              {!p.verified && <Badge tone="review">Review</Badge>}
+            </div>
+            <div className="text-[11px] text-muted truncate">
+              {[
+                p.position,
+                p.variants.length ? `${p.variants.length} part #s` : "",
+                hit ? `Part # ${hit}` : "",
+                money(partPrice(p)),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </div>
+          </div>
+          {/* Which catalog it is in — only worth saying when the list mixes them. */}
+          {multiSection && activeSection === "All" && <Badge tone="muted">{p.section}</Badge>}
+          <Badge tone="category">{p.category || "—"}</Badge>
+          {open ? <ChevronDown className="w-4 h-4 text-muted shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted shrink-0" />}
+        </button>
+        {open && (
+          <div className="border-t border-border p-3">
+            <PartForm
+              part={p}
+              productTypes={allProductTypes}
+              categories={allCategories}
+              sectionOptions={sections}
+              onDone={async () => { setExpanded(null); await reload(); }}
+              onCancel={() => setExpanded(null)}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // The list body. A flat list stays as it always was; a long one is grouped,
+  // and only as many cards are drawn as the "Show more" batches allow.
+  const openSizes = groups.map((g) => (groupOpen(g.key) ? g.items.length : 0));
+  const takes = takeCounts(openSizes, limit);
+  const truncated = takes.some((n, i) => n < openSizes[i]);
+  const body = grouped ? (
+    <div className="space-y-2">
+      {groups.map((g, gi) => {
+        const open = groupOpen(g.key);
+        const cards = g.items.slice(0, takes[gi]);
+        return (
+          <div key={g.key}>
+            <button
+              onClick={() => flip(g.key)}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-background border border-border text-left"
+            >
+              {open ? <ChevronDown className="w-4 h-4 text-muted shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted shrink-0" />}
+              <span className={`flex-1 min-w-0 text-sm font-semibold truncate ${g.key === REVIEW_GROUP ? "text-amber-600" : ""}`}>{g.title}</span>
+              <span className="text-xs text-muted tabular-nums shrink-0">{g.items.length}</span>
+            </button>
+            {open && cards.length > 0 && <div className="space-y-1.5 mt-1.5 mb-1">{cards.map(renderCard)}</div>}
+          </div>
+        );
+      })}
+      {truncated && (
+        <button
+          onClick={() => setLimit((n) => n + RENDER_STEP)}
+          className="w-full py-2.5 rounded-lg border border-border text-sm font-semibold text-muted"
+        >
+          Show more
+        </button>
+      )}
+    </div>
+  ) : (
+    <div className="space-y-1.5">{shown.map(renderCard)}</div>
   );
 
   return (
     <div>
-      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search parts…" className={`${field} mb-2`} />
+      <input
+        value={search}
+        onChange={(e) => { setSearch(e.target.value); resetView(); }}
+        placeholder="Search name, category or part number…"
+        className={`${field} mb-2`}
+      />
 
-      <div className="flex flex-wrap gap-1.5 mb-3">
-        <Pill active={catFilter === "All"} onClick={() => setCatFilter("All")}>All</Pill>
-        {productTypes.map((t) => (
-          <Pill key={t} active={catFilter === t} onClick={() => setCatFilter(t)}>{t}</Pill>
-        ))}
+      {multiSection && (
+        <div className="mb-2">
+          <div className={label}>Section</div>
+          <div className="flex flex-wrap gap-1.5">
+            <Pill active={activeSection === "All"} onClick={() => pickSection("All")}>All ({parts.length})</Pill>
+            {sections.map((s) => (
+              <Pill key={s} active={activeSection === s} onClick={() => pickSection(s)}>
+                {s} ({parts.filter((p) => p.section === s).length})
+              </Pill>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="mb-2">
+        {multiSection && <div className={label}>Model</div>}
+        <div className="flex flex-wrap gap-1.5">
+          <Pill active={activeType === "All"} onClick={() => { setTypeFilter("All"); setCatFilter("All"); resetView(); }}>All</Pill>
+          {productTypes.map((t) => (
+            <Pill key={t} active={activeType === t} onClick={() => { setTypeFilter(t); setCatFilter("All"); resetView(); }}>{t}</Pill>
+          ))}
+        </div>
       </div>
 
+      {categories.length > 1 && (
+        <div className="mb-3">
+          <div className={label}>Category</div>
+          {categories.length > MAX_CATEGORY_CHIPS ? (
+            <select
+              value={activeCat}
+              onChange={(e) => { setCatFilter(e.target.value); resetView(); }}
+              className={field}
+            >
+              <option value="All">All categories ({inType.length})</option>
+              {categories.map((c) => (
+                <option key={c} value={c}>{c} ({categoryCounts.get(c) || 0})</option>
+              ))}
+            </select>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              <Pill active={activeCat === "All"} onClick={() => { setCatFilter("All"); resetView(); }}>All</Pill>
+              {categories.map((c) => (
+                <Pill key={c} active={activeCat === c} onClick={() => { setCatFilter(c); resetView(); }}>
+                  {c} ({categoryCounts.get(c) || 0})
+                </Pill>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-muted">{parts.length} part{parts.length !== 1 ? "s" : ""}</span>
+        <span className="text-xs text-muted">
+          {shown.length} part{shown.length !== 1 ? "s" : ""}
+          {shown.length !== parts.length ? ` of ${parts.length}` : ""}
+        </span>
       </div>
 
       <button
         onClick={() => { setAdding(true); setExpanded(null); }}
         className="w-full py-2.5 rounded-lg border-2 border-dashed border-amber-500/50 text-amber-600 text-sm font-semibold flex items-center justify-center gap-1 mb-3"
       >
-        <Plus className="w-4 h-4" /> Add part {catFilter !== "All" ? `(${catFilter})` : ""}
+        <Plus className="w-4 h-4" /> Add part {addScope ? `(${addScope})` : ""}
       </button>
 
       {adding && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 mb-2">
           <PartForm
             part={null}
-            defaultProductType={catFilter !== "All" ? catFilter : ""}
-            productTypes={productTypes}
-            categories={categories}
+            defaultProductType={activeType !== "All" ? activeType : ""}
+            defaultSection={addSection}
+            productTypes={allProductTypes}
+            categories={allCategories}
+            sectionOptions={sections}
             onDone={async () => { setAdding(false); await reload(); }}
             onCancel={() => setAdding(false)}
           />
@@ -178,42 +459,7 @@ function PartsEditor() {
       ) : shown.length === 0 ? (
         <p className="text-sm text-muted text-center py-6">No parts.</p>
       ) : (
-        <div className="space-y-1.5">
-          {shown.map((p) => {
-            const open = expanded === p.id;
-            return (
-              <div key={p.id} className="rounded-lg border border-border bg-surface overflow-hidden">
-                <button onClick={() => setExpanded(open ? null : p.id)} className="w-full flex items-center gap-2 px-3 py-2.5 text-left">
-                  <CatalogThumb path={p.photoPath} alt={p.partName} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold truncate flex items-center gap-2">
-                      {p.partName}
-                      {!p.verified && <Badge tone="review">Review</Badge>}
-                    </div>
-                    <div className="text-[11px] text-muted truncate">
-                      {[p.position, p.variants.length ? `${p.variants.length} part #s` : "", money(partPrice(p))]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </div>
-                  </div>
-                  <Badge tone="category">{p.category || "—"}</Badge>
-                  {open ? <ChevronDown className="w-4 h-4 text-muted shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted shrink-0" />}
-                </button>
-                {open && (
-                  <div className="border-t border-border p-3">
-                    <PartForm
-                      part={p}
-                      productTypes={productTypes}
-                      categories={categories}
-                      onDone={async () => { setExpanded(null); await reload(); }}
-                      onCancel={() => setExpanded(null)}
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        body
       )}
     </div>
   );
@@ -257,18 +503,25 @@ function ChipList({ items, onChange, placeholder }: { items: string[]; onChange:
 function PartForm({
   part,
   defaultProductType,
+  defaultSection,
   productTypes,
   categories,
+  sectionOptions,
   onDone,
   onCancel,
 }: {
   part: PartsCatalogItem | null;
   defaultProductType?: string;
+  /** Where a NEW part goes — the section being looked at, never "All". */
+  defaultSection?: string;
   productTypes: string[];
   categories: string[];
+  /** Sections that already have parts; the form adds the standard ones. */
+  sectionOptions: string[];
   onDone: () => void;
   onCancel: () => void;
 }) {
+  const [section, setSection] = useState(part?.section || defaultSection || DEFAULT_PART_SECTION);
   const [productType, setProductType] = useState(part?.productType || defaultProductType || "");
   const [category, setCategory] = useState(part?.category || "");
   const [partName, setPartName] = useState(part?.partName || "");
@@ -283,9 +536,16 @@ function PartForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // A part with dozens of colour/size variants would be a screen of inputs, so
+  // a big matrix starts folded away behind a one-line summary.
+  const [showMatrix, setShowMatrix] = useState(false);
 
   const colorOpts = colors.length ? colors : [""];
   const sizeOpts = sizes.length ? sizes : [""];
+  const variantCount = colorOpts.length * sizeOpts.length;
+  const bigMatrix = variantCount > MATRIX_FOLD_ABOVE;
+  const filledCount = variants.filter((v) => v.partNumber.trim()).length;
+  const sectionChoices = [...new Set([...sectionOptions, DEFAULT_PART_SECTION, "Renewal Parts", "IQ Parts", section])];
   const variantAt = (c: string, s: string) => variants.find((v) => v.color === c && v.size === s);
   const partNumberFor = (c: string, s: string) => variantAt(c, s)?.partNumber || "";
   /** Keep a variant row while it carries either a part number or its own price. */
@@ -317,6 +577,7 @@ function PartForm({
       // A variant earns its row by carrying a part number or its own price.
       variants: variants.filter((v) => v.partNumber.trim() || v.price != null),
       verified,
+      section,
       nicknames,
       price: price === "" ? null : Number(price),
       // A copy starts with no photo on purpose: two rows pointing at one file
@@ -331,6 +592,12 @@ function PartForm({
 
   return (
     <div className="space-y-3">
+      <div>
+        <div className={label}>Section</div>
+        <select value={section} onChange={(e) => setSection(e.target.value)} className={field}>
+          {sectionChoices.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
       <div className="grid grid-cols-2 gap-2">
         <div>
           <div className={label}>Model</div>
@@ -383,28 +650,45 @@ function PartForm({
 
       <div>
         <div className={label}>
-          Part number{colorOpts.length * sizeOpts.length > 1 ? "s and prices — per color / size" : " and price"}
+          Part number{variantCount > 1 ? "s and prices — per color / size" : " and price"}
         </div>
-        <div className="space-y-1.5">
-          {colorOpts.map((c) =>
-            sizeOpts.map((s) => (
-              <div key={`${c}|${s}`} className="flex items-center gap-2">
-                {(c || s) && (
-                  <span className="text-xs text-muted shrink-0 w-28 truncate">{[c, s].filter(Boolean).join(" · ") || "Any"}</span>
-                )}
-                <input value={partNumberFor(c, s)} onChange={(e) => setVariantField(c, s, "partNumber", e.target.value)} placeholder="Part #" className={field} />
-                <input
-                  type="number" min="0" step="0.01"
-                  value={variantAt(c, s)?.price ?? ""}
-                  onChange={(e) => setVariantField(c, s, "price", e.target.value)}
-                  placeholder={price ? Number(price).toFixed(2) : "price"}
-                  title="Leave blank to use the part price above"
-                  className={`${field} w-24 shrink-0`}
-                />
-              </div>
-            ))
-          )}
-        </div>
+        {bigMatrix && (
+          <button
+            type="button"
+            onClick={() => setShowMatrix((v) => !v)}
+            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border bg-background text-left text-sm"
+          >
+            {showMatrix ? <ChevronDown className="w-4 h-4 text-muted shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted shrink-0" />}
+            <span className="flex-1 min-w-0 font-semibold">{variantCount} variants</span>
+            <span className="text-xs text-muted shrink-0">
+              {filledCount} part #s filled · {showMatrix ? "Hide" : "Show"}
+            </span>
+          </button>
+        )}
+        {(!bigMatrix || showMatrix) && (
+          <div className={`space-y-1.5 ${bigMatrix ? "mt-1.5 max-h-96 overflow-y-auto pr-1" : ""}`}>
+            {colorOpts.map((c) =>
+              sizeOpts.map((s) => (
+                <div key={`${c}|${s}`} className="flex items-center gap-2">
+                  {(c || s) && (
+                    <span className={`text-xs text-muted shrink-0 truncate ${bigMatrix ? "w-40" : "w-28"}`} title={[c, s].filter(Boolean).join(" · ")}>
+                      {[c, s].filter(Boolean).join(" · ") || "Any"}
+                    </span>
+                  )}
+                  <input value={partNumberFor(c, s)} onChange={(e) => setVariantField(c, s, "partNumber", e.target.value)} placeholder="Part #" className={field} />
+                  <input
+                    type="number" min="0" step="0.01"
+                    value={variantAt(c, s)?.price ?? ""}
+                    onChange={(e) => setVariantField(c, s, "price", e.target.value)}
+                    placeholder={price ? Number(price).toFixed(2) : "price"}
+                    title="Leave blank to use the part price above"
+                    className={`${field} w-24 shrink-0`}
+                  />
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       <div>
@@ -464,7 +748,8 @@ function PartForm({
 // A member whose part has since been deleted is shown as missing rather than
 // dropped — a bundle must never quietly add fewer parts than it names.
 
-/** Search box over the parts list; calls onPick with the chosen part. */
+/** Search box over the parts list; calls onPick with the chosen part. Reaches
+ *  every section — a bundle can mix Location, Renewal and any other parts. */
 function PartSearchList({
   parts,
   exclude,
@@ -476,28 +761,46 @@ function PartSearchList({
 }) {
   const [q, setQ] = useState("");
   const query = q.trim().toLowerCase();
-  const shown = parts
+  const multiSection = useMemo(() => new Set(parts.map((p) => p.section)).size > 1, [parts]);
+  const matches = parts
     .filter((p) => !exclude.includes(p.id))
-    .filter((p) => !query || `${p.partName} ${p.category} ${p.productType} ${p.nicknames.join(" ")}`.toLowerCase().includes(query))
-    .slice(0, 40);
+    .filter(
+      (p) =>
+        !query ||
+        `${p.partName} ${p.category} ${p.productType} ${p.section} ${p.position || ""} ${p.nicknames.join(" ")}`
+          .toLowerCase()
+          .includes(query) ||
+        matchingPartNumber(p, query) !== undefined
+    );
+  const shown = matches.slice(0, 40);
   return (
     <div>
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search a part to add…" className={`${field} mb-2`} />
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search a part or part number to add…" className={`${field} mb-2`} />
       <div className="max-h-56 overflow-y-auto rounded-lg border border-border divide-y divide-border">
         {shown.length === 0 && <p className="text-xs text-muted text-center py-4">No parts match.</p>}
-        {shown.map((p) => (
-          <button key={p.id} onClick={() => { onPick(p); setQ(""); }} className="w-full flex items-center gap-2 px-2.5 py-2 text-left">
-            <CatalogThumb path={p.photoPath} alt={p.partName} />
-            <span className="flex-1 min-w-0 text-xs font-semibold truncate">
-              {p.partName}
-              <span className="font-normal text-muted">
-                {p.position ? ` · ${p.position}` : ""}
-                {p.productType ? ` · ${p.productType}` : ""}
+        {shown.map((p) => {
+          const hit = query ? matchingPartNumber(p, query) : undefined;
+          return (
+            <button key={p.id} onClick={() => { onPick(p); setQ(""); }} className="w-full flex items-center gap-2 px-2.5 py-2 text-left">
+              <CatalogThumb path={p.photoPath} alt={p.partName} />
+              <span className="flex-1 min-w-0 text-xs font-semibold truncate">
+                {p.partName}
+                <span className="font-normal text-muted">
+                  {p.position ? ` · ${p.position}` : ""}
+                  {p.productType ? ` · ${p.productType}` : ""}
+                  {multiSection ? ` · ${p.section}` : ""}
+                  {hit ? ` · Part # ${hit}` : ""}
+                </span>
               </span>
-            </span>
-            <span className="text-[11px] text-muted tabular-nums shrink-0">{money(partPrice(p))}</span>
-          </button>
-        ))}
+              <span className="text-[11px] text-muted tabular-nums shrink-0">{money(partPrice(p))}</span>
+            </button>
+          );
+        })}
+        {matches.length > shown.length && (
+          <p className="text-[11px] text-muted text-center py-2">
+            Showing {shown.length} of {matches.length} — type to narrow it down.
+          </p>
+        )}
       </div>
     </div>
   );

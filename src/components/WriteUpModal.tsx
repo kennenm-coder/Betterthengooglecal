@@ -29,6 +29,8 @@ import {
   PartsBundle,
   partPrice,
   bundlePrice,
+  matchingPartNumber,
+  sectionsInUse,
   addCustomPart,
   addCustomWork,
   lengthsToQty,
@@ -3609,6 +3611,20 @@ function newPartRow(
   };
 }
 
+/** Part rows drawn in the dropdown at once; "Show more" draws the next batch.
+ *  A Renewal-sized catalog would otherwise put hundreds of rows on a phone. */
+const RESULT_STEP = 60;
+
+/** How many rows each group may draw so the total stays within `limit`, in order. */
+function takeCounts(sizes: number[], limit: number): number[] {
+  let left = limit;
+  return sizes.map((n) => {
+    const take = Math.max(0, Math.min(n, left));
+    left -= take;
+    return take;
+  });
+}
+
 /** The grey model tag on a search hit that belongs to a different model. */
 function OffUnitTag({ type }: { type: string }) {
   return (
@@ -3649,10 +3665,21 @@ function PartsPicker({
   // Set by the "Show all product types" row at the bottom of the dropdown.
   // Off by default: the dropdown opens on the units being written up.
   const [showAll, setShowAll] = useState(false);
+  // Which section's parts to show ("All" = every section). Only offered once
+  // the catalog has more than one.
+  const [sectionFilter, setSectionFilter] = useState("All");
+  // How many part rows are drawn; grows by RESULT_STEP on "Show more".
+  const [shownCount, setShownCount] = useState(RESULT_STEP);
   // How many of each bundle to add. Stepped with buttons rather than a text
   // input so the search box never loses focus and close the dropdown.
   const [bundleCounts, setBundleCounts] = useState<Record<string, number>>({});
   const q = query.trim().toLowerCase();
+
+  // Sections that actually have parts. A catalog with just one (before the
+  // Renewal parts arrive) shows no chips and no section in the headers.
+  const sections = useMemo(() => sectionsInUse(catalog), [catalog]);
+  const multiSection = sections.length > 1;
+  const activeSection = multiSection && sections.includes(sectionFilter) ? sectionFilter : "All";
 
   // What the affected units are, reduced to product families — "Double
   // Casement" and "Casement Picture" both come out casement, so casement parts
@@ -3708,6 +3735,10 @@ function PartsPicker({
     return (c.nicknames || []).find((n) => n.toLowerCase().includes(q));
   };
 
+  // The part number that put this part in the results, shown under it so
+  // someone who searched by number sees which one matched.
+  const partNumberReason = (c: PartsCatalogItem): string | undefined => (q ? matchingPartNumber(c, q) : undefined);
+
   const fmtPrice = (n: number | null) => (n == null ? "" : `$${n.toFixed(2)}`);
 
   const partsById = useMemo(() => new Map(catalog.map((c) => [c.id, c])), [catalog]);
@@ -3739,29 +3770,35 @@ function PartsPicker({
     };
   }, [bundles, q, narrowed, onUnit]);
 
-  const { groups, hiddenTypeCount } = useMemo(() => {
+  const { groups, hiddenTypeCount, totalParts } = useMemo(() => {
     const searched = catalog.filter((c) => {
+      if (activeSection !== "All" && c.section !== activeSection) return false;
       if (!q) return true;
       return (
         c.productType.toLowerCase().includes(q) ||
         c.category.toLowerCase().includes(q) ||
         c.partName.toLowerCase().includes(q) ||
         (c.position || "").toLowerCase().includes(q) ||
-        (c.nicknames || []).some((n) => n.toLowerCase().includes(q))
+        (c.nicknames || []).some((n) => n.toLowerCase().includes(q)) ||
+        matchingPartNumber(c, q) !== undefined
       );
     });
     const visible = narrowed ? searched.filter((c) => onUnit(c.productType, c.category)) : searched;
 
-    const byType = new Map<string, PartsCatalogItem[]>();
+    // One group per section + product type. With a single section that is just
+    // the product type, as it always was.
+    const byGroup = new Map<string, { section: string; type: string; items: PartsCatalogItem[] }>();
     for (const c of visible) {
-      const arr = byType.get(c.productType) || [];
-      arr.push(c);
-      byType.set(c.productType, arr);
+      const key = `${c.section}\u0000${c.productType}`;
+      const g = byGroup.get(key) || { section: c.section, type: c.productType, items: [] };
+      g.items.push(c);
+      byGroup.set(key, g);
     }
-    const sorted = [...byType.entries()].sort((a, b) => {
-      const ar = onUnit(a[0]) ? 0 : 1;
-      const br = onUnit(b[0]) ? 0 : 1;
-      return ar - br || a[0].localeCompare(b[0]);
+    const sectionRank = (name: string) => sections.indexOf(name);
+    const sorted = [...byGroup.values()].sort((a, b) => {
+      const ar = onUnit(a.type) ? 0 : 1;
+      const br = onUnit(b.type) ? 0 : 1;
+      return ar - br || sectionRank(a.section) - sectionRank(b.section) || a.type.localeCompare(b.type);
     });
 
     // What "Show all product types (N more)" is offering: the types held back,
@@ -3771,8 +3808,8 @@ function PartsPicker({
       for (const c of searched) if (!onUnit(c.productType, c.category)) heldBack.add(c.productType);
       for (const b of hiddenBundles) heldBack.add(b.productType);
     }
-    return { groups: sorted, hiddenTypeCount: heldBack.size };
-  }, [catalog, q, narrowed, onUnit, hiddenBundles]);
+    return { groups: sorted, hiddenTypeCount: heldBack.size, totalParts: visible.length };
+  }, [catalog, q, narrowed, onUnit, hiddenBundles, activeSection, sections]);
 
   function addPart(name: string, productType?: string, custom?: boolean, item?: PartsCatalogItem) {
     onChange([...parts, newPartRow(name, productType, custom, item)]);
@@ -3993,14 +4030,33 @@ function PartsPicker({
       <div className="relative mt-2">
         <input
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => { setOpen(true); setShowAll(false); }}
+          onChange={(e) => { setQuery(e.target.value); setShownCount(RESULT_STEP); }}
+          onFocus={() => { setOpen(true); setShowAll(false); setShownCount(RESULT_STEP); }}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           placeholder={catalog.length ? "Search parts, or type a custom part…" : "Type a part…"}
           className="w-full rounded-lg border border-border bg-background px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-amber-400/50"
         />
         {open && (
-          <div className="absolute z-20 left-0 right-0 mt-1 rounded-xl border border-border bg-background shadow-lg max-h-72 overflow-y-auto">
+          <div className="absolute z-20 left-0 right-0 mt-1 rounded-xl border border-border bg-background shadow-lg max-h-72 flex flex-col overflow-hidden">
+            {/* Section chips. mousedown is cancelled so tapping one keeps focus
+                in the search box and the dropdown stays open. */}
+            {multiSection && (
+              <div className="shrink-0 flex gap-1.5 px-3 py-2 border-b border-border overflow-x-auto">
+                {["All", ...sections].map((sec) => (
+                  <button
+                    key={sec}
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); setSectionFilter(sec); setShownCount(RESULT_STEP); }}
+                    className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${
+                      activeSection === sec ? "bg-amber-500 text-white" : "bg-surface text-muted border border-border"
+                    }`}
+                  >
+                    {sec}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex-1 min-h-0 overflow-y-auto">
             {q && (
               <button
                 type="button"
@@ -4074,40 +4130,64 @@ function PartsPicker({
                 })}
               </div>
             )}
-            {groups.map(([type, items]) => (
-              <div key={type}>
-                <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-muted bg-surface sticky top-0">
-                  {type}
-                </div>
-                {items.map((c) => {
-                  const nick = nicknameReason(c);
-                  const price = partPrice(c);
-                  // Searching reaches the whole catalog, so say when a hit
-                  // belongs to a different model than the units in hand.
-                  const offUnit = !onUnit(c.productType, c.category);
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                addPart(label(c), c.productType, false, c);
-                      }}
-                      className="w-full flex items-center gap-2 text-left px-3 py-2.5 text-sm hover:bg-surface border-b border-border last:border-b-0"
-                    >
-                      <span className="flex-1 min-w-0">
-                        {label(c)}
-                        {nick && <span className="text-muted"> ({nick})</span>}
-                      </span>
-                      {offUnit && c.productType && <OffUnitTag type={c.productType} />}
-                      {price != null && (
-                        <span className="shrink-0 text-xs text-muted tabular-nums">{fmtPrice(price)}</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
+            {(() => {
+              // Draw at most shownCount rows; a group only gets its header if
+              // at least one of its rows fits.
+              const takes = takeCounts(groups.map((g) => g.items.length), shownCount);
+              return groups.map((g, gi) => {
+                const items = g.items.slice(0, takes[gi]);
+                if (items.length === 0) return null;
+                return (
+                  <div key={`${g.section}\u0000${g.type}`}>
+                    <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-muted bg-surface sticky top-0">
+                      {multiSection ? `${g.section} › ${g.type || "No model"}` : g.type}
+                    </div>
+                    {items.map((c) => {
+                      const nick = nicknameReason(c);
+                      const pn = partNumberReason(c);
+                      const price = partPrice(c);
+                      // Searching reaches the whole catalog, so say when a hit
+                      // belongs to a different model than the units in hand.
+                      const offUnit = !onUnit(c.productType, c.category);
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            addPart(label(c), c.productType, false, c);
+                          }}
+                          className="w-full flex items-center gap-2 text-left px-3 py-2.5 text-sm hover:bg-surface border-b border-border last:border-b-0"
+                        >
+                          <span className="flex-1 min-w-0">
+                            {label(c)}
+                            {nick && <span className="text-muted"> ({nick})</span>}
+                            {pn && (
+                              <span className="block text-[11px] text-muted">
+                                Part # <span className="font-mono">{pn}</span>
+                              </span>
+                            )}
+                          </span>
+                          {offUnit && c.productType && <OffUnitTag type={c.productType} />}
+                          {price != null && (
+                            <span className="shrink-0 text-xs text-muted tabular-nums">{fmtPrice(price)}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              });
+            })()}
+            {totalParts > shownCount && (
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); setShownCount((n) => n + RESULT_STEP); }}
+                className="w-full text-left px-3 py-2.5 text-sm font-medium text-amber-600 border-t border-border hover:bg-surface"
+              >
+                Show more ({totalParts - shownCount} more part{totalParts - shownCount === 1 ? "" : "s"})
+              </button>
+            )}
             {groups.length === 0 && shownBundles.length === 0 && !q && (
               <div className="px-3 py-3 text-sm text-muted">
                 {catalog.length === 0
@@ -4125,6 +4205,7 @@ function PartsPicker({
                 Show all product types ({hiddenTypeCount} more)
               </button>
             )}
+            </div>
           </div>
         )}
       </div>
