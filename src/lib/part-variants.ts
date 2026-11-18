@@ -12,6 +12,7 @@
 // Pure functions, no imports beyond types, so scripts/checks can run them.
 
 import type { PartsCatalogItem, PartVariant } from "./work-order-store";
+import type { WriteUpMaterialItem } from "./types";
 
 type VariantSource = Pick<PartsCatalogItem, "variants" | "colors" | "sizes">;
 
@@ -183,4 +184,72 @@ export function choiceHint(
   const hits = candidates(part, norm(color), norm(size));
   const numbers = uniq(hits.map((v) => v.partNumber));
   return numbers.length === 1 ? partDescription(part, numbers[0]) : undefined;
+}
+
+// ─── Saved part lines (editing a submitted write-up) ────────────────────────
+
+/**
+ * A saved part line's text split back into name and model. Lines are saved as
+ * "<name> (<model>)", but a custom name can end in brackets of its own
+ * ("Screen clip (white)"), so the bracket is taken as the model only when it
+ * names a product type that is actually known (catalog types, the job's unit
+ * types). Otherwise the whole text is the name — and saving it again writes
+ * the same text back either way.
+ */
+export function splitSavedPartName(
+  text: string,
+  knownTypes: Iterable<string>
+): { name: string; productType?: string } {
+  const item = norm(text);
+  const hit = /^(.*\S) \(([^()]+)\)$/.exec(item);
+  if (!hit) return { name: item };
+  const want = norm(hit[2]).toLowerCase();
+  for (const t of knownTypes) {
+    if (norm(t).toLowerCase() === want) return { name: hit[1], productType: hit[2] };
+  }
+  return { name: item };
+}
+
+/**
+ * Which catalog part a reopened line belongs to, given every part filed under
+ * its name and model. One match links. Several (the same name in two sections)
+ * link only when the line's saved part number is in exactly one of them;
+ * otherwise nothing links, and the line keeps what it was saved with rather
+ * than borrowing another part's pickers and numbers.
+ */
+export function pickLinkedPart<T extends Pick<PartsCatalogItem, "variants">>(
+  matches: T[],
+  partNumber: string | null | undefined
+): T | undefined {
+  if (matches.length === 1) return matches[0];
+  const pn = loose(norm(partNumber));
+  if (matches.length === 0 || !pn) return undefined;
+  const owners = matches.filter((m) => m.variants.some((v) => loose(norm(v.partNumber)) === pn));
+  return owners.length === 1 ? owners[0] : undefined;
+}
+
+/**
+ * A part line on its way back to storage. A line reopened from a saved
+ * write-up keeps everything it was saved with that the parts list doesn't
+ * edit — unit, vendor, species, lengths, and any field this code doesn't know
+ * about — and takes only what the list does edit from `fresh`. A new line is
+ * `fresh` as it is.
+ */
+export function withSavedLine(
+  saved: WriteUpMaterialItem | undefined,
+  fresh: WriteUpMaterialItem
+): WriteUpMaterialItem {
+  if (!saved) return fresh;
+  return {
+    ...saved,
+    item: fresh.item,
+    color: fresh.color,
+    qty: fresh.qty,
+    custom: fresh.custom,
+    kind: "part",
+    partNumber: fresh.partNumber,
+    size: fresh.size,
+    description: fresh.description,
+    workSeq: fresh.workSeq,
+  };
 }

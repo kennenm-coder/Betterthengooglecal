@@ -57,6 +57,9 @@ import { familyMatcher, isUniversalType } from "@/lib/product-family";
 import {
   partLabel,
   partDescription,
+  pickLinkedPart,
+  splitSavedPartName,
+  withSavedLine,
   settleVariant,
   variantColors,
   variantSizes,
@@ -214,6 +217,13 @@ interface PartItem {
   /** The catalog's description of that part number. Set and cleared with it;
    *  never folded into `name`, which is what lines merge and search on. */
   description?: string;
+  /** Edit mode only, never saved: the stored line this row was reopened from.
+   *  Its presence means the row is not new this session — so a custom part is
+   *  not fed to the catalog again (an admin may have deleted it since) — and
+   *  saving writes back the fields this list doesn't edit (unit, vendor,
+   *  species, lengths…) exactly as they were. Here `name` is the saved text
+   *  whole; the picker splits a known model off it for display. */
+  saved?: WriteUpMaterialItem;
 }
 
 /** One unit's two lists on a work item. */
@@ -315,19 +325,17 @@ const partToDraft = (p: PartItem): DraftPart => ({
 
 /**
  * A saved part line back as a part row, for editing a submitted write-up. The
- * line was saved as "<name> (<model>)" (see partToMaterial), so the model is
- * split back off — which also lets the picker find the catalog part again by
- * name and model (catalogPartOf). Saving puts the same text back together, so
- * the round trip is exact even for a custom name that happens to end in
- * brackets.
+ * saved text ("<name> (<model>)", see partToMaterial) is kept whole as the
+ * name with no model, so saving writes exactly the same text back. The picker
+ * splits the model off for display, matching and the unit check only when it
+ * is a product type it actually knows (splitSavedPartName) — a custom
+ * "Screen clip (white)" stays one name. The stored line rides along in
+ * `saved` (see PartItem).
  */
 function partFromSavedLine(m: WriteUpMaterialItem): PartItem {
-  const item = (m.item || "").trim();
-  const hit = /^(.*\S) \(([^()]+)\)$/.exec(item);
   return {
     key: crypto.randomUUID(),
-    name: hit ? hit[1] : item,
-    productType: hit ? hit[2] : undefined,
+    name: (m.item || "").trim(),
     qty: m.qty > 0 ? m.qty : 1,
     custom: m.custom,
     unitKeys: [],
@@ -335,6 +343,7 @@ function partFromSavedLine(m: WriteUpMaterialItem): PartItem {
     size: m.size || undefined,
     partNumber: m.partNumber || undefined,
     description: (m.partNumber && m.description) || undefined,
+    saved: m,
   };
 }
 
@@ -1415,7 +1424,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       // with this item's number (workSeq) — that stamp is what lets a reopened
       // write-up show them under the item they were entered on, and what lets
       // the office's material total drop them once the item is installed.
-      const partToMaterial = (p: PartItem): WriteUpMaterialItem => ({
+      // A line reopened from a saved write-up writes back what this list
+      // doesn't edit (unit, vendor, species, lengths…) as it was saved.
+      const partToMaterial = (p: PartItem): WriteUpMaterialItem => withSavedLine(p.saved, {
         item: p.productType ? `${p.name.trim()} (${p.productType})` : p.name.trim(),
         color: p.color || "",
         species: "",
@@ -2035,7 +2046,10 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       if (label && !presetSet.has(label.toLowerCase())) addCustomWork(label).catch(() => {});
       for (const l of allLists(it)) {
         for (const p of l.parts) {
-          if (p.custom && p.name.trim()) addCustomPart(p.name.trim(), p.productType).catch(() => {});
+          // Only custom parts typed in THIS session. One reopened from a saved
+          // write-up was offered to the catalog when it was first saved; offering
+          // it again on every edit would bring back a part an admin deleted.
+          if (p.custom && !p.saved && p.name.trim()) addCustomPart(p.name.trim(), p.productType).catch(() => {});
         }
       }
     }
@@ -3661,15 +3675,18 @@ function newPartRow(
 
 /** The catalog part a line came from: by its stored id, or — for a line
  *  reopened from a saved write-up, which keeps no id — by the name and model
- *  it was saved under. A custom part never links. */
+ *  it was saved under (pass the row as lineView shows it). When that name and
+ *  model are filed more than once, only the saved part number can settle it;
+ *  otherwise the line stays unlinked (see pickLinkedPart). A custom part never
+ *  links. */
 function catalogPartOf(
   p: PartItem,
   byId: Map<string, PartsCatalogItem>,
-  byLabel: Map<string, PartsCatalogItem>
+  byLabel: Map<string, PartsCatalogItem[]>
 ): PartsCatalogItem | undefined {
   if (p.catalogId) return byId.get(p.catalogId);
   if (p.custom) return undefined;
-  return byLabel.get(`${p.name.trim()}\u0000${(p.productType || "").trim()}`);
+  return pickLinkedPart(byLabel.get(`${p.name.trim()}\u0000${(p.productType || "").trim()}`) || [], p.partNumber);
 }
 
 /** Part rows drawn in the dropdown at once; "Show more" draws the next batch.
@@ -3736,6 +3753,9 @@ function PartsPicker({
   const [bundleCounts, setBundleCounts] = useState<Record<string, number>>({});
   // The photo catalog sheet, opened over the write-up by "Browse catalog".
   const [browsing, setBrowsing] = useState(false);
+  // What was typed in the search box when Browse was tapped — the sheet's
+  // starting search.
+  const [browseQuery, setBrowseQuery] = useState("");
   const q = query.trim().toLowerCase();
 
   // Sections that actually have parts. A catalog with just one (before the
@@ -3806,10 +3826,34 @@ function PartsPicker({
   const partsById = useMemo(() => new Map(catalog.map((c) => [c.id, c])), [catalog]);
   // A line reopened from a saved write-up carries its name and model, not an
   // id; this finds its catalog part again so its colour / size pickers return.
-  const partsByLabel = useMemo(
-    () => new Map(catalog.map((c) => [`${partLabel(c).trim()}\u0000${c.productType.trim()}`, c])),
-    [catalog]
+  // Every part under a name and model, not just the last one: the same name
+  // can be filed in two sections.
+  const partsByLabel = useMemo(() => {
+    const m = new Map<string, PartsCatalogItem[]>();
+    for (const c of catalog) {
+      const k = `${partLabel(c).trim()}\u0000${c.productType.trim()}`;
+      m.set(k, [...(m.get(k) || []), c]);
+    }
+    return m;
+  }, [catalog]);
+  // Product types a reopened line's "(model)" may name: the catalog's and
+  // the units being written up.
+  const knownTypes = useMemo(
+    () =>
+      [...new Set([...catalog.map((c) => c.productType), ...affectedUnits.map((u) => u.unitType)].map((t) => t.trim()))].filter(
+        Boolean
+      ),
+    [catalog, affectedUnits]
   );
+  /** A row as it is shown and matched. A line reopened from a saved write-up
+   *  holds its saved text whole as its name; its "(model)" is split off here
+   *  only when it names a known product type. The row itself never changes,
+   *  so saving writes the same text back. */
+  const lineView = (p: PartItem): PartItem => {
+    if (!p.saved || p.productType) return p;
+    const split = splitSavedPartName(p.name, knownTypes);
+    return split.productType ? { ...p, name: split.name, productType: split.productType } : p;
+  };
 
   // Narrowing applies to the browse list only. A search covers the whole
   // catalog, as it always has — someone who types a part name is asking for
@@ -3888,6 +3932,8 @@ function PartsPicker({
   /** A part picked in the photo catalog, with its colour / size and quantity. */
   function addFromBrowser(item: PartsCatalogItem, pick: VariantPick, qty: number) {
     onChange([...parts, { ...newPartRow(label(item), item.productType, false, item, pick), qty: Math.max(1, qty) }]);
+    // As addPart / addBundle do: nothing typed survives to be flushed as a custom part.
+    setQuery("");
   }
 
   /** Change a row's colour or size. The pick is settled against the part's
@@ -3980,7 +4026,8 @@ function PartsPicker({
 
       {parts.length > 0 && (
         <div className="mt-2 space-y-2">
-          {parts.map((p) => {
+          {parts.map((row) => {
+            const p = lineView(row);
             const part = catalogPartOf(p, partsById, partsByLabel);
             // Only combinations that exist are offered. A dimension already
             // picked lists all its values (switching drops a pairing that no
@@ -4133,7 +4180,15 @@ function PartsPicker({
           {(catalog.length > 0 || bundles.length > 0) && (
             <button
               type="button"
-              onClick={() => { setOpen(false); setBrowsing(true); }}
+              onClick={() => {
+                // Whatever was typed moves into the sheet's search and leaves
+                // this box. Left here, Submit's flush would save the half-typed
+                // text as a custom part (and offer it to the catalog).
+                setBrowseQuery(query.trim());
+                setQuery("");
+                setOpen(false);
+                setBrowsing(true);
+              }}
               className="shrink-0 flex items-center gap-1.5 rounded-lg bg-amber-500 text-white px-3 text-sm font-bold leading-tight active:scale-[0.98]"
             >
               <LayoutGrid className="w-5 h-5 shrink-0" />
@@ -4148,6 +4203,7 @@ function PartsPicker({
             catalog={catalog}
             bundles={bundles}
             unitTypes={affectedUnits.map((u) => u.unitType)}
+            initialQuery={browseQuery}
             onAddPart={addFromBrowser}
             onAddBundle={addBundle}
             onClose={() => setBrowsing(false)}

@@ -9,7 +9,7 @@ import { register } from "node:module";
 process.removeAllListeners("warning");
 register("./ts-resolver.mjs", import.meta.url);
 
-const { settleVariant, variantColors, variantSizes, needsPick, optionCount, partDescription, partDetailLines, partLabel, choiceHint } =
+const { settleVariant, variantColors, variantSizes, needsPick, optionCount, partDescription, partDetailLines, partLabel, choiceHint, splitSavedPartName, pickLinkedPart, withSavedLine } =
   await import("../../src/lib/part-variants.ts");
 
 let fails = 0;
@@ -83,6 +83,40 @@ ok("detail lines other", eq(partDetailLines({ details: { notes: { a: 1 } } }, "n
 ok("chip hint when one number", choiceHint(grid, "Sandtone", "") === "Sandtone 30");
 ok("no chip hint when several", choiceHint(grid, "White", "") === undefined);
 ok("label", partLabel({ category: "Locks", partName: "Sash lock", position: "Top" }) === "Locks — Sash lock · Top");
+
+console.log("saved part lines");
+const types = ["Double Hung", "Casement"];
+ok("known model splits", eq(splitSavedPartName("Locks — Sash lock (Double Hung)", types), { name: "Locks — Sash lock", productType: "Double Hung" }));
+ok("model match ignores case", splitSavedPartName("Hinge (casement)", types).productType === "casement");
+ok("custom bracket stays in the name", eq(splitSavedPartName("Screen clip (white)", types), { name: "Screen clip (white)" }));
+ok("no bracket", eq(splitSavedPartName("Caulk", types), { name: "Caulk" }));
+ok("no known types: whole name", eq(splitSavedPartName("Lock (Double Hung)", []), { name: "Lock (Double Hung)" }));
+
+const loc = { id: "loc", variants: [{ color: "", size: "", partNumber: "L-1" }] };
+const ren = { id: "ren", variants: [{ color: "White", size: "", partNumber: "R-1" }, { color: "Tan", size: "", partNumber: "R-2" }] };
+const ren2 = { id: "ren2", variants: [{ color: "", size: "", partNumber: "R-1" }] };
+ok("one match links", pickLinkedPart([ren], undefined)?.id === "ren");
+ok("no match", pickLinkedPart([], "R-1") === undefined);
+ok("two matches, no number: unlinked", pickLinkedPart([loc, ren], undefined) === undefined);
+ok("two matches, number settles it", pickLinkedPart([loc, ren], "R-2")?.id === "ren");
+ok("two matches, number loosely", pickLinkedPart([loc, ren], "r2")?.id === "ren");
+ok("two matches, number in neither: unlinked", pickLinkedPart([loc, ren], "X-9") === undefined);
+ok("two matches, number in both: unlinked", pickLinkedPart([ren, ren2], "R-1") === undefined);
+
+const saved = {
+  item: "Locks — Sash lock (Double Hung)", color: "White", species: "Oak", qty: 2, unit: "PCS", lengths: "2/8", vendor: "Shop",
+  custom: false, kind: "part", partNumber: "R-1", size: "", description: "old", workSeq: 4, category: "Keep me", extraField: "kept",
+};
+const fresh = {
+  item: "Locks — Sash lock (Double Hung)", color: "Tan", species: "", qty: 3, unit: "EA", lengths: "", vendor: "",
+  custom: false, kind: "part", partNumber: "R-2", size: undefined, description: undefined, workSeq: 1,
+};
+const merged = withSavedLine(saved, fresh);
+ok("saved unit / vendor / species / lengths kept", merged.unit === "PCS" && merged.vendor === "Shop" && merged.species === "Oak" && merged.lengths === "2/8");
+ok("unknown fields kept", merged.category === "Keep me" && merged.extraField === "kept");
+ok("edited fields from the list", merged.color === "Tan" && merged.qty === 3 && merged.partNumber === "R-2" && merged.workSeq === 1);
+ok("cleared description stays cleared", JSON.parse(JSON.stringify(merged)).description === undefined);
+ok("a new line is as built", withSavedLine(undefined, fresh) === fresh);
 
 console.log(fails ? `\n${fails} FAILED` : "\nall ok");
 process.exit(fails ? 1 : 0);

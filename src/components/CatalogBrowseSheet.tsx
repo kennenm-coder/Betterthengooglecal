@@ -79,6 +79,7 @@ export default function CatalogBrowseSheet({
   catalog,
   bundles,
   unitTypes,
+  initialQuery = "",
   onAddPart,
   onAddBundle,
   onClose,
@@ -87,6 +88,8 @@ export default function CatalogBrowseSheet({
   bundles: PartsBundle[];
   /** Product types of the units being written up — what the type chips start on. */
   unitTypes: string[];
+  /** What was already typed in the write-up's search box, carried over. */
+  initialQuery?: string;
   onAddPart: (part: PartsCatalogItem, pick: VariantPick, qty: number) => void;
   /** Returns how many part lines the bundle actually added. */
   onAddBundle: (bundle: PartsBundle, count: number) => number;
@@ -94,7 +97,7 @@ export default function CatalogBrowseSheet({
 }) {
   useBackClose(onClose);
 
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [section, setSection] = useState<string>(() => readSavedSection());
   const unitKey = unitTypes.map((t) => t.trim()).filter(Boolean).join("\u0000");
   const matcher = useMemo(() => familyMatcher(unitKey ? unitKey.split("\u0000") : []), [unitKey]);
