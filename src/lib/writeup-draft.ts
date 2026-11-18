@@ -46,6 +46,8 @@ export interface DraftPart {
   color?: string;
   size?: string;
   partNumber?: string;
+  /** The catalog's description of that part number; absent on older drafts. */
+  description?: string;
 }
 
 /** One unit's two lists on a work item. The key they're stored under is the

@@ -231,6 +231,11 @@ export interface WriteUpMaterialItem {
   partNumber?: string;
   /** Parts only: the variant size that, with `color`, chose the part number. */
   size?: string;
+  /** Parts only: the catalog's own description of that part number (Renewal
+   *  parts carry one per number). Kept apart from `item` — the name is what
+   *  lines merge and search on. Absent on lines saved before it existed, and
+   *  on any part without a part number. */
+  description?: string;
   /** Trim only: the catalog item's category, needed by the trim order line. */
   category?: string;
   /** The `seq` of the work item this line was ordered for, so the compiled
