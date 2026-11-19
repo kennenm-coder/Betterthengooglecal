@@ -99,19 +99,53 @@ function publish(next: AuthState) {
   listeners.forEach((fn) => fn(next));
 }
 
+// The last roles this phone was given, so the bottom bar can draw the right
+// tabs the instant the app opens instead of starting from "no roles" and
+// popping tabs in a moment later. DRAWING ONLY: nothing that grants access
+// reads this, and pages, the server and the database all check for themselves.
+const ROLES_CACHE_KEY = "auth:lastRoles";
+
+function rememberRoles(roles: string[] | null) {
+  try {
+    if (roles) localStorage.setItem(ROLES_CACHE_KEY, JSON.stringify(roles));
+    else localStorage.removeItem(ROLES_CACHE_KEY);
+  } catch {
+    /* storage unavailable (private mode) — the bar just waits for the check */
+  }
+}
+
+/** Roles remembered from the last good check on this phone, or null. */
+export function readRememberedRoles(): string[] | null {
+  try {
+    const raw = localStorage.getItem(ROLES_CACHE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed.filter((r): r is string => typeof r === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchAuth(): Promise<void> {
   const supabase = createAuthClient();
   const {
     data: { user },
+    error: userError,
   } = await supabase.auth.getUser();
+  // "No session at all" is a real signed-out answer. Anything else (weak
+  // signal, the session renewing itself, a slow server) is a failed check, and
+  // a failed check must not be read as "this person has no roles" — that is
+  // what made tabs vanish for minutes at a time. Throwing keeps the last good
+  // answer (see loadAuth) and leaves it stale so the next screen retries.
+  if (userError && userError.name !== "AuthSessionMissingError") throw userError;
 
   let next: AuthState;
   if (user?.email) {
-    const { data } = await supabase
+    const { data, error: rolesError } = await supabase
       .from("allowed_emails")
       .select("name, role, roles, auto_cc")
       .eq("email", user.email.toLowerCase())
       .maybeSingle();
+    if (rolesError) throw rolesError;
 
     const roles = Array.isArray(data?.roles) && data.roles.length
       ? (data.roles as string[])
@@ -124,7 +158,8 @@ async function fetchAuth(): Promise<void> {
     // sched_crews, which they cannot read directly (019).
     let crewNames: string[] = [];
     if (roles.includes("installer") || roles.includes("installer-lead")) {
-      const { data: names } = await supabase.rpc("my_crew_names");
+      const { data: names, error: crewError } = await supabase.rpc("my_crew_names");
+      if (crewError) throw crewError;
       crewNames = Array.isArray(names) ? names : [];
     }
 
@@ -142,6 +177,7 @@ async function fetchAuth(): Promise<void> {
   }
 
   fetchedAt = Date.now();
+  rememberRoles(next.user ? next.roles : null);
   publish(next);
 }
 
@@ -153,8 +189,9 @@ function loadAuth(force = false): Promise<void> {
   }
   inflight = fetchAuth()
     .catch(() => {
-      // Keep whatever we had; a failed check must not blank the screen. If we
-      // never had an answer, stop the spinner so pages can fall through.
+      // Keep whatever we had; a failed check must not blank the screen (or the
+      // tab bar). fetchedAt is left alone, so the next screen to open retries.
+      // If we never had an answer, stop the spinner so pages can fall through.
       if (sharedState.loading) publish({ ...LOADING_STATE, loading: false });
     })
     .finally(() => {
@@ -171,6 +208,7 @@ function watchSignInOut() {
   createAuthClient().auth.onAuthStateChange((event, session) => {
     if (event === "SIGNED_OUT") {
       fetchedAt = Date.now();
+      rememberRoles(null);
       publish({ ...LOADING_STATE, loading: false });
     } else if (event === "SIGNED_IN" || event === "USER_UPDATED") {
       // The browser re-announces SIGNED_IN when a tab regains focus; only a

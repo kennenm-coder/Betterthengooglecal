@@ -1,4 +1,5 @@
-const CACHE_NAME = "rba-field-cal-v9";
+// v10: wipes the page contents earlier versions saved (see the RSC note below).
+const CACHE_NAME = "rba-field-cal-v10";
 const PRECACHE_URLS = ["/", "/search", "/admin", "/time-off", "/login", "/settings"];
 
 self.addEventListener("install", (event) => {
@@ -36,6 +37,20 @@ self.addEventListener("fetch", (event) => {
   // Never cache API calls — data must always come fresh from Supabase.
   // Caching these caused stale appointment times and missing data on mobile.
   if (url.pathname.startsWith("/api/")) return;
+
+  // Never cache a screen's contents fetched while switching tabs (Next.js
+  // "RSC" requests, e.g. "/?_rsc=..."). These aren't full page loads, so they
+  // used to fall through to the cache-first rule below and stick forever. After
+  // a deploy, Search -> Calendar could be handed the OLD Calendar, which points
+  // at code files the new deploy no longer has, and the app crashed with
+  // "Application error... reload".
+  if (
+    url.searchParams.has("_rsc") ||
+    event.request.headers.get("RSC") === "1" ||
+    event.request.headers.has("Next-Router-Prefetch")
+  ) {
+    return;
+  }
 
   // Navigation requests (HTML pages): network-first so auth and code changes always apply
   if (event.request.mode === "navigate") {

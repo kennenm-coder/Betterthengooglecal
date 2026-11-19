@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Calendar, Search, ScrollText, Wrench, BadgeDollarSign, ClipboardCheck } from "lucide-react";
-import { useAuth } from "@/hooks/useAuth";
+import { useLayoutEffect, useState } from "react";
+import { readRememberedRoles, useAuth } from "@/hooks/useAuth";
 import { useMfmNotices } from "@/hooks/useMfmNotices";
 import { useJobCompleteTodo } from "@/hooks/useJobCompleteTodo";
 import { canSeeWriteUps, isAdmin, isInstaller, isInstallerLead, isMfmSubmitter } from "@/lib/roles";
@@ -33,7 +34,19 @@ const NAV_ITEMS = [
 export default function BottomNav({ previewRoles }: { previewRoles?: string[] } = {}) {
   const pathname = usePathname();
   const auth = useAuth();
-  const roles = previewRoles ?? auth.roles;
+  // Until the sign-in check has a real answer, draw with the roles this phone
+  // was given last time; with neither, draw only the tabs everyone gets.
+  // Without this the bar opened as "no roles" and tabs popped in and out.
+  // Read in a layout effect (not during render) so the server-drawn page and
+  // the first phone-drawn frame match, and it still lands before paint.
+  const known = !auth.loading && !!auth.user;
+  const [remembered, setRemembered] = useState<string[] | null>(null);
+  useLayoutEffect(() => {
+    // Syncing from phone storage into React; intentional.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!known) setRemembered(readRememberedRoles());
+  }, [known]);
+  const roles: string[] | null = previewRoles ?? (known ? auth.roles : remembered);
   // Sheets payroll sent back that this lead still has to fix, plus installs
   // that reached their last day with no Job Complete filed yet.
   const { rejectedCount } = useMfmNotices();
@@ -41,11 +54,13 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
   const badgeCount = rejectedCount + jobCompleteDue;
   // Install leads (and admins) get the combined tab; a More for More Submitter
   // who isn't a lead still just sees More for More.
-  const submissions = isInstallerLead(roles) || isAdmin(roles);
+  const submissions = !!roles && (isInstallerLead(roles) || isAdmin(roles));
   // Hide the Write-Ups tab from regular members during the soft rollout.
-  const items = NAV_ITEMS.filter(
-    (i) =>
-      (!i.writeUps || canSeeWriteUps(roles)) &&
+  const items = NAV_ITEMS.filter((i) =>
+    !roles
+      ? // Roles not known yet: only the tabs nobody is ever denied.
+        !i.writeUps && !i.notInstaller && !i.installerLead
+      : (!i.writeUps || canSeeWriteUps(roles)) &&
       (!i.notInstaller || !(isInstaller(roles) || (isInstallerLead(roles) && !isAdmin(roles)))) &&
       // Admins always see everything, so they get it without the role.
       (!i.installerLead || isInstallerLead(roles) || isAdmin(roles) || isMfmSubmitter(roles))
