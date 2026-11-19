@@ -20,6 +20,7 @@ import { canUseInstallerChat } from "@/lib/roles";
 import BottomNav from "@/components/BottomNav";
 import InstallerChat from "@/components/InstallerChat";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
+import { fetchChatConnection, readChatCache, writeChatCache } from "@/lib/chat-cache";
 
 /**
  * Chat tab -- your own GroupMe conversations, inside Duck Force.
@@ -81,9 +82,30 @@ function ChatPageInner() {
   const { user, roles, loading: authLoading } = useAuth();
   const allowed = canUseInstallerChat(roles);
 
-  const [connection, setConnection] = useState<ConnectionState | null>(null);
+  // Start from what the bottom bar already fetched while the app was open
+  // (src/lib/chat-cache), so the list shows instantly; the effects below then
+  // refresh it quietly.
+  const [connection, setConnectionState] = useState<ConnectionState | null>(
+    () => readChatCache(user?.id)?.connection ?? null
+  );
   // null until the first answer, so the list doesn't flash "no chats".
-  const [chats, setChats] = useState<ChatRow[] | null>(null);
+  const [chats, setChatsState] = useState<ChatRow[] | null>(
+    () => readChatCache(user?.id)?.chats ?? null
+  );
+  const setConnection = useCallback(
+    (next: ConnectionState) => {
+      setConnectionState(next);
+      writeChatCache(user?.id, { connection: next });
+    },
+    [user?.id]
+  );
+  const setChats = useCallback(
+    (next: ChatRow[] | null) => {
+      setChatsState(next);
+      writeChatCache(user?.id, { chats: next });
+    },
+    [user?.id]
+  );
   const [selected, setSelected] = useState<ChatRow | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -118,13 +140,9 @@ function ChatPageInner() {
   }, [searchParams, router]);
 
   const loadConnection = useCallback(async () => {
-    const res = await fetch("/api/groupme/connection");
-    if (!res.ok) {
-      setConnection({ configured: false, connected: false, groupmeName: null });
-      return;
-    }
-    setConnection(await res.json());
-  }, []);
+    const next = await fetchChatConnection(user?.id);
+    if (next) setConnectionState(next);
+  }, [user?.id]);
 
   const loadChats = useCallback(async () => {
     try {
@@ -135,12 +153,14 @@ function ChatPageInner() {
     } catch {
       // Leave the last known list rather than clearing it.
     }
-  }, []);
+  }, [setChats]);
 
+  // Both at once on open, rather than waiting for one before asking the other.
   useEffect(() => {
     if (!allowed) return;
     loadConnection();
-  }, [allowed, loadConnection]);
+    loadChats();
+  }, [allowed, loadConnection, loadChats]);
 
   // Refresh the list whenever it is on screen -- including coming back from a
   // conversation, which should have just cleared its dot -- and every 30 s

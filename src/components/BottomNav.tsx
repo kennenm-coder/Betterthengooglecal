@@ -7,6 +7,7 @@ import { Calendar, Search, ScrollText, Wrench, BadgeDollarSign, ClipboardCheck, 
 import { readRememberedRoles, useAuth } from "@/hooks/useAuth";
 import { useMfmNotices } from "@/hooks/useMfmNotices";
 import { useJobCompleteTodo } from "@/hooks/useJobCompleteTodo";
+import { fetchChatConnection, readChatCache, writeChatCache } from "@/lib/chat-cache";
 import {
   canSeeWriteUps,
   canUseInstallerChat,
@@ -100,10 +101,16 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
   // Polled rather than pushed: the app runs on serverless hosting that cannot
   // hold a connection open. A minute is deliberately unhurried -- this is a
   // "someone is waiting on you" hint, not a live ticker.
+  //
+  // The same answer also fills the Chat tab's memory cache (src/lib/chat-cache),
+  // so the Chat list is already there when it's tapped instead of waiting on
+  // GroupMe. The connection state is fetched once up front for the same reason.
+  const userId = auth.user?.id ?? null;
   useEffect(() => {
     if (!pollChat) return;
 
     let cancelled = false;
+    if (!readChatCache(userId)?.connection) fetchChatConnection(userId);
     const check = async () => {
       if (document.visibilityState !== "visible") return;
       try {
@@ -111,6 +118,7 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
         if (!res.ok) return;
         const body = await res.json();
         const total = Number(body.total) || 0;
+        if (Array.isArray(body.chats)) writeChatCache(userId, { chats: body.chats });
         if (!cancelled) setChatUnread(total);
         setIconBadge(total);
       } catch {
@@ -129,7 +137,7 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
       clearInterval(timer);
       document.removeEventListener("visibilitychange", check);
     };
-  }, [pollChat, pathname]);
+  }, [pollChat, pathname, userId]);
 
   // Hide the Write-Ups tab from regular members during the soft rollout, and
   // the Chat tab from everyone but admins during the GroupMe pilot.
