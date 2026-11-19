@@ -428,7 +428,13 @@ checks(migration, feature, verdict, checked) as (values
         and exists(select 1 from tbl where k = 'notifications')
         and exists(select 1 from pol where t = 'notifications' and p = 'own_read_notifications')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'push_subscriptions and notifications tables AND the own-rows read policy')
+  'push_subscriptions and notifications tables AND the own-rows read policy'),
+
+ ('064', 'Job Alert notes (5-workday reminder)',
+  case when exists(select 1 from tbl where k = 'job_alerts')
+        and exists(select 1 from pol where t = 'job_alerts' and p = 'fieldmgr_insert_own_job_alerts')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'job_alerts table AND the own-insert policy')
 )
 select migration, feature, verdict, checked
 from checks

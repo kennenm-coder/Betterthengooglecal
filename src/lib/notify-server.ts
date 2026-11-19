@@ -39,7 +39,8 @@ export function pushConfigured(): boolean {
 export type NotificationKind =
   | "test"
   | "writeup_rep_submitted"
-  | "writeup_rep_edited";
+  | "writeup_rep_edited"
+  | "job_alert";
 
 export interface NotifyInput {
   /** Who it's for (login emails). Duplicates and blanks are dropped. */
