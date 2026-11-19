@@ -146,16 +146,34 @@ export interface FamilyMatcher {
  * types it reports `empty`, and the caller leaves the catalog alone — a filter
  * that narrows to nothing is worse than no filter.
  */
+/**
+ * Which kind of patio door a text names: a gliding door or a hinged one. Null
+ * when it says neither (a plain "Patio Door"), which then matches both. The IQ
+ * parts are filed per door model ("Patio Door - Frenchwood Hinged Inswing (400
+ * Series)"), so without this a "Gliding Patio Door" unit was offered the
+ * hinged doors' parts too (Kennen, 2026-11-19: "ok yes make the change").
+ */
+export function patioKind(raw: string | null | undefined): "gliding" | "hinged" | null {
+  const t = clean(raw);
+  const gliding = /\b(gliding|glider|sliding|slider)\b|narroline|perma[\s-]?shield/.test(t);
+  const hinged = /\b(hinged|inswing|outswing|swinging|french\s+door)\b/.test(t);
+  return gliding === hinged ? null : gliding ? "gliding" : "hinged";
+}
+
 export function familyMatcher(unitTypes: (string | null | undefined)[]): FamilyMatcher {
   const families = new Set<string>();
   const words = new Set<string>();
+  // The patio door kinds among the units; "any" when a patio unit names no kind.
+  const patioKinds = new Set<string>();
   let anyType = false;
   for (const raw of unitTypes) {
     const t = clean(raw);
     if (!t) continue;
     anyType = true;
-    for (const f of productFamilies(t)) families.add(f);
+    const fams = productFamilies(t);
+    for (const f of fams) families.add(f);
     for (const w of significantWords(t)) words.add(w);
+    if (fams.includes("patio door")) patioKinds.add(patioKind(t) ?? "any");
   }
   const empty = !anyType;
   const iqOnly = families.size > 0 && [...families].every((f) => IQ_FAMILIES.has(f));
@@ -168,7 +186,13 @@ export function familyMatcher(unitTypes: (string | null | undefined)[]): FamilyM
       // install bucket not to units that are all IQ products (patio / storm doors).
       if (isUniversalType(type)) return !(iqOnly && isInstallBucket(type));
       const theirs = productFamilies(type);
-      if (theirs.some((f) => families.has(f))) return true;
+      if (theirs.some((f) => families.has(f))) {
+        // A gliding patio door's parts are not a hinged one's, and the other way round.
+        const onlyPatio = !theirs.some((f) => f !== "patio door" && families.has(f));
+        const kind = patioKind(type);
+        if (onlyPatio && kind && !patioKinds.has("any") && !patioKinds.has(kind)) return false;
+        return true;
+      }
       // Unrecognised on either side: share a significant word and it counts.
       // "Woodwright" against a "Woodwright Double Hung" unit still lands.
       if (theirs.length === 0 || families.size === 0) {
