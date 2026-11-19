@@ -10,7 +10,11 @@ import { searchOrders, searchMaterialJobs } from "@/lib/search";
 import { lastFirst, extractCity, crewsForDate } from "@/lib/format-utils";
 import { typeColor, formatTime, formatDateShort } from "@/lib/calendar-utils";
 import { MaterialJobData, WorkOrder } from "@/lib/types";
-import { Search, Loader2, X, Database, MapPin, FileText, ClipboardList, Package } from "lucide-react";
+import { Search, Loader2, X, Database, MapPin, FileText, ClipboardList, Package, AlarmClock } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { canDoFieldWork } from "@/lib/roles";
+import { appointmentDate, reminderStatus, todayAtOffice } from "@/lib/job-alert-dates";
+import { fetchAllJobAlerts, fetchJobAlertJobs, type JobAlert, type JobAlertJobLite } from "@/lib/job-alerts-store";
 import { useRouter } from "next/navigation";
 import { isSameDay, parseISO } from "date-fns";
 
@@ -20,7 +24,11 @@ const SEARCH_STATE = "searchQ";
 
 export default function SearchPage() {
   // Use material jobs already loaded by DataProvider — no extra fetch.
-  const { orders, measureOrders, materialJobs, loading, loadingBackground } = useData();
+  const { orders, measureOrders, materialJobs, loading, loadingBackground, ensureDateLoaded } = useData();
+  const { roles } = useAuth();
+  // Field managers + admins: the Job Alerts quick list under the search bar.
+  const canSeeJobAlerts = canDoFieldWork(roles);
+  const [showAlerts, setShowAlerts] = useState(false);
   const jobsLoading = loadingBackground && materialJobs.length === 0;
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -125,7 +133,11 @@ export default function SearchPage() {
             ref={inputRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              // Typing means searching again, not the Job Alerts list.
+              if (showAlerts) setShowAlerts(false);
+            }}
             placeholder="Search by name, WO#, address, or order#..."
             className="w-full pl-10 pr-10 py-2.5 rounded-lg border border-border bg-surface text-sm placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
           />
@@ -138,7 +150,25 @@ export default function SearchPage() {
             </button>
           )}
         </div>
-        {trimmed.length >= 2 && (
+        {canSeeJobAlerts && (
+          <div className="mt-2">
+            <button
+              onClick={() => {
+                setShowAlerts((v) => !v);
+                setQuery("");
+              }}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                showAlerts
+                  ? "bg-amber-500 border-amber-500 text-white"
+                  : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+              }`}
+            >
+              <AlarmClock className="w-3.5 h-3.5" />
+              Job Alerts
+            </button>
+          </div>
+        )}
+        {!showAlerts && trimmed.length >= 2 && (
           <p className="text-xs text-muted mt-1.5 px-1">
             {totalResults} result{totalResults !== 1 ? "s" : ""}
             {jobResults.length > 0 && (
@@ -151,7 +181,9 @@ export default function SearchPage() {
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        {loading || jobsLoading ? (
+        {showAlerts && canSeeJobAlerts ? (
+          <JobAlertsView orders={searchable} ensureDateLoaded={ensureDateLoaded} onOpen={setSelectedOrder} />
+        ) : loading || jobsLoading ? (
           <div className="flex items-center justify-center h-40">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
           </div>
@@ -481,6 +513,121 @@ function MaterialJobSheet({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ── Job Alerts: every upcoming job with a note, soonest first ── */
+
+interface AlertedJob {
+  id: string;
+  appt: string;
+  lite: JobAlertJobLite | null;
+  notes: JobAlert[];
+}
+
+/**
+ * Field managers' quick list under the search bar: every job with a Job Alert
+ * note whose appointment is today or later (Kennen: upcoming only, no past
+ * ones), soonest first. Each shows its notes with who wrote them and when the
+ * buzzes go out; tapping opens the job card. Jobs in months the calendar
+ * hasn't loaded yet are loaded on the way so they can be opened.
+ */
+function JobAlertsView({
+  orders,
+  ensureDateLoaded,
+  onOpen,
+}: {
+  orders: WorkOrder[];
+  ensureDateLoaded: (date: Date) => void;
+  onOpen: (order: WorkOrder) => void;
+}) {
+  const [jobs, setJobs] = useState<AlertedJob[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const notes = await fetchAllJobAlerts();
+      const byJob = new Map<string, JobAlert[]>();
+      for (const n of notes) byJob.set(n.workOrderId, [...(byJob.get(n.workOrderId) || []), n]);
+      const lite = await fetchJobAlertJobs([...byJob.keys()]);
+      if (cancelled) return;
+      const today = todayAtOffice();
+      const upcoming: AlertedJob[] = [];
+      const months = new Set<string>();
+      for (const [id, n] of byJob) {
+        const appt = appointmentDate(lite.get(id)?.scheduledStart);
+        if (!appt || appt < today) continue;
+        upcoming.push({ id, appt, notes: n, lite: lite.get(id) || null });
+        if (!months.has(appt.slice(0, 7))) {
+          months.add(appt.slice(0, 7));
+          ensureDateLoaded(parseISO(appt));
+        }
+      }
+      upcoming.sort((a, b) => a.appt.localeCompare(b.appt));
+      setJobs(upcoming);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ensureDateLoaded]);
+
+  if (jobs === null) {
+    return (
+      <div className="flex items-center justify-center h-40">
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+  if (jobs.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 text-muted text-sm px-6 text-center">
+        <AlarmClock className="w-8 h-8 mb-2 opacity-40" />
+        <p>No upcoming jobs have a Job Alert. Add one from the alarm clock button on any job card.</p>
+      </div>
+    );
+  }
+
+  const byId = new Map(orders.map((o) => [o.id, o]));
+  return (
+    <div className="p-3 space-y-3">
+      <h3 className="text-xs font-semibold uppercase text-muted px-1">
+        Upcoming Job Alerts ({jobs.length})
+      </h3>
+      {jobs.map((j) => {
+        const full = byId.get(j.id);
+        const sent5 = j.notes.find((n) => n.sent5ForDate === j.appt)?.sent5ForDate ?? null;
+        const sent1 = j.notes.find((n) => n.sent1ForDate === j.appt)?.sent1ForDate ?? null;
+        return (
+          <div key={j.id} className="space-y-1">
+            {full ? (
+              <SearchOrderTile order={full} onTap={() => onOpen(full)} />
+            ) : (
+              <div className="rounded-lg border border-border bg-surface px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-sm truncate">
+                    {j.lite ? lastFirst(j.lite.customerName) : `Work order ${j.id}`}
+                  </span>
+                  <span className="text-xs text-muted whitespace-nowrap">
+                    {j.lite?.scheduledStart
+                      ? `${formatDateShort(j.lite.scheduledStart)} ${formatTime(j.lite.scheduledStart)}`
+                      : ""}
+                  </span>
+                </div>
+                <p className="text-xs text-muted mt-0.5">{j.lite?.workOrderType} · loading the job…</p>
+              </div>
+            )}
+            <div className="ml-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 space-y-1">
+              {j.notes.map((n) => (
+                <p key={n.id} className="text-sm whitespace-pre-wrap">
+                  <span className="font-semibold">{n.createdByName}:</span> {n.note}
+                </p>
+              ))}
+              <p className="text-[11px] text-muted">{reminderStatus(j.appt, sent5, sent1)}</p>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

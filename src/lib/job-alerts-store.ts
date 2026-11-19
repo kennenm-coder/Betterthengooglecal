@@ -80,3 +80,46 @@ export async function deleteJobAlert(id: string): Promise<boolean> {
   const { error } = await supabase.from("job_alerts").delete().eq("id", id);
   return !error;
 }
+
+/** Every Job Alert note (field managers / admins can read them all). */
+export async function fetchAllJobAlerts(): Promise<JobAlert[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("job_alerts")
+    .select("id, work_order_id, note, created_by, created_by_name, updated_at, sent5_for_date, sent1_for_date")
+    .order("created_at", { ascending: true });
+  if (error || !data) return [];
+  return (data as JobAlertRow[]).map(toAlert);
+}
+
+/** Just enough of each job to list it (and know which month to load). */
+export interface JobAlertJobLite {
+  id: string;
+  customerName: string;
+  address: string;
+  workOrderType: string;
+  scheduledStart: string | null;
+}
+
+export async function fetchJobAlertJobs(ids: string[]): Promise<Map<string, JobAlertJobLite>> {
+  const out = new Map<string, JobAlertJobLite>();
+  const supabase = getSupabase();
+  if (!supabase || ids.length === 0) return out;
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await supabase
+      .from("work_orders_visible")
+      .select("id, customer_name, address, work_order_type, scheduled_start")
+      .in("id", ids.slice(i, i + 200));
+    for (const r of (data || []) as Record<string, string | null>[]) {
+      out.set(String(r.id), {
+        id: String(r.id),
+        customerName: r.customer_name || "",
+        address: r.address || "",
+        workOrderType: r.work_order_type || "",
+        scheduledStart: r.scheduled_start,
+      });
+    }
+  }
+  return out;
+}
