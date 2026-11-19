@@ -45,6 +45,7 @@ import { describeParts } from "@/lib/purchase-orders";
 import CrewWorkChecklist from "./CrewWorkChecklist";
 import WriteUpCompletedBy from "./WriteUpCompletedBy";
 import JobAlertButton from "./JobAlertButton";
+import JobAlertField from "./JobAlertField";
 
 function isValidHttpUrl(s: string): boolean {
   try {
@@ -579,6 +580,11 @@ export default function JobCard({
               </div>
             )}
           </div>
+
+          {/* Job Alert notes, read-only, right above Install Notes. Appears only
+              when the job has notes; edit them from the alarm-clock button in
+              the header. Field managers + admins only. */}
+          {canDoFieldWork(roles) && <JobAlertField order={order} />}
 
           {/* Install Notes — always visible when material job is paired */}
           {mat?.job.installNotes?.trim() && (

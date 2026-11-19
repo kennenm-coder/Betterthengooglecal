@@ -440,7 +440,13 @@ checks(migration, feature, verdict, checked) as (values
   case when exists(select 1 from col where k = 'job_alerts.sent5_for_date')
         and exists(select 1 from col where k = 'job_alerts.sent1_for_date')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'job_alerts.sent5_for_date AND sent1_for_date')
+  'job_alerts.sent5_for_date AND sent1_for_date'),
+
+ ('066', 'Job Alert several notes per person per job',
+  case when not exists(select 1 from idx where k = 'job_alerts_work_order_id_created_by_key')
+        and exists(select 1 from tbl where k = 'job_alerts')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'the one-note-per-person unique index on job_alerts is gone')
 )
 select migration, feature, verdict, checked
 from checks

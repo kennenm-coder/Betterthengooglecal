@@ -3,30 +3,24 @@
 import { useEffect, useState } from "react";
 import { AlarmClock, X } from "lucide-react";
 import { useBackClose } from "@/hooks/useBackClose";
-import { fetchJobAlerts } from "@/lib/job-alerts-store";
+import { watchJobAlerts } from "@/lib/job-alerts-store";
 import JobAlertBox from "./JobAlertBox";
 import type { WorkOrder } from "@/lib/types";
 
 /**
- * The Job Alert button in the job card's header row — where Log Action used
- * to be. Field managers and admins only (the caller gates it), on every job
- * card including Tech Measures. The number on it is how many notes the job
- * has, so a job with notes stands out without opening anything. Tapping it
- * opens the Job Alert pop-up (JobAlertBox).
+ * The Job Alert button in the job card's header row — where Log Action used to
+ * be. Field managers and admins only (the caller gates it), on every job card
+ * including Tech Measures. The number on it is how many notes the job has, so
+ * a job with notes stands out without opening anything. Tapping it opens the
+ * pop-up: everything already on the job, edit/delete your own, add a new one.
+ * The same notes also show as a read-only field above Install Notes on the card
+ * (JobAlertField).
  */
 export default function JobAlertButton({ order }: { order: WorkOrder }) {
   const [open, setOpen] = useState(false);
   const [count, setCount] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchJobAlerts(order.id).then((rows) => {
-      if (!cancelled) setCount(rows.length);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [order.id]);
+  useEffect(() => watchJobAlerts(order.id, (rows) => setCount(rows.length)), [order.id]);
 
   return (
     <>
@@ -43,20 +37,12 @@ export default function JobAlertButton({ order }: { order: WorkOrder }) {
           </span>
         )}
       </button>
-      {open && <JobAlertPopup order={order} onClose={() => setOpen(false)} onCount={setCount} />}
+      {open && <JobAlertPopup order={order} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
-function JobAlertPopup({
-  order,
-  onClose,
-  onCount,
-}: {
-  order: WorkOrder;
-  onClose: () => void;
-  onCount: (n: number) => void;
-}) {
+function JobAlertPopup({ order, onClose }: { order: WorkOrder; onClose: () => void }) {
   // Android back closes the pop-up, not the app.
   useBackClose(onClose);
   return (
@@ -75,7 +61,7 @@ function JobAlertPopup({
             <X className="w-5 h-5" />
           </button>
         </div>
-        <JobAlertBox order={order} onCount={onCount} bare />
+        <JobAlertBox order={order} />
       </div>
     </div>
   );
