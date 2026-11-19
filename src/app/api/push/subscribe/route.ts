@@ -18,7 +18,7 @@ function str(v: unknown, max: number): string {
 
 export async function POST(req: Request) {
   const { user, error } = await requireAuth();
-  if (error || !user) return error;
+  if (error || !user) return error ?? NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
   const body = await req.json().catch(() => null);
   const endpoint = str(body?.endpoint, 1000);
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   const { user, error } = await requireAuth();
-  if (error || !user) return error;
+  if (error || !user) return error ?? NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
   const body = await req.json().catch(() => null);
   const endpoint = str(body?.endpoint, 1000);

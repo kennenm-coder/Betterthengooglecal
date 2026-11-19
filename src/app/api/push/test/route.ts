@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST() {
   const { user, error } = await requireAuth();
-  if (error || !user) return error;
+  if (error || !user) return error ?? NextResponse.json({ error: "Not signed in." }, { status: 401 });
 
   const res = await notify({
     emails: [user.email],

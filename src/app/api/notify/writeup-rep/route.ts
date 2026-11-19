@@ -27,7 +27,7 @@ function shortName(email: string): string {
 
 export async function POST(req: Request) {
   const { user, error } = await requireAuth();
-  if (error || !user) return error;
+  if (error || !user) return error ?? NextResponse.json({ error: "Not signed in." }, { status: 401 });
   if (!isWriteUpRepOnly(user.roles)) return NextResponse.json({ ok: true, skipped: "not a rep" });
 
   const body = await req.json().catch(() => null);
