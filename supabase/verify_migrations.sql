@@ -451,7 +451,13 @@ checks(migration, feature, verdict, checked) as (values
  ('067', 'GroupMe chat: each person picks their own groups',
   case when exists(select 1 from tbl where k = 'groupme_chat_picks')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'groupme_chat_picks table')
+  'groupme_chat_picks table'),
+
+ ('068', 'GroupMe chat: phone buzz for new messages',
+  case when exists(select 1 from col where k = 'groupme_tokens.notify_messages')
+        and exists(select 1 from col where k = 'groupme_chat_picks.last_notified_message_id')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'groupme_tokens.notify_messages AND groupme_chat_picks.last_notified_message_id')
 )
 select migration, feature, verdict, checked
 from checks

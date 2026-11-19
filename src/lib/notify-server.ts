@@ -40,7 +40,8 @@ export type NotificationKind =
   | "test"
   | "writeup_rep_submitted"
   | "writeup_rep_edited"
-  | "job_alert";
+  | "job_alert"
+  | "groupme_message";
 
 export interface NotifyInput {
   /** Who it's for (login emails). Duplicates and blanks are dropped. */
@@ -53,6 +54,9 @@ export interface NotifyInput {
   /** Phones replace an older notification with the same tag instead of
    *  stacking them — e.g. one per job, so five edits = one buzz on screen. */
   tag?: string;
+  /** Buzz phones only; don't save it to the bell's history. For GroupMe
+   *  messages, whose text the GroupMe licence (§4.5) says we must not keep. */
+  pushOnly?: boolean;
 }
 
 export interface NotifyResult {
@@ -87,18 +91,20 @@ export async function notify(input: NotifyInput): Promise<NotifyResult> {
   const admin = getAdminClient();
 
   // 1. The bell. Saved first: a push that fails still leaves the history.
-  const { error: insertError } = await admin.from("notifications").insert(
-    emails.map((email) => ({
-      email,
-      app: APP,
-      kind: input.kind,
-      title: input.title,
-      body: input.body,
-      url: input.url || null,
-    }))
-  );
-  if (insertError) console.error("notify: saving to the bell failed:", insertError.message);
-  else result.saved = emails.length;
+  if (!input.pushOnly) {
+    const { error: insertError } = await admin.from("notifications").insert(
+      emails.map((email) => ({
+        email,
+        app: APP,
+        kind: input.kind,
+        title: input.title,
+        body: input.body,
+        url: input.url || null,
+      }))
+    );
+    if (insertError) console.error("notify: saving to the bell failed:", insertError.message);
+    else result.saved = emails.length;
+  }
 
   // 2. The buzz.
   if (!result.pushConfigured) return result;

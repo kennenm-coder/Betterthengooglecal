@@ -238,6 +238,8 @@ export interface StoredConnection {
   groupmeUserId: string | null;
   groupmeName: string | null;
   connectedAt: string;
+  /** Buzz this person's phone for new messages in their chats (migration 068). */
+  notifyMessages: boolean;
 }
 
 /** The decrypted token for this app user, or null if they haven't connected. */
@@ -278,7 +280,7 @@ export async function getConnection(
   const admin = getAdminClient();
   const { data } = await admin
     .from("groupme_tokens")
-    .select("groupme_user_id, groupme_name, connected_at")
+    .select("groupme_user_id, groupme_name, connected_at, notify_messages")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -287,7 +289,19 @@ export async function getConnection(
     groupmeUserId: data.groupme_user_id,
     groupmeName: data.groupme_name,
     connectedAt: data.connected_at,
+    // undefined before migration 068 -- treat as on, the column's default.
+    notifyMessages: data.notify_messages !== false,
   };
+}
+
+/** Turn this person's message buzzes on or off. */
+export async function setNotifyMessages(userId: string, on: boolean): Promise<void> {
+  const admin = getAdminClient();
+  const { error } = await admin
+    .from("groupme_tokens")
+    .update({ notify_messages: on })
+    .eq("user_id", userId);
+  if (error) throw new Error(`Could not save that setting: ${error.message}`);
 }
 
 export async function storeToken(

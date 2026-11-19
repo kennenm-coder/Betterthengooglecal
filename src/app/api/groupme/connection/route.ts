@@ -4,6 +4,7 @@ import {
   deleteToken,
   getConnection,
   getMe,
+  setNotifyMessages,
   storeToken,
   GroupMeError,
 } from "@/lib/groupme";
@@ -31,6 +32,7 @@ export async function GET() {
     connected: !!connection,
     groupmeName: connection?.groupmeName ?? null,
     connectedAt: connection?.connectedAt ?? null,
+    notifyMessages: connection?.notifyMessages ?? true,
   });
 }
 
@@ -113,4 +115,30 @@ export async function DELETE() {
   // Only this person's own connection. Everyone else stays connected.
   await deleteToken(user!.id);
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * PATCH { notifyMessages: boolean }: turn this person's phone buzzes for new
+ * GroupMe messages on or off (the once-a-minute check, /api/cron/groupme).
+ */
+export async function PATCH(request: Request) {
+  const { user, error: authError } = await requireRole("admin");
+  if (authError) return authError;
+
+  let payload: { notifyMessages?: unknown };
+  try {
+    payload = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+  if (typeof payload.notifyMessages !== "boolean") {
+    return NextResponse.json({ error: "Missing notifyMessages." }, { status: 400 });
+  }
+
+  try {
+    await setNotifyMessages(user!.id, payload.notifyMessages);
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true, notifyMessages: payload.notifyMessages });
 }

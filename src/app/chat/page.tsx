@@ -3,6 +3,8 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  Bell,
+  BellOff,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -37,6 +39,8 @@ interface ConnectionState {
   configured: boolean;
   connected: boolean;
   groupmeName: string | null;
+  /** Buzz this person's phone for new messages in their chosen chats. */
+  notifyMessages?: boolean;
 }
 
 interface ChatRow {
@@ -228,6 +232,21 @@ function ChatPageInner() {
     }
   }
 
+  async function toggleBuzz() {
+    if (!connection) return;
+    const next = !(connection.notifyMessages ?? true);
+    setConnection({ ...connection, notifyMessages: next });
+    const res = await fetch("/api/groupme/connection", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notifyMessages: next }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      setConnection({ ...connection, notifyMessages: !next });
+      setNotice("Couldn't save that setting. Try again.");
+    }
+  }
+
   async function disconnect() {
     await fetch("/api/groupme/connection", { method: "DELETE" });
     setGroups(null);
@@ -373,10 +392,33 @@ function ChatPageInner() {
             </button>
           )}
         </div>
-        {connection?.connected && connection.groupmeName && (
-          <p className="text-xs text-muted mt-1">
-            Connected to GroupMe as {connection.groupmeName}
-          </p>
+        {connection?.connected && (
+          <div className="flex items-center justify-between gap-2 mt-1">
+            <p className="text-xs text-muted truncate">
+              {connection.groupmeName
+                ? `Connected to GroupMe as ${connection.groupmeName}`
+                : "Connected to GroupMe"}
+            </p>
+            {/* Once-a-minute check: one buzz per chat with new messages.
+                Needs this device's notifications on (Settings). */}
+            <button
+              onClick={toggleBuzz}
+              className="text-xs text-muted hover:text-foreground inline-flex items-center gap-1 shrink-0"
+              aria-pressed={connection.notifyMessages !== false}
+            >
+              {connection.notifyMessages !== false ? (
+                <>
+                  <Bell className="w-3.5 h-3.5 text-primary" />
+                  Buzz me: on
+                </>
+              ) : (
+                <>
+                  <BellOff className="w-3.5 h-3.5" />
+                  Buzz me: off
+                </>
+              )}
+            </button>
+          </div>
         )}
       </header>
 
