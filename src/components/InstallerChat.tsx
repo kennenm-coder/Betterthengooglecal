@@ -6,7 +6,7 @@ import { format, isSameYear, isToday, isYesterday } from "date-fns";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
 
 /**
- * One installer's GroupMe conversation, read and written live.
+ * One GroupMe conversation (a group the person chose), read and written live.
  *
  * Nothing is cached in our database -- every message on screen came from
  * GroupMe just now, and anything sent goes straight into the installer's real
@@ -172,10 +172,14 @@ function Avatar({ name, url }: { name: string; url: string | null }) {
 }
 
 export default function InstallerChat({
-  installerName,
+  groupId,
+  title: installerName,
   onBack,
 }: {
-  installerName: string;
+  /** The GroupMe group to show -- one the person ticked under Choose chats. */
+  groupId: string;
+  /** Shown in the header and the composer placeholder (the group's name). */
+  title: string;
   onBack: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -209,7 +213,7 @@ export default function InstallerChat({
 
   const load = useCallback(
     async (opts: { sinceId?: string | null } = {}) => {
-      const params = new URLSearchParams({ installer: installerName });
+      const params = new URLSearchParams({ group: groupId });
       if (opts.sinceId) params.set("since_id", opts.sinceId);
 
       const res = await fetch(`/api/groupme/messages?${params}`);
@@ -217,7 +221,7 @@ export default function InstallerChat({
       if (!res.ok) throw new Error(body.error || "Could not load messages.");
       return (body.messages || []) as ChatMessage[];
     },
-    [installerName]
+    [groupId]
   );
 
   // First load.
@@ -250,7 +254,7 @@ export default function InstallerChat({
     setMembers([]);
     setPicked([]);
 
-    fetch(`/api/groupme/members?installer=${encodeURIComponent(installerName)}`)
+    fetch(`/api/groupme/members?group=${encodeURIComponent(groupId)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
         if (!cancelled && body?.members) setMembers(body.members as Member[]);
@@ -260,7 +264,7 @@ export default function InstallerChat({
     return () => {
       cancelled = true;
     };
-  }, [installerName]);
+  }, [groupId]);
 
   // Poll for replies while this view is open and the tab is visible.
   useEffect(() => {
@@ -296,11 +300,11 @@ export default function InstallerChat({
     fetch("/api/groupme/read", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ installer: installerName, messageId: newestId }),
+      body: JSON.stringify({ group: groupId, messageId: newestId }),
     }).catch(() => {
       // Worst case the badge lingers until the next time they open it.
     });
-  }, [installerName, newestId]);
+  }, [groupId, newestId]);
 
   // Keep the newest message in view when the reader is already at the bottom.
   useEffect(() => {
@@ -324,7 +328,7 @@ export default function InstallerChat({
 
     try {
       const params = new URLSearchParams({
-        installer: installerName,
+        group: groupId,
         before_id: oldestId,
       });
       const res = await fetch(`/api/groupme/messages?${params}`);
@@ -403,7 +407,7 @@ export default function InstallerChat({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          installer: installerName,
+          group: groupId,
           text,
           mentions: activeMentions,
         }),

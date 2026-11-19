@@ -5,18 +5,16 @@ import { chatContext, groupmeErrorResponse } from "@/lib/groupme-route";
 export const runtime = "nodejs";
 
 /**
- * Who is in one linked group, so the composer can offer @-mentions.
- *
- * Same rule as the other routes: the client sends a chat NAME, the group is
- * resolved here, and the signed-in person's own account must be in it.
+ * Who is in one of the person's chosen groups, so the composer can offer
+ * @-mentions. chatContext checks they ticked it and are in it.
  */
 export async function GET(request: Request) {
-  const installer = new URL(request.url).searchParams.get("installer")?.trim();
-  if (!installer) {
-    return NextResponse.json({ error: "Missing installer." }, { status: 400 });
+  const group = new URL(request.url).searchParams.get("group")?.trim();
+  if (!group) {
+    return NextResponse.json({ error: "Missing group." }, { status: 400 });
   }
 
-  const ctx = await chatContext(installer);
+  const ctx = await chatContext(group);
   if (!ctx.ok) return ctx.response;
 
   try {

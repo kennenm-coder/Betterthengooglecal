@@ -446,7 +446,12 @@ checks(migration, feature, verdict, checked) as (values
   case when not exists(select 1 from idx where k = 'job_alerts_work_order_id_created_by_key')
         and exists(select 1 from tbl where k = 'job_alerts')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'the one-note-per-person unique index on job_alerts is gone')
+  'the one-note-per-person unique index on job_alerts is gone'),
+
+ ('067', 'GroupMe chat: each person picks their own groups',
+  case when exists(select 1 from tbl where k = 'groupme_chat_picks')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'groupme_chat_picks table')
 )
 select migration, feature, verdict, checked
 from checks

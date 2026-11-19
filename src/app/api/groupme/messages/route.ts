@@ -5,16 +5,12 @@ import { chatContext, groupmeErrorResponse } from "@/lib/groupme-route";
 export const runtime = "nodejs";
 
 /**
- * Messages for one linked GroupMe group, read with the signed-in person's own
- * GroupMe account.
- *
- * The client sends a chat NAME, never a group id -- the mapping is resolved
- * server-side, so the browser never learns a group id and cannot ask for a
- * conversation that isn't linked. That is what keeps someone's personal
- * GroupMe groups out of this app even though their token can reach them.
+ * Messages for one of the person's chosen GroupMe groups, read with their own
+ * GroupMe account. chatContext refuses any group they didn't tick, so their
+ * other GroupMe groups stay out of this app.
  *
  * Query:
- *   installer   required, e.g. "Tim Fitzpatrick"
+ *   group       required, the GroupMe group id
  *   before_id   load older messages (scrolling back)
  *   since_id    load only what's new (polling for replies)
  *
@@ -37,12 +33,12 @@ function shape(m: GroupMeMessage, myGroupMeId: string | null) {
 
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
-  const installer = params.get("installer")?.trim();
-  if (!installer) {
-    return NextResponse.json({ error: "Missing installer." }, { status: 400 });
+  const group = params.get("group")?.trim();
+  if (!group) {
+    return NextResponse.json({ error: "Missing group." }, { status: 400 });
   }
 
-  const ctx = await chatContext(installer);
+  const ctx = await chatContext(group);
   if (!ctx.ok) return ctx.response;
 
   try {

@@ -3,8 +3,9 @@ import { requireRole, type AuthenticatedUser } from "@/lib/auth";
 import {
   getMyGroupIndex,
   getTokenForUser,
-  resolveGroupId,
+  isPicked,
   GroupMeError,
+  type MyGroup,
 } from "@/lib/groupme";
 
 /**
@@ -15,9 +16,9 @@ import {
  *      canUseInstallerChat() in src/lib/roles.ts).
  *   2. Has connected THEIR OWN GroupMe account. 428 tells the page to show the
  *      connect screen.
- *   3. (When a chat is named) the chat is linked to a group, and that person's
- *      own account is actually IN the group. The browser only ever sends a chat
- *      NAME; the group id is looked up here and never leaves the server.
+ *   3. (When a group is named) the person ticked that group to show in Chat,
+ *      and their own GroupMe account is actually IN it. So nothing can be read
+ *      or posted outside the chats they chose.
  *
  * Returns either everything the route needs, or a ready-made error response.
  */
@@ -27,12 +28,12 @@ export type ChatContext =
       user: AuthenticatedUser;
       token: string;
       groupId: string | null;
-      /** This user's groups -> newest message id. See getMyGroupIndex. */
-      myGroups: Map<string, string>;
+      /** This user's groups -> name + newest message. See getMyGroupIndex. */
+      myGroups: Map<string, MyGroup>;
     }
   | { ok: false; response: NextResponse };
 
-export async function chatContext(chatName?: string): Promise<ChatContext> {
+export async function chatContext(groupId?: string): Promise<ChatContext> {
   const { user, error } = await requireRole("admin");
   if (error) return { ok: false, response: error };
 
@@ -47,23 +48,22 @@ export async function chatContext(chatName?: string): Promise<ChatContext> {
     };
   }
 
-  let myGroups: Map<string, string>;
+  let myGroups: Map<string, MyGroup>;
   try {
     myGroups = await getMyGroupIndex(user!.id, token);
   } catch (e) {
     return { ok: false, response: groupmeErrorResponse(e, "Could not reach GroupMe.") };
   }
 
-  if (chatName === undefined) {
+  if (groupId === undefined) {
     return { ok: true, user: user!, token, groupId: null, myGroups };
   }
 
-  const groupId = await resolveGroupId(chatName);
-  if (!groupId) {
+  if (!(await isPicked(user!.id, groupId))) {
     return {
       ok: false,
       response: NextResponse.json(
-        { error: `No GroupMe group is linked to ${chatName} yet.` },
+        { error: "That chat isn't one of yours. Choose it under Choose chats first." },
         { status: 404 }
       ),
     };
@@ -72,9 +72,7 @@ export async function chatContext(chatName?: string): Promise<ChatContext> {
     return {
       ok: false,
       response: NextResponse.json(
-        {
-          error: `Your GroupMe account isn't in the ${chatName} group. Ask someone in it to add you.`,
-        },
+        { error: "Your GroupMe account isn't in that group any more." },
         { status: 403 }
       ),
     };

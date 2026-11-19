@@ -3,41 +3,34 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
-  Link2,
+  ListChecks,
   Loader2,
   MessageCircle,
+  Search,
   Unlink,
 } from "lucide-react";
-import { useData } from "@/components/DataProvider";
+import { formatDistanceToNowStrict } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
 import { canUseInstallerChat } from "@/lib/roles";
-import { crewsForDate } from "@/lib/format-utils";
 import BottomNav from "@/components/BottomNav";
 import InstallerChat from "@/components/InstallerChat";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
-import {
-  deleteInstallerChat,
-  fetchInstallerChats,
-  upsertInstallerChat,
-  type InstallerChat as Mapping,
-} from "@/lib/installer-chat-store";
 
 /**
- * Chat tab -- GroupMe conversations with lead installers.
+ * Chat tab -- your own GroupMe conversations, inside Duck Force.
  *
  * Admin only for now (canUseInstallerChat). Three screens:
- *   1. Connect   -- each person links THEIR OWN GroupMe account, once
- *   2. Installers -- linked chats that person's GroupMe account is in
- *   3. Linking   -- admin screen pairing an installer with an existing group
+ *   1. Connect       -- each person signs in to THEIR OWN GroupMe, once
+ *   2. Chats         -- the groups that person ticked, newest activity first
+ *   3. Choose chats  -- a checklist of every group their GroupMe account is in
  *
- * Messages go out under the sender's own GroupMe name. Links (installer ->
- * group) are shared by everyone; who can see each chat depends on whose
- * GroupMe account is in that group.
- *
- * The installer never has to do anything differently: these are their existing
- * groups and they keep using GroupMe as they always have.
+ * Everything is per person (migration 067): what you tick, and what you've
+ * read, is yours alone. Messages go out under your own GroupMe name. Nothing
+ * you didn't tick is ever shown, so personal groups stay out unless you add
+ * them, and direct messages are never read at all.
  */
 
 interface ConnectionState {
@@ -46,18 +39,32 @@ interface ConnectionState {
   groupmeName: string | null;
 }
 
+interface ChatRow {
+  id: string;
+  name: string;
+  unread: boolean;
+  /** Unix seconds of the newest message; 0 when unknown. */
+  lastAt: number;
+}
+
 interface GroupOption {
   id: string;
   name: string;
+  picked: boolean;
 }
 
 const CONNECT_MESSAGES: Record<string, string> = {
-  ok: "GroupMe connected.",
+  ok: "GroupMe connected. Now choose which of your chats to show here.",
   denied: "GroupMe connection was cancelled.",
   invalid: "GroupMe rejected that connection. Try again.",
   nokey: "The server is missing its encryption key, so the connection wasn't saved.",
   error: "Something went wrong connecting to GroupMe.",
 };
+
+function ago(lastAt: number): string {
+  if (!lastAt) return "";
+  return formatDistanceToNowStrict(new Date(lastAt * 1000), { addSuffix: true });
+}
 
 /**
  * useSearchParams() forces this subtree to render on the client, which Next
@@ -67,31 +74,27 @@ const CONNECT_MESSAGES: Record<string, string> = {
 function ChatPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { orders } = useData();
   const { user, roles, loading: authLoading } = useAuth();
   const allowed = canUseInstallerChat(roles);
 
   const [connection, setConnection] = useState<ConnectionState | null>(null);
-  const [mappings, setMappings] = useState<Mapping[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [linking, setLinking] = useState(false);
-  const [groups, setGroups] = useState<GroupOption[] | null>(null);
-  const [groupsError, setGroupsError] = useState<string | null>(null);
-  const [savingName, setSavingName] = useState<string | null>(null);
+  // null until the first answer, so the list doesn't flash "no chats".
+  const [chats, setChats] = useState<ChatRow[] | null>(null);
+  const [selected, setSelected] = useState<ChatRow | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Pasting an access token -- the way round GroupMe's broken OAuth sign-in.
+  // Choose chats screen.
+  const [choosing, setChoosing] = useState(false);
+  const [groups, setGroups] = useState<GroupOption[] | null>(null);
+  const [groupsError, setGroupsError] = useState<string | null>(null);
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Pasting an access token -- the fallback when GroupMe's sign-in misbehaves.
   const [tokenInput, setTokenInput] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-
-  // Which installers have something THIS user hasn't seen. Personal to the
-  // signed-in account.
-  const [unread, setUnread] = useState<Record<string, boolean>>({});
-  // Linked chats this person's own GroupMe account is a member of. null until
-  // the first answer arrives, so the list doesn't flash "hidden" before then.
-  const [available, setAvailable] = useState<Set<string> | null>(null);
-  const [otherError, setOtherError] = useState<string | null>(null);
 
   // Admin only -- same redirect pattern as the legacy-links screen.
   // Wait for the sign-in check to finish first: until then `roles` is empty, so
@@ -119,168 +122,84 @@ function ChatPageInner() {
     setConnection(await res.json());
   }, []);
 
-  const loadUnread = useCallback(async () => {
+  const loadChats = useCallback(async () => {
     try {
       const res = await fetch("/api/groupme/unread");
       if (!res.ok) return;
       const body = await res.json();
-      setUnread(body.byInstaller || {});
-      setAvailable(new Set<string>(body.available || []));
+      setChats((body.chats || []) as ChatRow[]);
     } catch {
-      // Leave the last known state rather than clearing the markers.
+      // Leave the last known list rather than clearing it.
     }
   }, []);
 
   useEffect(() => {
     if (!allowed) return;
     loadConnection();
-    fetchInstallerChats().then(setMappings);
   }, [allowed, loadConnection]);
 
-  // Refresh the markers whenever the list is on screen -- including coming back
-  // from a conversation, which should have just cleared one.
+  // Refresh the list whenever it is on screen -- including coming back from a
+  // conversation, which should have just cleared its dot -- and every 30 s
+  // while it stays open.
   useEffect(() => {
-    if (!allowed || selected || linking || !connection?.connected) return;
-    loadUnread();
-  }, [allowed, selected, linking, connection?.connected, loadUnread]);
+    if (!allowed || selected || choosing || !connection?.connected) return;
+    loadChats();
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") loadChats();
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [allowed, selected, choosing, connection?.connected, loadChats]);
 
-  // Every installer the calendar knows about, including extra crews the
-  // scheduling app adds. Same source the filter dropdown uses.
-  const installerNames = useMemo(() => {
-    const set = new Set<string>();
-    for (const o of orders) {
-      if (o.installer?.trim()) {
-        set.add(o.installer);
-        for (const name of crewsForDate(o)) if (name) set.add(name);
-      }
-    }
-    return Array.from(set).sort();
-  }, [orders]);
-
-  const mappedByName = useMemo(
-    () => new Map(mappings.map((m) => [m.installerName, m])),
-    [mappings]
-  );
-
-  // The main list only offers chats this person's GroupMe account is in.
-  // (The linking screen still shows every link -- see otherChats there.)
-  const visibleMappings = useMemo(
-    () =>
-      available ? mappings.filter((m) => available.has(m.installerName)) : [],
-    [mappings, available]
-  );
-  const hiddenCount = available ? mappings.length - visibleMappings.length : 0;
-
-  const installerChats = useMemo(
-    () =>
-      visibleMappings
-        .filter((m) => m.isInstaller)
-        .sort((a, b) => a.installerName.localeCompare(b.installerName)),
-    [visibleMappings]
-  );
-
-  const otherChats = useMemo(
-    () =>
-      mappings
-        .filter((m) => !m.isInstaller)
-        .sort((a, b) => a.installerName.localeCompare(b.installerName)),
-    [mappings]
-  );
-  const visibleOtherChats = useMemo(
-    () => otherChats.filter((m) => !available || available.has(m.installerName)),
-    [otherChats, available]
-  );
-
-  async function openLinking() {
-    setLinking(true);
-    if (groups) return;
+  async function openChoosing() {
+    setChoosing(true);
     setGroupsError(null);
+    setFilter("");
     try {
       const res = await fetch("/api/groupme/groups");
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || "Could not load your groups.");
-      setGroups(body.groups || []);
+      const list = (body.groups || []) as GroupOption[];
+      setGroups(list);
+      setTicked(new Set(list.filter((g) => g.picked).map((g) => g.id)));
     } catch (e) {
       setGroupsError((e as Error).message);
     }
   }
 
-  async function link(installerName: string, groupId: string) {
-    setSavingName(installerName);
-    if (!groupId) {
-      if (await deleteInstallerChat(installerName)) {
-        setMappings((prev) =>
-          prev.filter((m) => m.installerName !== installerName)
-        );
-      }
-    } else {
-      const groupName = groups?.find((g) => g.id === groupId)?.name ?? null;
-      if (
-        await upsertInstallerChat(
-          installerName,
-          groupId,
-          groupName,
-          user?.email ?? undefined,
-          true
-        )
-      ) {
-        setMappings((prev) => [
-          ...prev.filter((m) => m.installerName !== installerName),
-          { installerName, groupId, groupName, isInstaller: true },
-        ]);
-      }
-    }
-    setSavingName(null);
+  function toggle(id: string) {
+    setTicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
-  /**
-   * Add a conversation that isn't about one installer -- an office group, a
-   * vendor, whatever. The group's own GroupMe name becomes its label, which is
-   * also its key, so a clash with an existing entry has to be refused rather
-   * than silently overwriting it.
-   */
-  async function addOtherChat(groupId: string) {
-    if (!groupId) return;
-    const group = groups?.find((g) => g.id === groupId);
-    if (!group) return;
-
-    setOtherError(null);
-    if (mappedByName.has(group.name)) {
-      setOtherError(`"${group.name}" is already in the list.`);
-      return;
+  async function saveChoices() {
+    setSaving(true);
+    setGroupsError(null);
+    try {
+      const res = await fetch("/api/groupme/groups", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ groupIds: Array.from(ticked) }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Could not save your chats.");
+      setChats(null);
+      setChoosing(false);
+    } catch (e) {
+      setGroupsError((e as Error).message);
+    } finally {
+      setSaving(false);
     }
-
-    setSavingName(group.name);
-    const ok = await upsertInstallerChat(
-      group.name,
-      group.id,
-      group.name,
-      user?.email ?? undefined,
-      false
-    );
-    if (ok) {
-      setMappings((prev) => [
-        ...prev,
-        {
-          installerName: group.name,
-          groupId: group.id,
-          groupName: group.name,
-          isInstaller: false,
-        },
-      ]);
-    } else {
-      setOtherError("Could not add that chat.");
-    }
-    setSavingName(null);
   }
 
-  async function removeOtherChat(label: string) {
-    setSavingName(label);
-    if (await deleteInstallerChat(label)) {
-      setMappings((prev) => prev.filter((m) => m.installerName !== label));
-    }
-    setSavingName(null);
-  }
+  const shownGroups = useMemo(() => {
+    if (!groups) return [];
+    const q = filter.trim().toLowerCase();
+    return q ? groups.filter((g) => g.name.toLowerCase().includes(q)) : groups;
+  }, [groups, filter]);
 
   async function connectWithToken() {
     const token = tokenInput.trim();
@@ -298,7 +217,9 @@ function ChatPageInner() {
       if (!res.ok) throw new Error(body.error || "Could not connect.");
 
       setTokenInput("");
-      setNotice(`GroupMe connected as ${body.groupmeName || "that account"}.`);
+      setNotice(
+        `GroupMe connected as ${body.groupmeName || "that account"}. Now choose which of your chats to show here.`
+      );
       await loadConnection();
     } catch (e) {
       setConnectError((e as Error).message);
@@ -310,61 +231,11 @@ function ChatPageInner() {
   async function disconnect() {
     await fetch("/api/groupme/connection", { method: "DELETE" });
     setGroups(null);
-    setAvailable(null);
+    setChats(null);
     setNotice(
       "Your GroupMe is disconnected here (nobody else's is affected). This doesn't revoke access at GroupMe — do that in your GroupMe account if you need to."
     );
     loadConnection();
-  }
-
-  /** One block of conversations, with an optional heading above it. */
-  function renderChatSection(chats: Mapping[], heading: string | null) {
-    if (chats.length === 0) return null;
-    return (
-      <>
-        {heading && (
-          <h2 className="px-4 pt-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted">
-            {heading}
-          </h2>
-        )}
-        <ul className="divide-y divide-border">
-          {chats.map((m) => (
-            <li key={m.installerName}>
-              <button
-                onClick={() => setSelected(m.installerName)}
-                className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
-              >
-                <div className="min-w-0 flex items-center gap-2.5">
-                  {unread[m.installerName] && (
-                    <span
-                      aria-label="New messages"
-                      className="w-2 h-2 rounded-full bg-red-600 shrink-0"
-                    />
-                  )}
-                  <div className="min-w-0">
-                    <div
-                      className={`text-sm truncate ${
-                        unread[m.installerName] ? "font-semibold" : "font-medium"
-                      }`}
-                    >
-                      {m.installerName}
-                    </div>
-                    {/* Redundant for an "other" chat, where the label already
-                        IS the group name. */}
-                    {m.groupName && m.groupName !== m.installerName && (
-                      <div className="text-xs text-muted truncate">
-                        {m.groupName}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted shrink-0" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      </>
-    );
   }
 
   if (!allowed) {
@@ -384,7 +255,8 @@ function ChatPageInner() {
       <div className="flex flex-col h-full">
         <div className="flex-1 min-h-0">
           <InstallerChat
-            installerName={selected}
+            groupId={selected.id}
+            title={selected.name}
             onBack={() => setSelected(null)}
           />
         </div>
@@ -393,139 +265,89 @@ function ChatPageInner() {
     );
   }
 
-  // --- Linking screen ---
-  if (linking) {
+  // --- Choose chats ---
+  if (choosing) {
     return (
       <div className="flex flex-col h-full">
         <header className="bg-background border-b border-border px-4 py-3 shrink-0">
           <button
-            onClick={() => setLinking(false)}
+            onClick={() => setChoosing(false)}
             className="inline-flex items-center gap-1 text-sm text-muted hover:text-foreground transition-colors mb-1"
           >
             <ChevronLeft className="w-4 h-4" />
             Chat
           </button>
           <div className="flex items-center gap-2">
-            <Link2 className="w-4 h-4 text-primary" />
-            <h1 className="text-lg font-semibold">Link GroupMe groups</h1>
+            <ListChecks className="w-4 h-4 text-primary" />
+            <h1 className="text-lg font-semibold">Choose chats</h1>
           </div>
           <p className="text-xs text-muted mt-1">
-            Pick the group each installer already uses. The list is the groups
-            your own GroupMe account is in. Each person only sees the linked
-            chats their GroupMe account belongs to.
+            Tick the GroupMe groups you want in Duck Force. Only you see this
+            list and your choices. Anything you leave unticked stays out.
           </p>
+          {groups && groups.length > 8 && (
+            <div className="relative mt-2">
+              <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Find a group"
+                className="w-full bg-surface border border-border rounded-lg pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+          )}
         </header>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+        <div className="flex-1 min-h-0 overflow-y-auto">
           {groupsError && (
-            <p className="text-sm text-red-600 py-2">{groupsError}</p>
+            <p className="text-sm text-red-600 px-4 py-3">{groupsError}</p>
           )}
           {!groups && !groupsError && (
-            <div className="flex items-center gap-2 text-muted text-sm py-4">
+            <div className="flex items-center gap-2 text-muted text-sm px-4 py-4">
               <Loader2 className="w-4 h-4 animate-spin" />
               Loading your GroupMe groups…
             </div>
           )}
+          {groups && groups.length === 0 && (
+            <p className="text-sm text-muted px-4 py-4">
+              Your GroupMe account isn&apos;t in any groups yet.
+            </p>
+          )}
           {groups && (
             <ul className="divide-y divide-border">
-              {installerNames.map((name) => {
-                const current = mappedByName.get(name);
+              {shownGroups.map((g) => {
+                const on = ticked.has(g.id);
                 return (
-                  <li
-                    key={name}
-                    className="py-2.5 flex items-center justify-between gap-3"
-                  >
-                    <span className="text-sm truncate">{name}</span>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {savingName === name && (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-muted" />
-                      )}
-                      <select
-                        value={current?.groupId ?? ""}
-                        onChange={(e) => link(name, e.target.value)}
-                        className="bg-surface border border-border rounded-lg px-2 py-1.5 text-xs max-w-[55vw]"
+                  <li key={g.id}>
+                    <button
+                      onClick={() => toggle(g.id)}
+                      className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-surface transition-colors"
+                    >
+                      <span
+                        className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
+                          on ? "bg-primary border-primary text-white" : "border-border"
+                        }`}
                       >
-                        <option value="">Not linked</option>
-                        {/* Linked by someone else to a group YOUR account
-                            isn't in -- keep showing it rather than the
-                            dropdown falsely reading "Not linked". */}
-                        {current &&
-                          !groups.some((g) => g.id === current.groupId) && (
-                            <option value={current.groupId}>
-                              {current.groupName ?? "A group you're not in"}
-                            </option>
-                          )}
-                        {groups.map((g) => (
-                          <option key={g.id} value={g.id}>
-                            {g.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                        {on && <Check className="w-3.5 h-3.5" />}
+                      </span>
+                      <span className="text-sm truncate">{g.name}</span>
+                    </button>
                   </li>
                 );
               })}
-              {installerNames.length === 0 && (
-                <li className="py-4 text-sm text-muted">
-                  No installers found on the calendar yet.
-                </li>
-              )}
             </ul>
           )}
-
-          {/* Conversations that aren't about one installer. Added by picking a
-              group outright rather than pairing it with a calendar name. */}
-          {groups && (
-            <div className="mt-6 pt-4 border-t border-border">
-              <h2 className="text-sm font-semibold mb-1">Other chats</h2>
-              <p className="text-xs text-muted mb-3">
-                Any other GroupMe group you want in the Chat tab — office,
-                scheduling, vendors. These aren&apos;t tied to an installer.
-              </p>
-
-              {otherChats.length > 0 && (
-                <ul className="divide-y divide-border mb-3">
-                  {otherChats.map((c) => (
-                    <li
-                      key={c.installerName}
-                      className="py-2.5 flex items-center justify-between gap-3"
-                    >
-                      <span className="text-sm truncate">{c.installerName}</span>
-                      <button
-                        onClick={() => removeOtherChat(c.installerName)}
-                        disabled={savingName === c.installerName}
-                        className="text-xs text-muted hover:text-red-600 shrink-0 disabled:opacity-50"
-                      >
-                        {savingName === c.installerName ? "Removing…" : "Remove"}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              <select
-                value=""
-                onChange={(e) => addOtherChat(e.target.value)}
-                className="w-full bg-surface border border-border rounded-lg px-2 py-2 text-sm"
-              >
-                <option value="">Add a chat…</option>
-                {groups
-                  .filter((g) => !mappings.some((m) => m.groupId === g.id))
-                  .map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
-              </select>
-
-              {otherError && (
-                <p className="text-xs text-red-600 mt-2">{otherError}</p>
-              )}
-            </div>
-          )}
         </div>
-        <div className="px-4 py-2 border-t border-border shrink-0">
-          <GroupMeAttribution />
+
+        <div className="px-4 py-3 border-t border-border shrink-0">
+          <button
+            onClick={saveChoices}
+            disabled={!groups || saving}
+            className="w-full inline-flex items-center justify-center gap-2 bg-primary text-white rounded-xl px-4 py-2.5 text-sm font-medium disabled:opacity-40"
+          >
+            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+            Save: show {ticked.size} chat{ticked.size === 1 ? "" : "s"}
+          </button>
         </div>
         <BottomNav />
       </div>
@@ -543,11 +365,11 @@ function ChatPageInner() {
           </div>
           {connection?.connected && (
             <button
-              onClick={openLinking}
+              onClick={openChoosing}
               className="text-xs text-primary inline-flex items-center gap-1"
             >
-              <Link2 className="w-3.5 h-3.5" />
-              Link groups
+              <ListChecks className="w-3.5 h-3.5" />
+              Choose chats
             </button>
           )}
         </div>
@@ -583,13 +405,11 @@ function ChatPageInner() {
         ) : !connection.connected ? (
           <div className="px-6 py-10 text-center">
             <p className="text-sm text-muted mb-1">
-              Connect your GroupMe account to read and reply to installer groups
-              here.
+              Sign in to your own GroupMe to read and reply to your chats here.
             </p>
             <p className="text-xs text-muted mb-5">
-              Messages you send go out under your own GroupMe name. You&apos;ll
-              only see linked chats your GroupMe account is already in — never
-              your personal groups or direct messages.
+              Messages you send go out under your own GroupMe name. You choose
+              which of your groups show up; direct messages never do.
             </p>
             {/* Signing in through GroupMe is the main path: each person logs
                 in to their OWN GroupMe account from here. GroupMe uses the
@@ -668,48 +488,60 @@ function ChatPageInner() {
               </details>
             </div>
           </div>
-        ) : !available ? (
+        ) : !chats ? (
           <div className="h-full flex items-center justify-center text-muted text-sm gap-2">
             <Loader2 className="w-4 h-4 animate-spin" />
-            Checking your GroupMe groups…
+            Checking your GroupMe chats…
           </div>
-        ) : visibleMappings.length === 0 ? (
+        ) : chats.length === 0 ? (
           <div className="px-6 py-10 text-center text-sm text-muted">
             <p className="mb-4">
-              {mappings.length === 0
-                ? "No chats linked to a GroupMe group yet."
-                : `None of the ${mappings.length} linked chat${
-                    mappings.length === 1 ? "" : "s"
-                  } include your GroupMe account. Ask someone in the group to add you, or link a group you're in.`}
+              Pick which of your GroupMe chats to show here. Only the ones you
+              tick will appear.
             </p>
             <button
-              onClick={openLinking}
+              onClick={openChoosing}
               className="inline-flex items-center gap-2 bg-primary text-white rounded-xl px-4 py-2.5 text-sm font-medium"
             >
-              <Link2 className="w-4 h-4" />
-              Link groups
+              <ListChecks className="w-4 h-4" />
+              Choose chats
             </button>
           </div>
         ) : (
-          <>
-            {/* Headings only once both kinds exist -- a list of nothing but
-                installers shouldn't be forced under a redundant label. */}
-            {renderChatSection(
-              installerChats,
-              visibleOtherChats.length > 0 ? "Installers" : null
-            )}
-            {renderChatSection(
-              visibleOtherChats,
-              installerChats.length > 0 ? "Other chats" : null
-            )}
-            {hiddenCount > 0 && (
-              <p className="px-4 py-3 text-xs text-muted">
-                {hiddenCount} linked chat{hiddenCount === 1 ? " isn't" : "s aren't"}{" "}
-                shown because your GroupMe account isn&apos;t in{" "}
-                {hiddenCount === 1 ? "that group" : "those groups"}.
-              </p>
-            )}
-          </>
+          <ul className="divide-y divide-border">
+            {chats.map((c) => (
+              <li key={c.id}>
+                <button
+                  onClick={() => setSelected(c)}
+                  className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
+                >
+                  <div className="min-w-0 flex items-center gap-2.5">
+                    {c.unread && (
+                      <span
+                        aria-label="New messages"
+                        className="w-2 h-2 rounded-full bg-red-600 shrink-0"
+                      />
+                    )}
+                    <div className="min-w-0">
+                      <div
+                        className={`text-sm truncate ${
+                          c.unread ? "font-semibold" : "font-medium"
+                        }`}
+                      >
+                        {c.name}
+                      </div>
+                      {c.lastAt > 0 && (
+                        <div className="text-xs text-muted truncate">
+                          {ago(c.lastAt)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted shrink-0" />
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 

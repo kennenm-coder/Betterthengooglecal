@@ -394,13 +394,12 @@ export function canEditLegacyLink(roles: RoleInput): boolean {
 /**
  * Who can open the Chat tab (GroupMe installer conversations).
  *
- * Admin ONLY for now — this is a pilot. Each person connects THEIR OWN GroupMe
- * account and only sees linked chats that account is a member of.
+ * Admin ONLY for now — this is a pilot. Each person signs in to THEIR OWN
+ * GroupMe account and picks which of their groups show in Chat (migration 067).
  *
- * To widen it, change it in all three places together: here, the role checks
+ * To widen it, change it in both places together: here, and the role checks
  * in the /api/groupme/* routes (chatContext() in src/lib/groupme-route.ts plus
- * connect/connection/callback/read), and a NEW migration widening the
- * installer_chats read policy that migration 025 created.
+ * connect/connection/callback/read).
  */
 export function canUseInstallerChat(roles: RoleInput): boolean {
   return isAdmin(roles);

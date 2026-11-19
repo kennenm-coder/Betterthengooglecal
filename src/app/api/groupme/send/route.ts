@@ -9,19 +9,18 @@ export const runtime = "nodejs";
 const MAX_LENGTH = 1000;
 
 /**
- * Send a message into a linked GroupMe group, AS the signed-in person.
+ * Send a message into one of the person's chosen GroupMe groups, AS them.
  *
  * It goes out on their own GroupMe account, so the installer sees it from that
  * person exactly as if they had typed it in the GroupMe app -- no name prefix,
  * no shared office account.
  *
- * Like the read route, the client sends a chat NAME and the group is resolved
- * here, so nothing can be posted into a group that isn't linked, or one the
- * sender's account isn't in.
+ * chatContext refuses a group they didn't tick or aren't in, so nothing can be
+ * posted anywhere else.
  */
 export async function POST(request: Request) {
   let payload: {
-    installer?: unknown;
+    group?: unknown;
     text?: unknown;
     mentions?: unknown;
   };
@@ -31,8 +30,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const installer =
-    typeof payload.installer === "string" ? payload.installer.trim() : "";
+  const group = typeof payload.group === "string" ? payload.group.trim() : "";
   const text = typeof payload.text === "string" ? payload.text.trim() : "";
 
   // Who the composer's @-picker selected. Validated rather than trusted: a
@@ -48,8 +46,8 @@ export async function POST(request: Request) {
     )
     .map((m) => ({ userId: m.userId, nickname: m.nickname }));
 
-  if (!installer) {
-    return NextResponse.json({ error: "Missing installer." }, { status: 400 });
+  if (!group) {
+    return NextResponse.json({ error: "Missing group." }, { status: 400 });
   }
   if (!text) {
     return NextResponse.json({ error: "Message is empty." }, { status: 400 });
@@ -61,7 +59,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const ctx = await chatContext(installer);
+  const ctx = await chatContext(group);
   if (!ctx.ok) return ctx.response;
 
   try {

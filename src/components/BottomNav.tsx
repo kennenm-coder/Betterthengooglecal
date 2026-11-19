@@ -19,6 +19,26 @@ import {
 /** How often to ask whether anything new has arrived in Chat. */
 const UNREAD_POLL_MS = 60_000;
 
+/**
+ * The red number on the Duck Force icon on the phone's home screen: how many
+ * chats have unread messages. Works where the browser supports app badges
+ * (iPhone home-screen apps with notifications allowed, installed desktop
+ * Chrome/Edge); elsewhere these calls don't exist and it quietly does nothing.
+ * It updates while Duck Force is open, so the number reflects the last check.
+ */
+function setIconBadge(count: number) {
+  const nav = navigator as Navigator & {
+    setAppBadge?: (n?: number) => Promise<void>;
+    clearAppBadge?: () => Promise<void>;
+  };
+  try {
+    if (count > 0) nav.setAppBadge?.(count)?.catch(() => {});
+    else nav.clearAppBadge?.()?.catch(() => {});
+  } catch {
+    // Not supported here.
+  }
+}
+
 // Settings lives in the top-right of the calendar header, not the bottom nav.
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: Calendar },
@@ -90,7 +110,9 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
         const res = await fetch("/api/groupme/unread");
         if (!res.ok) return;
         const body = await res.json();
-        if (!cancelled) setChatUnread(Number(body.total) || 0);
+        const total = Number(body.total) || 0;
+        if (!cancelled) setChatUnread(total);
+        setIconBadge(total);
       } catch {
         // Offline or GroupMe hiccuping. Leave the last known count alone
         // rather than flashing it to zero.

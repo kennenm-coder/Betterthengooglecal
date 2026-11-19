@@ -142,11 +142,10 @@ export async function getMe(token: string): Promise<GroupMeUser | null> {
  * Every group this account is in.
  *
  * NOTE: this includes the person's PERSONAL groups -- family, friends,
- * anything. It is only used to fill the admin linking screen and to check
- * which linked groups this person belongs to (getMyGroupIndex); the app only
- * ever displays conversations for groups explicitly linked in installer_chats.
- * Do not surface this list anywhere else, and never call /chats
- * (direct messages) at all.
+ * anything. It only feeds that person's own "choose your chats" checklist and
+ * the membership check (getMyGroupIndex); a conversation is only ever shown
+ * for a group they ticked (groupme_chat_picks). Never call /chats (direct
+ * messages) at all.
  */
 export async function listGroups(token: string): Promise<GroupMeGroup[]> {
   const all: GroupMeGroup[] = [];
@@ -332,16 +331,23 @@ export async function deleteToken(userId: string): Promise<void> {
 
 // --- Which groups this person's account is in (and their newest message) ---
 
+export interface MyGroup {
+  name: string;
+  /** Newest message id, "" for a group with no messages yet. */
+  lastId: string;
+  /** Newest message time, unix seconds; 0 when unknown. */
+  lastAt: number;
+}
+
 /**
- * Every group THIS user's GroupMe account is in, mapped to that group's newest
- * message id ("" for a group with no messages yet).
+ * Every group THIS user's GroupMe account is in, with its name and newest
+ * message.
  *
  * Does double duty:
- *   - Membership: a linked chat is only offered to someone whose own account
- *     is in that group, and every read/send route checks it here first, so a
+ *   - Membership: every read/send route checks the group is here first, so a
  *     person can't be pointed at a group they don't belong to.
- *   - Unread: /groups carries each group's last_message_id, so one call covers
- *     every chat at once. No message text is read or kept.
+ *   - Unread + ordering: /groups carries each group's last message id and time,
+ *     so one call covers every chat at once. No message text is kept.
  *
  * Cached PER USER for 30 s, because each signed-in user's nav bar asks for this
  * every minute and every open conversation re-checks membership on each poll.
@@ -349,89 +355,108 @@ export async function deleteToken(userId: string): Promise<void> {
  * The licence asks us to respect API limits (§4.10) and GroupMe publishes none
  * to aim at, so this errs on the side of asking less.
  */
-const groupCache = new Map<string, { at: number; byGroup: Map<string, string> }>();
+const groupCache = new Map<string, { at: number; byGroup: Map<string, MyGroup> }>();
 const GROUP_TTL_MS = 30_000;
 
 export async function getMyGroupIndex(
   userId: string,
   token: string
-): Promise<Map<string, string>> {
+): Promise<Map<string, MyGroup>> {
   const hit = groupCache.get(userId);
   if (hit && Date.now() - hit.at < GROUP_TTL_MS) return hit.byGroup;
 
   const groups = await listGroups(token);
-  const byGroup = new Map<string, string>();
-  for (const g of groups) byGroup.set(g.id, g.messages?.last_message_id ?? "");
+  const byGroup = new Map<string, MyGroup>();
+  for (const g of groups) {
+    byGroup.set(g.id, {
+      name: g.name,
+      lastId: g.messages?.last_message_id ?? "",
+      lastAt: g.messages?.last_message_created_at ?? 0,
+    });
+  }
 
   groupCache.set(userId, { at: Date.now(), byGroup });
   return byGroup;
 }
 
-/** Everything this ONE user has read, keyed by installer name. */
-export async function getReadState(
-  userId: string
-): Promise<Record<string, string>> {
+// --- The groups each person ticked to show in Chat (migration 067) ---
+
+export interface ChatPick {
+  groupId: string;
+  groupName: string | null;
+  lastReadMessageId: string | null;
+}
+
+/** The groups THIS user ticked. Nobody else's choices are involved. */
+export async function listPicks(userId: string): Promise<ChatPick[]> {
   const admin = getAdminClient();
   const { data } = await admin
-    .from("installer_chat_reads")
-    .select("installer_name, last_read_message_id")
+    .from("groupme_chat_picks")
+    .select("group_id, group_name, last_read_message_id")
     .eq("user_id", userId);
 
-  const out: Record<string, string> = {};
-  for (const row of (data ?? []) as {
-    installer_name: string;
-    last_read_message_id: string;
-  }[]) {
-    out[row.installer_name] = row.last_read_message_id;
-  }
-  return out;
-}
-
-/** Move this user's bookmark for one installer. Never stores message content. */
-export async function markRead(
-  userId: string,
-  installerName: string,
-  messageId: string
-): Promise<void> {
-  const admin = getAdminClient();
-  await admin.from("installer_chat_reads").upsert(
-    {
-      user_id: userId,
-      installer_name: installerName,
-      last_read_message_id: messageId,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id,installer_name" }
-  );
-}
-
-/** Every installer -> group mapping, for working out unread across the board. */
-export async function listMappings(): Promise<
-  { installerName: string; groupId: string }[]
-> {
-  const admin = getAdminClient();
-  const { data } = await admin
-    .from("installer_chats")
-    .select("installer_name, groupme_group_id");
-
   return ((data ?? []) as {
-    installer_name: string;
-    groupme_group_id: string;
+    group_id: string;
+    group_name: string | null;
+    last_read_message_id: string | null;
   }[]).map((r) => ({
-    installerName: r.installer_name,
-    groupId: r.groupme_group_id,
+    groupId: r.group_id,
+    groupName: r.group_name,
+    lastReadMessageId: r.last_read_message_id,
   }));
 }
 
-/** The GroupMe group mapped to this installer, or null if unmapped. */
-export async function resolveGroupId(
-  installerName: string
-): Promise<string | null> {
+/**
+ * Replace this user's ticked groups with exactly `groups`. Groups that stay
+ * ticked keep their read bookmark; newly ticked ones start with none (the
+ * first unread check sets it, so they don't arrive as a wall of unread).
+ */
+export async function savePicks(
+  userId: string,
+  groups: { id: string; name: string }[]
+): Promise<void> {
+  const admin = getAdminClient();
+  const keep = groups.map((g) => g.id);
+
+  let del = admin.from("groupme_chat_picks").delete().eq("user_id", userId);
+  if (keep.length > 0) {
+    // PostgREST's "not in" list. Group ids are GroupMe's numeric strings.
+    del = del.not("group_id", "in", `(${keep.map((id) => `"${id}"`).join(",")})`);
+  }
+  const { error: delError } = await del;
+  if (delError) throw new Error(`Could not save your chats: ${delError.message}`);
+
+  if (groups.length === 0) return;
+  const { error } = await admin.from("groupme_chat_picks").upsert(
+    groups.map((g) => ({ user_id: userId, group_id: g.id, group_name: g.name })),
+    // Leaves last_read_message_id alone on rows that already exist.
+    { onConflict: "user_id,group_id" }
+  );
+  if (error) throw new Error(`Could not save your chats: ${error.message}`);
+}
+
+/** Move this user's bookmark for one ticked group. Never stores message content. */
+export async function markRead(
+  userId: string,
+  groupId: string,
+  messageId: string
+): Promise<void> {
+  const admin = getAdminClient();
+  await admin
+    .from("groupme_chat_picks")
+    .update({ last_read_message_id: messageId })
+    .eq("user_id", userId)
+    .eq("group_id", groupId);
+}
+
+/** Has this user ticked this group? Every read/send route asks. */
+export async function isPicked(userId: string, groupId: string): Promise<boolean> {
   const admin = getAdminClient();
   const { data } = await admin
-    .from("installer_chats")
-    .select("groupme_group_id")
-    .eq("installer_name", installerName)
+    .from("groupme_chat_picks")
+    .select("group_id")
+    .eq("user_id", userId)
+    .eq("group_id", groupId)
     .maybeSingle();
-  return data?.groupme_group_id ?? null;
+  return !!data;
 }
