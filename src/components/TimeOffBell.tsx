@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Inbox } from "lucide-react";
+import { usePanelPosition } from "@/hooks/usePanelPosition";
 import { useAuth } from "@/hooks/useAuth";
 import { canUseInbox, INBOX_DECIDED_EVENT, type InboxItem } from "@/lib/kiosk-inbox";
 import InboxItemCard from "@/components/kiosk-inbox/InboxItemCard";
@@ -30,6 +31,8 @@ export default function TimeOffBell() {
   const [kioskUrl, setKioskUrl] = useState<string | null>(null);
   const [unseen, setUnseen] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
+  // Kept on screen (see usePanelPosition): this button isn't at the right edge either.
+  const panelStyle = usePanelPosition(panelRef, open, 448);
 
   const refresh = useCallback(async () => {
     try {
@@ -113,7 +116,7 @@ export default function TimeOffBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-[min(92vw,28rem)] max-h-[70vh] overflow-auto rounded-xl border border-border bg-background shadow-xl z-50">
+        <div style={panelStyle} className="overflow-auto rounded-xl border border-border bg-background shadow-xl z-50">
           <div className="sticky top-0 z-10 flex items-center gap-2 bg-background border-b border-border px-4 py-2.5">
             <p className="text-sm font-semibold flex-1">
               {items.length === 0
