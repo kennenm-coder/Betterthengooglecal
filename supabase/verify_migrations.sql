@@ -396,7 +396,13 @@ checks(migration, feature, verdict, checked) as (values
                      and p = 'manage_update_field_work_orders' and body like '%writeup-rep%')
         and exists(select 1 from fn where k = 'writeup_crew_set_done' and src like '%writeup-rep%')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'rep guard trigger function AND writeup-rep in the update policy AND in writeup_crew_set_done')
+  'rep guard trigger function AND writeup-rep in the update policy AND in writeup_crew_set_done'),
+
+ ('062', 'work_orders.nsa_owned (rForce NSA Ownership flag)',
+  case when exists(select 1 from col where k = 'work_orders.nsa_owned')
+        and exists(select 1 from col where k = 'work_orders_visible.nsa_owned')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'nsa_owned on the table AND passed through the installer view')
 )
 select migration, feature, verdict, checked
 from checks

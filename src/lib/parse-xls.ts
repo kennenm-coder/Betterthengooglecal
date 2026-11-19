@@ -1,4 +1,5 @@
 import { WorkOrder, PhoneEntry } from "./types";
+import { isNsaHeader, parseNsaFlag } from "./nsa";
 
 function normalizePhone(raw: string | null | undefined): string {
   if (!raw || raw.trim() === "") return "";
@@ -91,6 +92,9 @@ export function parseXlsHtml(html: string): WorkOrder[] {
     rows.push(row);
   }
 
+  // The report's own spelling of the NSA column, if it has one.
+  const nsaHeader = headers.find(isNsaHeader);
+
   const statusHeaders = headers.filter((h) => h === "Status");
   const secondStatusKey =
     statusHeaders.length > 1 ? "Status" : "Status";
@@ -140,6 +144,9 @@ export function parseXlsHtml(html: string): WorkOrder[] {
       accountName: cell(row, "Account Name: Account Name") || "",
       latitude: parseFloat(cell(row, "Latitude")) || null,
       longitude: parseFloat(cell(row, "Longitude")) || null,
+      // undefined (not false) when the report has no such column, so the
+      // importer leaves the stored flag alone. See lib/nsa.ts.
+      nsaOwned: nsaHeader ? parseNsaFlag(row[nsaHeader]) : undefined,
     };
   });
 }

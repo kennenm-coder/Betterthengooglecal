@@ -8,6 +8,7 @@ import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
 import WeekBarOverview from "./WeekBarOverview";
 import SpecialDayTile from "./SpecialDayTile";
+import NsaTag from "./NsaTag";
 import type { SpecialDay } from "@/lib/special-days-store";
 
 export default function WeekView({
@@ -139,6 +140,7 @@ export default function WeekView({
                         {crews.length > 0 && (
                           <span className="hidden md:inline">&middot; {crews.join(" + ")}</span>
                         )}
+                        <NsaTag owned={order.nsaOwned} variant="tile" size="xs" />
                         {order.materialJob && (
                           <span className="px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-semibold">
                             Linked

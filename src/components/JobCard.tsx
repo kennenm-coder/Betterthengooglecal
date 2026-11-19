@@ -37,6 +37,7 @@ import { canDoFieldWork, canEditLegacyLink, canSubmitJobComplete, canWriteUps } 
 import { jobCompleteDue, jobLastDay } from "@/lib/job-complete-core";
 import JobCompleteModal from "./JobCompleteModal";
 import JobCompleteTag from "./JobCompleteTag";
+import NsaTag from "./NsaTag";
 import { upsertLegacyLink, deleteLegacyLink } from "@/lib/store";
 import { useData } from "./DataProvider";
 import { parseISO, isSameDay } from "date-fns";
@@ -260,6 +261,7 @@ export default function JobCard({
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="text-xs text-muted">{order.workOrderType}</span>
                 <span className="text-xs text-muted">#{order.workOrderNumber}</span>
+                <NsaTag owned={order.nsaOwned} size="xs" />
                 {mat && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#6DB344]/15 text-[#6DB344] font-semibold">
                     Linked
@@ -324,6 +326,7 @@ export default function JobCard({
                   {order.workOrderType}
                 </span>
                 <StatusBadge status={order.appointmentStatus || order.status} />
+                <NsaTag owned={order.nsaOwned} />
                 {!mat && legacyUrl && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-semibold">
                     Legacy Linked

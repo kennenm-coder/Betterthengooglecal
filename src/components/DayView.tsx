@@ -8,6 +8,7 @@ import { format } from "date-fns";
 import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
 import SpecialDayTile from "./SpecialDayTile";
+import NsaTag from "./NsaTag";
 import type { SpecialDay } from "@/lib/special-days-store";
 
 const HOURS = Array.from({ length: 13 }, (_, i) => i + 6); // 6AM - 6PM
@@ -115,6 +116,7 @@ export default function DayView({
                         {crews.length > 0 && (
                           <span className="hidden md:inline">&middot; {crews.join(" + ")}</span>
                         )}
+                        <NsaTag owned={order.nsaOwned} variant="tile" />
                         {order.materialJob && (
                           <span className="px-1.5 py-0.5 rounded bg-white/20 text-xs font-semibold">
                             Linked

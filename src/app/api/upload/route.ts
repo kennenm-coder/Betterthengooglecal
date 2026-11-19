@@ -174,6 +174,12 @@ async function upsertToSupabase(orders: WorkOrder[]) {
     latitude: wo.latitude,
     longitude: wo.longitude,
     updated_at: new Date().toISOString(),
+    // Only when the report HAS the NSA column (nsaOwned is undefined when it
+    // does not). Leaving the key out keeps an upsert from touching the stored
+    // flag, so an export made without the column cannot un-flag NSA jobs.
+    // Whether the column exists is a property of the whole file, so every row
+    // in a batch has the key or none do.
+    ...(wo.nsaOwned === undefined ? {} : { nsa_owned: wo.nsaOwned }),
   }));
 
   const BATCH = 500;

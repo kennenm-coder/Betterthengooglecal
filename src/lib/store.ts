@@ -100,6 +100,8 @@ interface WorkOrderRow {
   account_name: string;
   latitude: number | null;
   longitude: number | null;
+  /** Migration 062. Absent until it is applied. */
+  nsa_owned?: boolean | null;
   uploaded_at: string;
   updated_at: string;
   /** Only present on work_orders_visible (035); absent on the raw table. */
@@ -146,6 +148,7 @@ function rowToWorkOrder(row: WorkOrderRow): WorkOrder {
     accountName: row.account_name || "",
     latitude: row.latitude ?? null,
     longitude: row.longitude ?? null,
+    nsaOwned: row.nsa_owned === true,
     // Absent means unrestricted: a cached row written before 035, or a read
     // that did not come through the view. Only an explicit false trims.
     isMine: row.is_mine !== false,
@@ -187,6 +190,8 @@ function workOrderToRow(wo: WorkOrder) {
     latitude: wo.latitude,
     longitude: wo.longitude,
     updated_at: new Date().toISOString(),
+    // Same rule as the upload route: no column in the report, no write.
+    ...(wo.nsaOwned === undefined ? {} : { nsa_owned: wo.nsaOwned }),
   };
 }
 

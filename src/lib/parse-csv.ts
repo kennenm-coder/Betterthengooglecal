@@ -1,5 +1,6 @@
 import { parse } from "csv-parse/sync";
 import { WorkOrder, PhoneEntry } from "./types";
+import { isNsaHeader, parseNsaFlag } from "./nsa";
 
 // Known column positions — the report has two "Status" columns
 // 0  Status (record status, e.g. "Install Scheduled", "Job Closed")
@@ -145,6 +146,7 @@ export function parseCsv(csvText: string): WorkOrder[] {
 
   const dataRows = records.slice(1);
   const orders: WorkOrder[] = [];
+  const nsaCol = headers.findIndex(isNsaHeader);
 
   for (let i = 0; i < dataRows.length; i++) {
     const row = dataRows[i];
@@ -191,6 +193,9 @@ export function parseCsv(csvText: string): WorkOrder[] {
       accountName: val(row, COL.ACCOUNT_NAME),
       latitude: parseNum(val(row, COL.LATITUDE)) || null,
       longitude: parseNum(val(row, COL.LONGITUDE)) || null,
+      // Found by header, not position: it is a late addition to the report, and
+      // undefined (no such column) must not read as "not NSA". See lib/nsa.ts.
+      nsaOwned: nsaCol >= 0 ? parseNsaFlag(val(row, nsaCol)) : undefined,
     });
   }
 

@@ -5,6 +5,7 @@ import { useBackClose, overlayKeyHere, readPageState, savePageState } from "@/ho
 import { useData } from "@/components/DataProvider";
 import OrderSheet from "@/components/OrderSheet";
 import BottomNav from "@/components/BottomNav";
+import NsaTag from "@/components/NsaTag";
 import { searchOrders, searchMaterialJobs } from "@/lib/search";
 import { lastFirst, extractCity, crewsForDate } from "@/lib/format-utils";
 import { typeColor, formatTime, formatDateShort } from "@/lib/calendar-utils";
@@ -260,6 +261,7 @@ function SearchOrderTile({
                 Not your job
               </span>
             )}
+            <NsaTag owned={order.nsaOwned} size="xs" />
             {order.materialJob && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#6DB344]/15 text-[#6DB344] font-semibold">
                 Linked

@@ -44,6 +44,13 @@ export interface WorkOrder {
   accountName: string;
   latitude: number | null;
   longitude: number | null;
+  /**
+   * rForce's "NSA Ownership" checkbox (migration 062). Drives the NSA marker on
+   * tiles and the expanded card. On a freshly parsed upload it is `undefined`
+   * when the report has no such column, which tells the importer to leave the
+   * stored flag alone; every row read back from the database has a real boolean.
+   */
+  nsaOwned?: boolean;
   materialJob?: MaterialJobData | null;
   /** Legacy install-instructions URL (Google Drive), shown only when there is
    *  no paired materialJob. See legacy_install_links table / migration 015. */
