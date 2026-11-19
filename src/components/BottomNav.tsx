@@ -1,13 +1,23 @@
 "use client";
 
+import { useEffect, useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Calendar, Search, ScrollText, Wrench, BadgeDollarSign, ClipboardCheck } from "lucide-react";
-import { useLayoutEffect, useState } from "react";
+import { Calendar, Search, ScrollText, Wrench, BadgeDollarSign, ClipboardCheck, MessageCircle } from "lucide-react";
 import { readRememberedRoles, useAuth } from "@/hooks/useAuth";
 import { useMfmNotices } from "@/hooks/useMfmNotices";
 import { useJobCompleteTodo } from "@/hooks/useJobCompleteTodo";
-import { canSeeWriteUps, isAdmin, isInstaller, isInstallerLead, isMfmSubmitter } from "@/lib/roles";
+import {
+  canSeeWriteUps,
+  canUseInstallerChat,
+  isAdmin,
+  isInstaller,
+  isInstallerLead,
+  isMfmSubmitter,
+} from "@/lib/roles";
+
+/** How often to ask whether anything new has arrived in Chat. */
+const UNREAD_POLL_MS = 60_000;
 
 // Settings lives in the top-right of the calendar header, not the bottom nav.
 const NAV_ITEMS = [
@@ -24,6 +34,9 @@ const NAV_ITEMS = [
   { href: "/more-for-more", label: "More for More", icon: BadgeDollarSign, installerLead: true },
   // Write-Ups is gated below (admin + field-manager only for now).
   { href: "/work-orders", label: "Write-Ups", icon: Wrench, writeUps: true },
+  // Chat (GroupMe installer threads) is gated below — admin only during the
+  // pilot. Stays last so it reads as the newest, least-established tab.
+  { href: "/chat", label: "Chat", icon: MessageCircle, chat: true },
 ];
 
 /**
@@ -55,15 +68,58 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
   // Install leads (and admins) get the combined tab; a More for More Submitter
   // who isn't a lead still just sees More for More.
   const submissions = !!roles && (isInstallerLead(roles) || isAdmin(roles));
-  // Hide the Write-Ups tab from regular members during the soft rollout.
+  const canChat = canUseInstallerChat(roles);
+  // Real signed-in roles, not previewRoles: the harness pages must not start
+  // polling GroupMe just because they draw an admin's bar.
+  const pollChat = !previewRoles && canUseInstallerChat(auth.roles);
+  const [chatUnread, setChatUnread] = useState(0);
+
+  // Unread count for the Chat tab. Per signed-in user, so one person reading a
+  // conversation never clears anyone else's badge.
+  //
+  // Polled rather than pushed: the app runs on serverless hosting that cannot
+  // hold a connection open. A minute is deliberately unhurried -- this is a
+  // "someone is waiting on you" hint, not a live ticker.
+  useEffect(() => {
+    if (!pollChat) return;
+
+    let cancelled = false;
+    const check = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const res = await fetch("/api/groupme/unread");
+        if (!res.ok) return;
+        const body = await res.json();
+        if (!cancelled) setChatUnread(Number(body.total) || 0);
+      } catch {
+        // Offline or GroupMe hiccuping. Leave the last known count alone
+        // rather than flashing it to zero.
+      }
+    };
+
+    check();
+    const timer = setInterval(check, UNREAD_POLL_MS);
+    // Catch up straight away when someone comes back to the tab.
+    document.addEventListener("visibilitychange", check);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [pollChat, pathname]);
+
+  // Hide the Write-Ups tab from regular members during the soft rollout, and
+  // the Chat tab from everyone but admins during the GroupMe pilot.
   const items = NAV_ITEMS.filter((i) =>
     !roles
       ? // Roles not known yet: only the tabs nobody is ever denied.
-        !i.writeUps && !i.notInstaller && !i.installerLead
+        !i.writeUps && !i.notInstaller && !i.installerLead && !i.chat
       : (!i.writeUps || canSeeWriteUps(roles)) &&
       (!i.notInstaller || !(isInstaller(roles) || (isInstallerLead(roles) && !isAdmin(roles)))) &&
       // Admins always see everything, so they get it without the role.
-      (!i.installerLead || isInstallerLead(roles) || isAdmin(roles) || isMfmSubmitter(roles))
+      (!i.installerLead || isInstallerLead(roles) || isAdmin(roles) || isMfmSubmitter(roles)) &&
+      (!i.chat || canChat)
   );
 
   return (
@@ -96,6 +152,14 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
                   aria-label={`${badgeCount} need your attention`}
                 >
                   {badgeCount}
+                </span>
+              )}
+              {href === "/chat" && chatUnread > 0 && (
+                <span
+                  className="absolute -top-1.5 -right-2 min-w-[18px] h-[18px] rounded-full bg-danger text-white text-[10px] font-bold leading-[18px] text-center px-1"
+                  aria-label={`${chatUnread} conversation${chatUnread === 1 ? "" : "s"} with new messages`}
+                >
+                  {chatUnread > 9 ? "9+" : chatUnread}
                 </span>
               )}
             </span>

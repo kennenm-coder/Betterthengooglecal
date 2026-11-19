@@ -45,8 +45,11 @@
 -- their NOT is_installer() clause, silently undoing the installer
 -- role. Fix a genuine gap with a NEW migration.
 --
--- Housekeeping: there is no 025 (numbering gap), and there are two
--- 004s (004_payroll_admin_team_access and 004_scheduling_roles).
+-- Housekeeping: 025, 025b and 025c are the GroupMe chat tables. They
+-- were written as 025-027 on the shelved groupme-chat branch and
+-- applied live on 2026-10-01, then renamed so they don't clash with
+-- the floater migrations that took 026/027. There are also two 004s
+-- (004_payroll_admin_team_access and 004_scheduling_roles).
 --
 -- Last full run: 2026-10-15 — every migration 001-038 applied.
 -- 039 applied 2026-10-23 (index confirmed present in pg_indexes).
@@ -216,6 +219,22 @@ checks(migration, feature, verdict, checked) as (values
                           'parts_catalog','work_catalog')) = 5
        then 'APPLIED' else 'NOT APPLIED' end,
   'SELECT granted to authenticated on all five tables'),
+
+ ('025', 'GroupMe chat: links + tokens',
+  case when exists(select 1 from tbl where k = 'installer_chats')
+        and exists(select 1 from tbl where k = 'groupme_tokens')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'installer_chats and groupme_tokens tables'),
+
+ ('025b', 'GroupMe chat: unread bookmarks',
+  case when exists(select 1 from tbl where k = 'installer_chat_reads')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'installer_chat_reads table'),
+
+ ('025c', 'GroupMe chat: non-installer chats',
+  case when exists(select 1 from col where k = 'installer_chats.is_installer')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'installer_chats.is_installer column'),
 
  ('026', 'floaters: free install leads',
   case when not exists(select 1 from fn where k = 'sched_free_install_leads') then 'NOT APPLIED'

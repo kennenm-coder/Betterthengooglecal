@@ -7,6 +7,22 @@
       "runtimeArgs": ["next", "dev"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "dev-https",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "next",
+        "dev",
+        "--experimental-https",
+        "--experimental-https-key",
+        "certificates/localhost-key.pem",
+        "--experimental-https-cert",
+        "certificates/localhost.pem"
+      ],
+      "port": 3000,
+      "autoPort": false,
+      "url": "https://localhost:3000"
     }
   ]
 }
