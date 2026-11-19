@@ -15,6 +15,7 @@ import {
   DEFAULT_FIELDNOTES_EMAIL,
 } from "@/lib/action-settings";
 import { ActionLogEntry } from "@/lib/types";
+import { LOG_ACTION_ENABLED } from "@/lib/feature-flags";
 import BottomNav from "@/components/BottomNav";
 import {
   Upload,
@@ -124,7 +125,7 @@ function UnlockedContent() {
             { id: "team" as const, label: "Team", icon: Users },
             { id: "log" as const, label: "Action Log", icon: ClipboardList },
             { id: "upload" as const, label: "Upload", icon: Upload },
-          ]).map(({ id, label, icon: Icon }) => (
+          ]).filter(({ id }) => id !== "log" || LOG_ACTION_ENABLED).map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setTab(id)}
@@ -1335,7 +1336,8 @@ function SettingsTab() {
 
   return (
     <div className="space-y-6">
-      {/* Action Types */}
+      {/* Action Types — only used by Log Action, hidden while it's off */}
+      {LOG_ACTION_ENABLED && (
       <section>
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-3">
           Action Types
@@ -1373,6 +1375,7 @@ function SettingsTab() {
           </div>
         </div>
       </section>
+      )}
 
       <EmailDefaultsSection />
 
@@ -1422,8 +1425,10 @@ function EmailDefaultsSection() {
         Email Defaults
       </h2>
       <p className="text-xs text-muted mb-3">
-        Default recipients used when field managers submit write-ups and field
-        notes. Each user&apos;s own auto-CC list is still added on top.
+        {LOG_ACTION_ENABLED
+          ? "Default recipients used when field managers submit write-ups and field notes."
+          : "Default recipients used when field managers submit write-ups."}{" "}
+        Each user&apos;s own auto-CC list is still added on top.
       </p>
       {loading ? (
         <div className="flex items-center gap-2 text-muted text-sm py-2">
@@ -1448,6 +1453,7 @@ function EmailDefaultsSection() {
               submitted write-up.
             </p>
           </div>
+          {LOG_ACTION_ENABLED && (
           <div>
             <label className="text-[11px] font-medium text-muted mb-1 block">
               Field Notes Email
@@ -1464,6 +1470,7 @@ function EmailDefaultsSection() {
               email.
             </p>
           </div>
+          )}
           <button
             onClick={save}
             disabled={saving}

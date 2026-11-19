@@ -28,6 +28,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import ActionModal from "./ActionModal";
+import { LOG_ACTION_ENABLED } from "@/lib/feature-flags";
 import WriteUpModal from "./WriteUpModal";
 import ProductSpecs from "./ProductSpecs";
 import JobReferencePanel from "./JobReferencePanel";
@@ -345,7 +346,7 @@ export default function JobCard({
                   <Hammer className="w-5 h-5 text-amber-600" />
                 </button>
               )}
-              {fieldWorker && (
+              {fieldWorker && LOG_ACTION_ENABLED && (
                 <button
                   onClick={() => setShowAction(true)}
                   className="p-1.5 rounded-lg border border-primary/30 bg-primary/10 hover:bg-primary/20 transition-colors"
