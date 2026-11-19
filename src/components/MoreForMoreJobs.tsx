@@ -67,6 +67,7 @@ export default function MoreForMoreJobs({
   const { orders, loading: dataLoading, loadingBackground } = useData();
   const [flags, setFlags] = useState<Map<string, JobFlag>>(new Map());
   const [flagsLoading, setFlagsLoading] = useState(true);
+  const [flagsFailed, setFlagsFailed] = useState(false);
   const [filter, setFilter] = useState<Filter>("missing");
   const [query, setQuery] = useState("");
   const [from, setFrom] = useState("");
@@ -79,6 +80,13 @@ export default function MoreForMoreJobs({
     let live = true;
     fetchJobFlags()
       .then((f) => live && setFlags(f))
+      .catch(() => {
+        if (!live) return;
+        // Saving a mark fills in the other one from `flags`, so with nothing
+        // loaded every save would wipe real paper / excluded marks. Lock saves.
+        setFlagsFailed(true);
+        setError("Couldn't load the On paper / Excluded marks. Reload before changing any.");
+      })
       .finally(() => live && setFlagsLoading(false));
     return () => {
       live = false;
@@ -142,6 +150,10 @@ export default function MoreForMoreJobs({
   });
 
   async function update(orderNumbers: string[], patch: Partial<Pick<JobFlag, "paper" | "excluded">>, key: string) {
+    if (flagsFailed) {
+      setError("Couldn't load the On paper / Excluded marks. Reload before changing any.");
+      return;
+    }
     setBusy(key);
     setError("");
     try {

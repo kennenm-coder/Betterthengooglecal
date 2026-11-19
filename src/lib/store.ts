@@ -500,6 +500,45 @@ export function clearMeasureCache(): void {
   }
 }
 
+// --- Whose calendar the saved copies belong to ---
+// The saved copies are one person's view: an installer's database view trims
+// customer contact details and totals that a field manager's includes. On a
+// shared phone or office PC the next person must never be shown the last
+// person's copy, so sign-out wipes them, and each copy is stamped with its
+// owner so a mismatch is caught even when sign-out happened some other way.
+const CACHE_OWNER_KEY = "rba-field-cal-owner";
+
+/** Wipe every saved copy of the signed-in person's calendar on this device. */
+export function clearSavedCalendarData(): void {
+  if (typeof window === "undefined") return;
+  try {
+    for (const key of [STORAGE_KEY, STORAGE_TMP_KEY, TIMESTAMP_KEY, CACHE_META_KEY, MEASURE_CACHE_KEY, CACHE_OWNER_KEY]) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    /* storage unavailable — nothing was saved */
+  }
+  invalidateMaterialJobsCache();
+  invalidateLegacyLinksCache();
+}
+
+/** The user id the saved copies belong to, or null if not stamped yet. */
+export function savedCalendarOwner(): string | null {
+  try {
+    return localStorage.getItem(CACHE_OWNER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function markSavedCalendarOwner(userId: string): void {
+  try {
+    localStorage.setItem(CACHE_OWNER_KEY, userId);
+  } catch {
+    /* ignore */
+  }
+}
+
 // --- Merge utility ---
 
 export function mergeOrders(existing: WorkOrder[], incoming: WorkOrder[]): WorkOrder[] {
@@ -935,6 +974,21 @@ export async function fetchMaterialJobsWithSignature(
       // Never persist an empty map or an untagged one — an RLS/transient empty
       // result must not shadow the real data on the next boot.
       if (sig) kvSet(JOBS_KV_KEY, { sig, entries: Array.from(jobs.entries()) }).catch(() => {});
+      return { jobs, sig };
+    }
+    // The download came back empty — on this business that's a failed pull
+    // (weak signal, timeout), never "there are no jobs". Hand back the last
+    // jobs we had rather than an empty map, which would strip the install
+    // instructions off every tile. Their (older) signature goes with them, so
+    // the next check still sees that jobs changed and tries again.
+    if (_materialJobsCache && _materialJobsCache.size > 0) {
+      return { jobs: _materialJobsCache, sig: _materialJobsSig };
+    }
+    if (persistedEntries) {
+      const saved = new Map<string, any>(persistedEntries);
+      _materialJobsCache = saved;
+      _materialJobsSig = persisted?.sig ?? "";
+      return { jobs: saved, sig: _materialJobsSig };
     }
     return { jobs, sig };
   })().finally(() => {
@@ -1188,6 +1242,11 @@ export function invalidateLegacyLinksCache() {
   _legacyLinksCache = null;
 }
 
+/**
+ * Throws when the lookup fails, rather than answering "no links": an empty
+ * answer gets applied to every tile (and saved), which wiped the legacy
+ * install links on a weak signal. Callers catch and keep what they have.
+ */
 export async function fetchLegacyLinks(): Promise<Map<string, string>> {
   if (_legacyLinksCache) return _legacyLinksCache;
   const map = new Map<string, string>();
@@ -1196,7 +1255,8 @@ export async function fetchLegacyLinks(): Promise<Map<string, string>> {
   const { data, error } = await supabase
     .from("legacy_install_links")
     .select("order_number, url");
-  if (error || !data) return map;
+  if (error) throw error;
+  if (!data) return map;
   for (const row of data as { order_number: string; url: string }[]) {
     if (row.order_number && row.url) map.set(row.order_number, row.url);
   }
@@ -1237,15 +1297,38 @@ export async function deleteLegacyLink(orderNumber: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Attach install instructions (material job) and legacy install links.
+ *
+ * Either source can be not-loaded-yet: an EMPTY jobs map (never a real answer
+ * here) or a null legacy map. Then each order keeps what it already had — or,
+ * for fresh rows straight from the database, what the same order had in
+ * `previous` (what was on screen). Before, a not-yet-loaded source wiped the
+ * buttons off every tile, and that stripped list was saved for offline use.
+ */
 export function enrichWithMaterials(
   orders: WorkOrder[],
   jobByPO: Map<string, any>,
-  legacyByOrder: Map<string, string> | null = _legacyLinksCache
+  legacyByOrder: Map<string, string> | null = _legacyLinksCache,
+  previous?: WorkOrder[]
 ): WorkOrder[] {
+  const jobsKnown = jobByPO.size > 0;
+  const legacyKnown = !!legacyByOrder;
+  let prevByOrder: Map<string, WorkOrder> | null = null;
+  if (previous && (!jobsKnown || !legacyKnown)) {
+    prevByOrder = new Map();
+    for (const p of previous) {
+      if (p.materialJob || p.legacyInstallUrl) prevByOrder.set(p.orderNumber, p);
+    }
+  }
   return orders.map((wo) => ({
     ...wo,
-    materialJob: jobByPO.get(wo.orderNumber) || null,
-    legacyInstallUrl: legacyByOrder?.get(wo.orderNumber) || null,
+    materialJob: jobsKnown
+      ? jobByPO.get(wo.orderNumber) || null
+      : wo.materialJob ?? prevByOrder?.get(wo.orderNumber)?.materialJob ?? null,
+    legacyInstallUrl: legacyKnown
+      ? legacyByOrder.get(wo.orderNumber) || null
+      : wo.legacyInstallUrl ?? prevByOrder?.get(wo.orderNumber)?.legacyInstallUrl ?? null,
   }));
 }
 

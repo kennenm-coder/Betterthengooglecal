@@ -37,6 +37,9 @@ export const SPECIAL_LABEL: Record<SpecialKind, string> = {
   office_day: "Office Day",
 };
 
+// The last answer per date range, for this page session (see the failure path).
+const lastGoodByRange = new Map<string, SpecialDay[]>();
+
 /**
  * Special days for an inclusive date range.
  *
@@ -48,6 +51,7 @@ export async function fetchSpecialDays(startDate: string, endDate: string): Prom
   const sb = getSupabase();
   if (!sb) return [];
 
+  const rangeKey = `${startDate}|${endDate}`;
   const { data, error } = await sb.rpc("sched_special_days", {
     p_start: startDate,
     p_end: endDate,
@@ -55,7 +59,9 @@ export async function fetchSpecialDays(startDate: string, endDate: string): Prom
 
   if (error || !data) {
     if (error) console.warn("[special-days] lookup failed:", error.message);
-    return [];
+    // A failed lookup for a week we've already loaded keeps that week's tiles
+    // (Refresh on a weak signal used to wipe them) rather than answering empty.
+    return lastGoodByRange.get(rangeKey) ?? [];
   }
 
   const out: SpecialDay[] = [];
@@ -71,6 +77,7 @@ export async function fetchSpecialDays(startDate: string, endDate: string): Prom
       additionalTypes: row.additional_types ?? [],
     });
   }
+  lastGoodByRange.set(rangeKey, out);
   return out;
 }
 

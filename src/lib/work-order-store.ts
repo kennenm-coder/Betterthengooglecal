@@ -1364,6 +1364,9 @@ export async function createWriteUp(input: NewWriteUp): Promise<CreateWriteUpRes
     console.error("createWriteUp insert failed:", error);
     return { writeUp: null, error: error?.message || "Unknown database error." };
   }
+  // The Write-Ups tab reuses its saved list for 2 minutes; drop it so this
+  // change shows the next time the tab opens.
+  invalidateWriteUpsCache();
   return { writeUp: rowToWriteUp(data as FieldWorkOrderRow), error: null };
 }
 
@@ -1722,6 +1725,9 @@ export async function updateWriteUp(
     console.error("updateWriteUp failed:", error);
     return { ok: false, error: error.message };
   }
+  // The Write-Ups tab reuses its saved list for 2 minutes; drop it so this
+  // change shows the next time the tab opens.
+  invalidateWriteUpsCache();
   return { ok: true, error: null };
 }
 
@@ -1812,6 +1818,9 @@ export async function deleteWriteUpPhotos(
     console.error("deleteWriteUpPhotos row update failed:", error);
     return { ok: false, error: error.message };
   }
+  // The Write-Ups tab reuses its saved list for 2 minutes; drop it so this
+  // change shows the next time the tab opens.
+  invalidateWriteUpsCache();
   return { ok: true, error: null };
 }
 
@@ -1840,6 +1849,9 @@ export async function deleteWriteUp(
     console.error("deleteWriteUp failed:", error);
     return { ok: false, error: error.message };
   }
+  // The Write-Ups tab reuses its saved list for 2 minutes; drop it so this
+  // change shows the next time the tab opens.
+  invalidateWriteUpsCache();
   return { ok: true, error: null };
 }
 
@@ -1991,7 +2003,10 @@ export async function fetchWriteUps(statuses?: WriteUpStatus[]): Promise<FieldWo
   let query = supabase.from("field_work_orders").select("*");
   if (statuses && statuses.length) query = query.in("status", statuses);
   const { data, error } = await query.order("created_at", { ascending: false });
-  if (error || !data) return [];
+  // Throws on failure instead of answering "no write-ups", which emptied the
+  // Write-Ups tab on a weak signal. The caller keeps the list it's showing.
+  if (error) throw error;
+  if (!data) return [];
   const rows = (data as FieldWorkOrderRow[]).map(rowToWriteUp);
   // Only the un-filtered "all" list is cached (that's what the tab loads).
   if (!statuses || statuses.length === 0) cacheWriteUps(rows);
@@ -2053,7 +2068,11 @@ export async function fetchActiveWriteUpAddressIndex(): Promise<Map<string, Acti
     .from("field_work_orders")
     .select("id, order_number, address")
     .in("status", ACTIVE_WRITEUP_STATUSES);
-  if (error || !data) return index;
+  // A failed lookup throws rather than answering "no write-ups anywhere": the
+  // tiles used to take that empty answer and drop every Active Write-Ups
+  // button until the next reload. Callers catch and keep the index they have.
+  if (error) throw error;
+  if (!data) return index;
 
   for (const row of data as { id: string; order_number: string | null; address: string | null }[]) {
     const key = addressKey(row.address);

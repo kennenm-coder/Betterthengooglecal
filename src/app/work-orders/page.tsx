@@ -311,9 +311,13 @@ export default function WorkOrdersPage() {
 
   async function load(showSpinner = true) {
     if (showSpinner) setLoading(true);
-    const data = await fetchWriteUps();
-    setWriteUps(data);
-    setLoading(false);
+    try {
+      setWriteUps(await fetchWriteUps());
+    } catch {
+      // Weak signal: keep the list that's showing rather than emptying it.
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -1053,7 +1057,9 @@ export default function WorkOrdersPage() {
           onClose={() => setPending(null)}
           onSaved={() => {
             setPending(null);
-            load();
+            // Quietly, in the background: the list stays put (and keeps its
+            // scroll position) instead of flipping to a spinner.
+            load(false);
           }}
         />
       )}
@@ -1076,7 +1082,7 @@ export default function WorkOrdersPage() {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
-            load();
+            load(false);
           }}
         />
       )}

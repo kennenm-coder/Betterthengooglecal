@@ -26,10 +26,14 @@ import {
   invalidateLegacyLinksCache,
   yieldToMain,
   isCancelledAppointment,
+  clearSavedCalendarData,
+  savedCalendarOwner,
+  markSavedCalendarOwner,
 } from "@/lib/store";
 import {
   fetchActiveWriteUpAddressIndex,
   ActiveWriteUpRef,
+  invalidateWriteUpsCache,
 } from "@/lib/work-order-store";
 import {
   fetchPurchaseOrderIndex,
@@ -142,7 +146,7 @@ function getMonthsInRange(start: string, end: string): Set<string> {
 }
 
 export default function DataProvider({ children }: { children: ReactNode }) {
-  const { roles, user } = useAuth();
+  const { roles, user, loading: authLoading } = useAuth();
   const userId = user?.id ?? null;
   // Whose session the last refresh() ran under: undefined = not known yet,
   // null = nobody was signed in (the login page mounts this provider too).
@@ -194,6 +198,11 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     canMeasureRef.current = canMeasure;
+    // Until the sign-in check has answered, roles read as none — which used to
+    // land in the branch below and wipe a measure tech's saved Tech Measure
+    // tiles on every app open, so the no-signal copy was never there to use.
+    // Sign-out clears that copy itself (useAuth).
+    if (authLoading || !userId) return;
     if (!canMeasure) {
       setMeasureOrders([]);
       clearMeasureCache();
@@ -202,7 +211,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     const cached = loadMeasureCache();
     if (cached.length > 0) setMeasureOrders(cached);
     refreshMeasures();
-  }, [canMeasure, refreshMeasures]);
+  }, [canMeasure, refreshMeasures, authLoading, userId]);
 
   const refresh = useCallback(async () => {
     abortRef.current?.abort();
@@ -312,8 +321,14 @@ export default function DataProvider({ children }: { children: ReactNode }) {
 
       // Enrich with whatever is already in hand (both caches are warm on a
       // manual refresh; on a cold boot the handlers above fill in shortly).
-      const initialEnriched = enrichWithMaterials(initial, jobByPORef.current);
-      setOrders(initialEnriched);
+      // Until they land, each tile keeps the install instructions / legacy
+      // link it was showing (passing `prev`), so the buttons don't blink off
+      // and the saved copy isn't overwritten without them.
+      setOrders((prev) => {
+        const initialEnriched = enrichWithMaterials(initial, jobByPORef.current, undefined, prev);
+        saveBoundedCache(initialEnriched);
+        return initialEnriched;
+      });
       setLoading(false);
       setLastUpdated(new Date().toISOString());
 
@@ -326,9 +341,6 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       const initialMonths = getMonthsInRange(start.toISOString(), end.toISOString());
       loadedMonthsRef.current = initialMonths;
 
-      // Save bounded cache immediately
-      saveBoundedCache(initialEnriched);
-
       // Background phases
       setLoadingBackground(true);
 
@@ -338,10 +350,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         if (stale()) return;
         const unscheduled = await loadUnscheduled(ac.signal);
         if (stale()) return;
-        const enrichedUnsched = jobByPORef.current.size > 0
-          ? enrichWithMaterials(unscheduled, jobByPORef.current)
-          : unscheduled;
-        setOrders((prev) => mergeOrders(prev, enrichedUnsched));
+        setOrders((prev) =>
+          mergeOrders(prev, enrichWithMaterials(unscheduled, jobByPORef.current, undefined, prev))
+        );
         // Update cache with unscheduled included
         setOrders((prev) => {
           saveBoundedCache(prev);
@@ -355,10 +366,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       try {
         await loadFutureExtended((page) => {
           if (stale()) return;
-          const enrichedPage = jobByPORef.current.size > 0
-            ? enrichWithMaterials(page, jobByPORef.current)
-            : page;
-          setOrders((prev) => mergeOrders(prev, enrichedPage));
+          setOrders((prev) =>
+            mergeOrders(prev, enrichWithMaterials(page, jobByPORef.current, undefined, prev))
+          );
           // Mark months as loaded
           for (const o of page) {
             if (o.scheduledStart) {
@@ -416,10 +426,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     loadMonth(date.getFullYear(), date.getMonth() + 1, ac?.signal)
       .then((monthOrders) => {
         if (ac?.signal.aborted) return;
-        const enriched = jobByPORef.current.size > 0
-          ? enrichWithMaterials(monthOrders, jobByPORef.current)
-          : monthOrders;
-        setOrders((prev) => mergeOrders(prev, enriched));
+        setOrders((prev) =>
+          mergeOrders(prev, enrichWithMaterials(monthOrders, jobByPORef.current, undefined, prev))
+        );
         loadedMonthsRef.current.add(key);
       })
       .catch(() => {
@@ -441,6 +450,11 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     // force: bypass the in-memory + persisted caches — the whole point of this
     // action is that we know the jobs changed.
     const { jobs, sig } = await fetchMaterialJobsWithSignature({ force: true });
+    // Nothing came back (weak signal): keep the jobs on screen and leave the
+    // "linked jobs changed" banner up so they can tap it again. Applying the
+    // empty answer stripped install instructions off every tile and the
+    // offline copy, and switched off the change check.
+    if (jobs.size === 0) return;
     jobByPORef.current = jobs;
     jobsSigRef.current = sig;
     setMaterialJobs(Array.from(jobs.values()) as MaterialJobData[]);
@@ -616,15 +630,29 @@ export default function DataProvider({ children }: { children: ReactNode }) {
   // load again.
   useEffect(() => {
     if (!userId) return;
+    // Saved copies on this device that belong to someone else (a shared phone
+    // or office PC, signed out some way that didn't wipe them): the mount
+    // effect has already put them on screen, so clear them out — screen and
+    // storage — before this person sees the last one's jobs. That person's
+    // view can include customer details this one's doesn't.
+    const owner = savedCalendarOwner();
+    const someoneElsesCopy = !!owner && owner !== userId;
+    if (someoneElsesCopy) {
+      clearSavedCalendarData();
+      invalidateWriteUpsCache();
+      setMeasureOrders([]);
+    }
+    markSavedCalendarOwner(userId);
+
     const last = refreshedForRef.current;
-    if (last === undefined || last === userId) return;
+    if (!someoneElsesCopy && (last === undefined || last === userId)) return;
     // The module-level caches would otherwise hand back the empty answers from
     // the signed-out load (or, on a shared device, the previous person's jobs).
     invalidateMaterialJobsCache();
     invalidateLegacyLinksCache();
     jobByPORef.current = new Map();
     jobsSigRef.current = "";
-    if (last) {
+    if (last || someoneElsesCopy) {
       // A different person on the same screen: don't leave the last one's tiles up.
       setOrders([]);
       setMaterialJobs([]);

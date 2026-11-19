@@ -84,9 +84,11 @@ function AddressWriteUps() {
       // Opened from a tile, the index is already in memory and this is skipped.
       // On a hard refresh or a shared link it hasn't loaded yet, so pull it.
       if (ids.length === 0) {
-        const index = await fetchActiveWriteUpAddressIndex();
+        // A failed lookup shows the same "none here" as before; it throws now
+        // only so the service tiles can keep the index they already have.
+        const index = await fetchActiveWriteUpAddressIndex().catch(() => null);
         const key = addressKey(address);
-        ids = (index.get(key.street) || [])
+        ids = (index?.get(key.street) || [])
           .filter((h) => !key.zip || !h.zip || h.zip === key.zip)
           .map((h) => h.id);
       }

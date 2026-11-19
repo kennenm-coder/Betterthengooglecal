@@ -19,6 +19,12 @@ export function isPending(r: TimeOffRequest): boolean {
   return timeOffStatus(r) === "pending";
 }
 
+// The last list that loaded, for this page session. A failed load (weak
+// signal) hands this back instead of an empty list: an empty answer blanked
+// the PTO banners on Refresh, and the Floaters list — which leaves out people
+// who are off — then showed someone on PTO as free to send.
+let lastTimeOff: TimeOffRequest[] | null = null;
+
 export async function fetchTimeOffRequests(): Promise<TimeOffRequest[]> {
   const supabase = getSupabase();
   if (!supabase) return [];
@@ -28,8 +34,9 @@ export async function fetchTimeOffRequests(): Promise<TimeOffRequest[]> {
     .select("*")
     .order("start_date", { ascending: true });
 
-  if (error || !data) return [];
-  return data as TimeOffRequest[];
+  if (error || !data) return lastTimeOff ?? [];
+  lastTimeOff = data as TimeOffRequest[];
+  return lastTimeOff;
 }
 
 export async function addTimeOffRequest(

@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { createAuthClient } from "@/lib/supabase/client";
+import { clearSavedCalendarData } from "@/lib/store";
+import { invalidateWriteUpsCache } from "@/lib/work-order-store";
 import type { User } from "@supabase/supabase-js";
 
 export type UserRole =
@@ -212,6 +214,10 @@ function watchSignInOut() {
     if (event === "SIGNED_OUT") {
       fetchedAt = Date.now();
       rememberRoles(null);
+      // Don't leave this person's saved calendar and write-ups on the device
+      // for whoever signs in next (shared phones, the office PC).
+      clearSavedCalendarData();
+      invalidateWriteUpsCache();
       publish({ ...LOADING_STATE, loading: false });
     } else if (event === "SIGNED_IN" || event === "USER_UPDATED") {
       // The browser re-announces SIGNED_IN when a tab regains focus; only a

@@ -743,7 +743,13 @@ export interface JobFlag {
   excluded: boolean;
 }
 
-/** Every flagged job, keyed by order number. Empty before 048 runs. */
+/**
+ * Every flagged job, keyed by order number. Empty before 048 runs.
+ *
+ * Throws if any page fails. A short or empty map isn't just a display problem:
+ * setJobFlags fills the flag it isn't changing from this map, so saving from a
+ * map that failed to load wrote "not on paper" / "not excluded" over real marks.
+ */
 export async function fetchJobFlags(): Promise<Map<string, JobFlag>> {
   const out = new Map<string, JobFlag>();
   const s = getSupabase();
@@ -754,7 +760,8 @@ export async function fetchJobFlags(): Promise<Map<string, JobFlag>> {
       .from("more_for_more_jobs")
       .select("order_number, paper, excluded")
       .range(from, from + 999);
-    if (error || !data) break;
+    if (error) throw error;
+    if (!data) break;
     for (const r of data) out.set(r.order_number, { order_number: r.order_number, paper: !!r.paper, excluded: !!r.excluded });
     if (data.length < 1000) break;
   }

@@ -294,7 +294,10 @@ function LeadView() {
   useEffect(() => {
     if (!allowed) return;
     let live = true;
-    fetchJobFlags().then((f) => live && setFlags(f));
+    // Display only here; on a failed load keep the empty map, as before.
+    fetchJobFlags()
+      .then((f) => live && setFlags(f))
+      .catch(() => {});
     return () => {
       live = false;
     };

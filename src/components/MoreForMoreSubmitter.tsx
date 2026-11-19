@@ -115,7 +115,8 @@ export default function MoreForMoreSubmitter() {
   useEffect(() => {
     if (!email) return;
     reload();
-    fetchJobFlags().then(setFlags);
+    // Display only here; on a failed load keep the empty map, as before.
+    fetchJobFlags().then(setFlags).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [email]);
 
