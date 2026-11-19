@@ -68,7 +68,7 @@ function ChatPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { orders } = useData();
-  const { user, role, roles } = useAuth();
+  const { user, roles, loading: authLoading } = useAuth();
   const allowed = canUseInstallerChat(roles);
 
   const [connection, setConnection] = useState<ConnectionState | null>(null);
@@ -94,9 +94,12 @@ function ChatPageInner() {
   const [otherError, setOtherError] = useState<string | null>(null);
 
   // Admin only -- same redirect pattern as the legacy-links screen.
+  // Wait for the sign-in check to finish first: until then `roles` is empty, so
+  // an admin opening /chat directly (a refresh, a bookmark) was bounced to
+  // Settings before their roles had loaded.
   useEffect(() => {
-    if (role && !allowed) router.replace("/settings");
-  }, [role, allowed, router]);
+    if (!authLoading && user && !allowed) router.replace("/settings");
+  }, [authLoading, user, allowed, router]);
 
   // Surface the result of the GroupMe redirect, then drop it from the URL so
   // a refresh doesn't replay the banner.
