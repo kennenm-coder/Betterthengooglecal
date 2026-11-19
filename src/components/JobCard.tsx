@@ -44,7 +44,7 @@ import { parseISO, isSameDay } from "date-fns";
 import { describeParts } from "@/lib/purchase-orders";
 import CrewWorkChecklist from "./CrewWorkChecklist";
 import WriteUpCompletedBy from "./WriteUpCompletedBy";
-import JobAlertBox from "./JobAlertBox";
+import JobAlertButton from "./JobAlertButton";
 
 function isValidHttpUrl(s: string): boolean {
   try {
@@ -351,6 +351,9 @@ export default function JobCard({
                   <Hammer className="w-5 h-5 text-amber-600" />
                 </button>
               )}
+              {/* Job Alert sits where Log Action used to be, on every job card
+                  (Tech Measures too). Field managers + admins only. */}
+              {canDoFieldWork(roles) && <JobAlertButton order={order} />}
               {canDoFieldWork(roles) && !isMeasure && LOG_ACTION_ENABLED && (
                 <button
                   onClick={() => setShowAction(true)}
@@ -576,10 +579,6 @@ export default function JobCard({
               </div>
             )}
           </div>
-
-          {/* Job Alert — a field manager's reminder note, emailed to them 5
-              workdays before this appointment. Field managers + admins only. */}
-          {canDoFieldWork(roles) && !isMeasure && <JobAlertBox order={order} />}
 
           {/* Install Notes — always visible when material job is paired */}
           {mat?.job.installNotes?.trim() && (

@@ -15,7 +15,17 @@ import type { WorkOrder } from "@/lib/types";
  * every note with who wrote it. Everyone sees all notes; you change only your
  * own. Migrations 064 + 065.
  */
-export default function JobAlertBox({ order }: { order: WorkOrder }) {
+export default function JobAlertBox({
+  order,
+  onCount,
+  bare = false,
+}: {
+  order: WorkOrder;
+  /** Told how many notes the job has whenever that changes (the button badge). */
+  onCount?: (n: number) => void;
+  /** Inside the Job Alert pop-up: no divider above it. */
+  bare?: boolean;
+}) {
   const { user, name } = useAuth();
   const me = (user?.email || "").toLowerCase();
   const appt = appointmentDate(order.scheduledStart);
@@ -25,6 +35,10 @@ export default function JobAlertBox({ order }: { order: WorkOrder }) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (alerts) onCount?.(alerts.length);
+  }, [alerts, onCount]);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,7 +100,7 @@ export default function JobAlertBox({ order }: { order: WorkOrder }) {
   }
 
   return (
-    <div className="mt-3 pt-3 border-t border-border">
+    <div className={bare ? "" : "mt-3 pt-3 border-t border-border"}>
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
         <div className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
           <AlarmClock className="w-3.5 h-3.5" />
