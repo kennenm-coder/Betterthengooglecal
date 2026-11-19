@@ -168,6 +168,7 @@ export async function POST(request: NextRequest) {
       submissionId: row.submission_id,
       eventType: `${row.kind}_${status}`,
       actor: name,
+      actorEmail: user!.email,
       referenceCode: row.reference_code,
       note,
     });

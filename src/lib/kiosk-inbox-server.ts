@@ -381,7 +381,14 @@ export async function logKioskEvent(
   entry: {
     submissionId: string | null;
     eventType: string;
+    /** The approver's name, as the roster has it right now. */
     actor: string;
+    /**
+     * The approver's login email: unlike a name it names exactly one person, and
+     * it is the only identifier for who decided a time card (whose own row holds
+     * just the name).
+     */
+    actorEmail?: string;
     referenceCode: string | null;
     note: string | null;
   }
@@ -391,7 +398,11 @@ export async function logKioskEvent(
       submission_id: entry.submissionId,
       event_type: entry.eventType,
       actor: entry.actor,
-      payload: { referenceCode: entry.referenceCode, note: entry.note },
+      payload: {
+        referenceCode: entry.referenceCode,
+        note: entry.note,
+        ...(entry.actorEmail ? { reviewedByEmail: entry.actorEmail.toLowerCase() } : {}),
+      },
     });
     if (error) throw new Error(error.message);
   } catch (e) {

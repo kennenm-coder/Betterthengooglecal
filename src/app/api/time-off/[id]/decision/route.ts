@@ -113,6 +113,7 @@ export async function POST(
         submissionId: data.kiosk_submission_id,
         eventType: `time_off_${status}`,
         actor: reviewedByName,
+        actorEmail: user!.email,
         referenceCode: data.reference_code ?? null,
         note: note || null,
       });
