@@ -15,6 +15,7 @@ import { BadgeDollarSign, Search, X, Loader2, ChevronRight, Inbox } from "lucide
 import BottomNav from "@/components/BottomNav";
 import MoreForMoreForm from "@/components/MoreForMoreForm";
 import MoreForMoreCrews from "@/components/MoreForMoreCrews";
+import ClearableDate from "@/components/ClearableDate";
 import { useData } from "@/components/DataProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { refreshMfmNotices } from "@/hooks/useMfmNotices";
@@ -288,11 +289,10 @@ export default function MoreForMoreSubmitter() {
           </div>
           <label className="shrink-0 space-y-0.5">
             <span className="block text-[10px] text-muted leading-none">Installed from</span>
-            <input
-              type="date"
+            <ClearableDate
               min={SUBMITTER_START_DATE}
               value={from}
-              onChange={(e) => setFrom(e.target.value)}
+              onChange={setFrom}
               className="rounded-lg border border-border bg-surface px-2 py-1 text-xs"
             />
           </label>

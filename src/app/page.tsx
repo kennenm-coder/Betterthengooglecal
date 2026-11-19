@@ -19,6 +19,7 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   canManageTimeOff as canManageTimeOffRole,
   isMfmSubmitter,
+  canProcessMoreForMore,
   canSeeFloaters,
   canSeeMeasureTiles,
   isInstaller,
@@ -53,6 +54,7 @@ function CalendarPage() {
   const canManageTimeOff = canManageTimeOffRole(roles);
   // The More for More Submitter's quick way to the office More for More tab.
   const showMfmButton = isMfmSubmitter(roles);
+  const showPayroll = canProcessMoreForMore(roles);
   const { isStale: hourlyStale, staleAfter, nextUpdate, isDesktop, dismiss, resetBlock } = useStaleTab();
   // One refresh button for everything: it lights up amber when an hourly import
   // has landed OR when linked material jobs were edited. Tapping it re-pulls
@@ -285,25 +287,17 @@ function CalendarPage() {
 
           <div className="flex-1" />
 
-          {canManageTimeOff && (
+          {/* ONE button to the Payroll Admin page (it holds Time Off and More for
+              More as tabs). People who work payroll see "Payroll"; field managers
+              and approvers, who only get Time Off there, keep "Time Off". */}
+          {(canManageTimeOff || showMfmButton) && (
             <button
-              onClick={() => router.push("/time-off")}
+              onClick={() => router.push(canManageTimeOff ? "/time-off" : "/time-off?tab=mfm")}
               className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-md bg-rba-green text-white font-medium shrink-0 active:scale-[0.97] transition-all"
-              title="Add Time Off"
+              title={showPayroll ? "Payroll Admin: Time Off, More for More and more" : "Add Time Off"}
             >
-              <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Time Off</span>
-            </button>
-          )}
-
-          {showMfmButton && (
-            <button
-              onClick={() => router.push("/time-off?tab=mfm")}
-              className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-md bg-rba-green text-white font-medium shrink-0 active:scale-[0.97] transition-all"
-              title="More for More: finish sheets, send back, download"
-            >
-              <BadgeDollarSign className="w-4 h-4" />
-              <span className="hidden sm:inline">More for More</span>
+              {showPayroll ? <BadgeDollarSign className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+              <span className="hidden sm:inline">{showPayroll ? "Payroll" : "Time Off"}</span>
             </button>
           )}
 

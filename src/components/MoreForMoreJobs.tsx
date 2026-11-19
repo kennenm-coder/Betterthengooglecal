@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { Loader2, Search, X, EyeOff, Eye, FileText, ChevronRight, Ban } from "lucide-react";
 import { useData } from "@/components/DataProvider";
+import ClearableDate from "@/components/ClearableDate";
 import { useAuth } from "@/hooks/useAuth";
 import { isAdmin } from "@/lib/roles";
 import { crewsForDate } from "@/lib/format-utils";
@@ -198,11 +199,11 @@ export default function MoreForMoreJobs({
         <div className="flex gap-2">
           <label className="flex-1 min-w-0 space-y-0.5">
             <span className="text-[11px] text-muted">Installed from</span>
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-sm" />
+            <ClearableDate value={from} onChange={setFrom} className="w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-sm" />
           </label>
           <label className="flex-1 min-w-0 space-y-0.5">
             <span className="text-[11px] text-muted">Installed to</span>
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-sm" />
+            <ClearableDate value={to} onChange={setTo} className="w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-sm" />
           </label>
         </div>
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar">

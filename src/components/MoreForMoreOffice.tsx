@@ -31,6 +31,7 @@ import { canManageMoreForMore } from "@/lib/roles";
 import MoreForMoreForm from "@/components/MoreForMoreForm";
 import MoreForMoreJobs from "@/components/MoreForMoreJobs";
 import MoreForMoreCrews from "@/components/MoreForMoreCrews";
+import ClearableDate from "@/components/ClearableDate";
 import type { WorkOrder } from "@/lib/types";
 import { fetchMoreForMores, money, type JobSnapshot, type MoreForMore } from "@/lib/more-for-more";
 
@@ -257,19 +258,17 @@ export default function MoreForMoreOffice() {
               </div>
               <label className="flex-1 min-w-[120px] space-y-0.5">
                 <span className="text-[11px] text-muted">{basis === "installed" ? "Installed" : "Submitted"} from</span>
-                <input
-                  type="date"
+                <ClearableDate
                   value={from}
-                  onChange={(e) => setFrom(e.target.value)}
+                  onChange={setFrom}
                   className="w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-sm"
                 />
               </label>
               <label className="flex-1 min-w-[120px] space-y-0.5">
                 <span className="text-[11px] text-muted">{basis === "installed" ? "Installed" : "Submitted"} to</span>
-                <input
-                  type="date"
+                <ClearableDate
                   value={to}
-                  onChange={(e) => setTo(e.target.value)}
+                  onChange={setTo}
                   className="w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-sm"
                 />
               </label>
