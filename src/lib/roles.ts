@@ -222,6 +222,17 @@ export function canWriteUps(roles: RoleInput): boolean {
 }
 
 /**
+ * Who gets notifications today, and so who is offered phone buzzes once on
+ * the calendar (PushInvite). Field managers and admins — the only people any
+ * notification is sent to so far (a Write-Up Rep's submit/edit). Widen this
+ * when a new kind of notification goes to someone else (Job Alert, a rep's
+ * write-up approved), or the invite will keep missing the people it's for.
+ */
+export function receivesNotifications(roles: RoleInput): boolean {
+  return canDoFieldWork(roles);
+}
+
+/**
  * A Write-Up Rep with no field-manager powers on top. Their edits are limited
  * to their own write-ups and send approved ones back for re-approval; their
  * Write-Ups-page check-offs go through the crew check-off function.

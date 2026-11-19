@@ -13,6 +13,7 @@ import TimeOffBanner from "@/components/TimeOffBanner";
 import StaleTabTag from "@/components/StaleTabBanner";
 import { useStaleTab } from "@/hooks/useStaleTab";
 import NotificationBell from "@/components/NotificationBell";
+import PushInvite from "@/components/PushInvite";
 import TimeOffBell from "@/components/TimeOffBell";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -359,6 +360,10 @@ function CalendarPage() {
       {/* A lead's More for More news: sent back (fix it) or approved. Draws
           nothing for anyone who doesn't fill out More for Mores. */}
       <MoreForMoreNotices />
+
+      {/* One-time "phone buzzes are available" card. Gone for good on this
+          device once answered; only for people who get notifications. */}
+      <PushInvite />
 
       <TimeOffBanner requests={timeOffRequests} date={currentDate} />
 
