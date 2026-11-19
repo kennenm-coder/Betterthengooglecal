@@ -8,7 +8,7 @@ import { buildNwoRows, buildBoardSummaryByUnit, fetchCatalogAndOffsets, NwoRow, 
 import { fetchInstallDoc, dash } from "@/lib/install-doc";
 import { fetchWriteUpsForOrder, applySpecChangesToUnits, unitAbbrevOf } from "@/lib/work-order-store";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork, isInstaller } from "@/lib/roles";
+import { canWriteUps, isInstaller } from "@/lib/roles";
 import WriteUpModal from "@/components/WriteUpModal";
 import { ArrowLeft, Loader2, AlertTriangle, Printer, Hammer } from "lucide-react";
 
@@ -117,7 +117,7 @@ export default function InstallInstructionsPage() {
   // (install_docs), or computed locally because no document exists yet.
   const [docSource, setDocSource] = useState<{ kind: "handoff"; builtAt: string | null; builtBy: string | null } | { kind: "computed" } | null>(null);
   const { roles } = useAuth();
-  const fieldWorker = canDoFieldWork(roles);
+  const fieldWorker = canWriteUps(roles);
 
   useEffect(() => {
     async function load() {

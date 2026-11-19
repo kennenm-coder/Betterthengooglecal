@@ -388,7 +388,15 @@ checks(migration, feature, verdict, checked) as (values
         and exists(select 1 from col where k = 'parts_catalog.details')
         and exists(select 1 from idx where k = 'uq_parts_catalog_source_ref')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'parts_catalog.section + source_ref + details AND the unique source_ref index')
+  'parts_catalog.section + source_ref + details AND the unique source_ref index'),
+
+ ('061', 'Write-Up Rep role (own write-ups only, no approve/close)',
+  case when exists(select 1 from fn where k = 'field_work_orders_rep_guard')
+        and exists(select 1 from pol where t = 'field_work_orders'
+                     and p = 'manage_update_field_work_orders' and body like '%writeup-rep%')
+        and exists(select 1 from fn where k = 'writeup_crew_set_done' and src like '%writeup-rep%')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'rep guard trigger function AND writeup-rep in the update policy AND in writeup_crew_set_done')
 )
 select migration, feature, verdict, checked
 from checks

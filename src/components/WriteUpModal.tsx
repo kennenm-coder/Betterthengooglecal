@@ -51,7 +51,7 @@ import {
   buildNotCompleteEmailContent,
   type WorkSource,
 } from "@/lib/work-order-store";
-import { canDoFieldWork } from "@/lib/roles";
+import { canWriteUps, isWriteUpRepOnly } from "@/lib/roles";
 import type { MaterialCatalog } from "@/lib/nwo-builder";
 import { familyMatcher, isInstallBucket, isUniversalType } from "@/lib/product-family";
 import {
@@ -526,6 +526,22 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
   const isBatchEdit = !!editBatch && editBatch.length > 0;
   // The old single-row flat editor only applies when NOT doing a guided batch edit.
   const isEditing = !!editWriteUp && !isBatchEdit;
+  // A Write-Up Rep (no field-manager powers) can't pick the status or delete,
+  // and editing a write-up past In Review sends it back for re-approval.
+  const repOnly = isWriteUpRepOnly(roles);
+  const editStartStatus: WriteUpStatus | null = isBatchEdit
+    ? editBatch![0].status
+    : editWriteUp
+      ? editWriteUp.status
+      : null;
+  const repSendsBack = repOnly && !!editStartStatus && editStartStatus !== "draft" && editStartStatus !== "in_review";
+  /** The status an edit saves with: the picked one, except a rep's edit of an
+   *  approved write-up always goes back to In Review (migration 061 refuses
+   *  anything further from a rep anyway). */
+  function statusToSave(): WriteUpStatus {
+    if (!repOnly) return status;
+    return repSendsBack ? "in_review" : editStartStatus || status;
+  }
   // Back acts like the X: asks first if there is unsaved work.
   useBackClose(() => attemptClose());
   const [presets, setPresets] = useState<string[]>([]);
@@ -1680,6 +1696,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       .filter((p) => p.path)
       .map((p) => ({ path: p.path!, name: p.name }));
     const newPhotoFiles = editPhotos.filter((p) => !p.path && p.blob).map((p) => p.blob!);
+    const saveStatus = statusToSave();
     const res = await updateWriteUp(editWriteUp.id, {
       orderNumber: order.orderNumber || editWriteUp.orderNumber,
       unitLabel: editUnitLabel.trim() || null,
@@ -1688,7 +1705,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       materialItems,
       newProduct: editWriteUp.newProduct,
       notes: editNote.trim(),
-      status,
+      status: saveStatus,
       previousStatus: editWriteUp.status,
       keepPhotos,
       newPhotoFiles,
@@ -1700,7 +1717,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       setError(res.error ? `Couldn't save: ${res.error}` : "Couldn't save changes — try again.");
       return;
     }
-    if (status !== "draft") requestWriteUpKindStamp(order.orderNumber || editWriteUp.orderNumber);
+    if (saveStatus !== "draft") requestWriteUpKindStamp(order.orderNumber || editWriteUp.orderNumber);
     finishAfterEdit(await handOffEditedTrim(materialItems));
   }
 
@@ -1751,7 +1768,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       createdByName: editBatch[0].createdByName,
       updatedBy: user?.email || "",
       updatedByName: user?.email?.split("@")[0] || "",
-      status,
+      status: statusToSave(),
     };
     const { mergedIssues } = flushAdders();
     const res = await saveWriteUpBatchEdit(editBatch, ctx, buildInputs(mergedIssues), (done, total) =>
@@ -1764,7 +1781,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       return;
     }
     autoAddToCatalogs();
-    if (status !== "draft") requestWriteUpKindStamp(ctx.orderNumber);
+    if (ctx.status !== "draft") requestWriteUpKindStamp(ctx.orderNumber);
     finishAfterEdit(await handOffEditedTrim(buildInputs(mergedIssues).flatMap((i) => i.materialItems)));
   }
   async function saveAndClose() {
@@ -1854,7 +1871,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     }
     // An installer can't open trim orders (that queue is field-manager and
     // office only), so a crew follow-up leaves the trim for the office to send.
-    if (startStatus !== "draft" && (!crew || canDoFieldWork(roles))) {
+    if (startStatus !== "draft" && (!crew || canWriteUps(roles))) {
       handoff = await sendTrimToOrdering({
         orderNumber: order.orderNumber,
         customerName: order.customerName,
@@ -1942,7 +1959,7 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     await clearDraft(draftKey);
 
     let handoff: TrimHandoff | null = null;
-    if (canDoFieldWork(roles) && materials.length) {
+    if (canWriteUps(roles) && materials.length) {
       handoff = await sendTrimToOrdering({
         orderNumber: order.orderNumber,
         customerName: order.customerName,
@@ -2375,8 +2392,14 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
-          {/* Status — edit mode only */}
-          {(isEditing || isBatchEdit) && (
+          {/* Status — edit mode only. A rep doesn't choose it: a note says what
+              saving does instead. */}
+          {(isEditing || isBatchEdit) && repSendsBack && (
+            <p className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2.5 text-xs text-blue-700 dark:text-blue-300">
+              This write-up was already approved. Saving your changes sends it back to a manager to approve again.
+            </p>
+          )}
+          {(isEditing || isBatchEdit) && !repOnly && (
             <section>
               <SectionLabel>Status</SectionLabel>
               <div className="flex gap-2 mt-2">
@@ -2734,8 +2757,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
           )}
 
 
-          {/* Danger zone — delete the whole write-up (edit mode) */}
-          {(isEditing || isBatchEdit) && (
+          {/* Danger zone — delete the whole write-up (edit mode). Not for reps. */}
+          {(isEditing || isBatchEdit) && !repOnly && (
             <div className="pt-3 border-t border-border">
               {confirmDelete ? (
                 <div className="rounded-xl border border-danger/40 bg-danger/5 p-3">

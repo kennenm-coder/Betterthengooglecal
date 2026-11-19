@@ -42,7 +42,10 @@ export type UserRole =
   | "mfm-submitter"
   // Reads the office kiosk's feedback on the Payroll Admin page, and nothing
   // else there. Additive; created in the NWO hub's roster-roles.ts.
-  | "feedback";
+  | "feedback"
+  // Write-ups without the manager powers (see canWriteUps / isWriteUpRepOnly
+  // in lib/roles.ts and migration 061). Created in the NWO hub.
+  | "writeup-rep";
 
 interface AuthState {
   user: User | null;

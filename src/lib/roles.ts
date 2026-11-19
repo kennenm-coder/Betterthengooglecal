@@ -187,7 +187,9 @@ export function installerNeedsSetup(roles: RoleInput, crewNames: string[]): bool
   return isInstaller(roles) && crewNames.length === 0;
 }
 
-/** Roles allowed to create field write-ups and send field notes. */
+/** Roles that run the field: field managers (and admins). Gates the field
+ *  manager tools (Loading Schedule, Catalogs, Log Action) and full write-up
+ *  editing — editing anyone's write-up, closing it, deleting it. */
 export const FIELD_WORK_ROLES: UserRole[] = ["admin", "field-manager"];
 
 /**
@@ -196,6 +198,53 @@ export const FIELD_WORK_ROLES: UserRole[] = ["admin", "field-manager"];
  */
 export function canDoFieldWork(roles: RoleInput): boolean {
   return hasAny(roles, FIELD_WORK_ROLES);
+}
+
+// ─── Write-Up Rep ───────────────────────────────────────────────────────────
+//
+// `writeup-rep` does write-ups the way a field manager does — start one,
+// submit it (the email goes out on submit), photos, trim, check off work — but
+// without the manager powers: no approving, closing, reopening, archiving or
+// deleting, and they edit only the write-ups THEY started. Editing one that was
+// already approved sends it back to In Review for a manager to approve again.
+//
+// The database enforces the same thing (migration 061): own-rows-only updates,
+// and a trigger that refuses any status change past In Review or any new
+// "reviewed" stamp from a rep. These helpers only decide what to draw.
+
+/**
+ * Who can do write-ups at all: the New write-up / hammer buttons, submitting,
+ * photos, the trim handoff, resending the email. Field managers and admins,
+ * plus Write-Up Reps. Mirrors the insert policy in migration 061.
+ */
+export function canWriteUps(roles: RoleInput): boolean {
+  return canDoFieldWork(roles) || hasAny(roles, ["writeup-rep"]);
+}
+
+/**
+ * A Write-Up Rep with no field-manager powers on top. Their edits are limited
+ * to their own write-ups and send approved ones back for re-approval; their
+ * Write-Ups-page check-offs go through the crew check-off function.
+ */
+export function isWriteUpRepOnly(roles: RoleInput): boolean {
+  return hasAny(roles, ["writeup-rep"]) && !canDoFieldWork(roles);
+}
+
+/**
+ * Can this login edit THIS write-up (all of its rows)? Field managers and
+ * admins edit any. A Write-Up Rep edits only the ones they started — every row
+ * must carry their login email as created_by. Mirrors the update policy in
+ * migration 061.
+ */
+export function canEditWriteUp(
+  roles: RoleInput,
+  email: string | null | undefined,
+  rows: { createdBy?: string | null }[]
+): boolean {
+  if (canDoFieldWork(roles)) return true;
+  if (!hasAny(roles, ["writeup-rep"]) || !email || rows.length === 0) return false;
+  const me = email.toLowerCase();
+  return rows.every((r) => (r.createdBy || "").toLowerCase() === me);
 }
 
 /**
@@ -215,6 +264,9 @@ export function canSeeFloaters(roles: RoleInput): boolean {
  * (admin + payroll-admin): mark reviewed, close, reopen, archive.
  */
 export function canReviewWriteUps(roles: RoleInput): boolean {
+  // Write-Up Reps are deliberately NOT here: approving, reopening, archiving
+  // and the archive?/still-open? questions are manager-only. Migration 061's
+  // trigger refuses the status changes in the database too.
   return hasAny(roles, ["admin", "payroll-admin", "field-manager"]);
 }
 
@@ -225,7 +277,7 @@ export function canReviewWriteUps(roles: RoleInput): boolean {
  * writeup_crew_set_done() and the insert policy in migration 054.
  */
 export function canCheckOffWriteUps(roles: RoleInput): boolean {
-  return hasAny(roles, ["admin", "field-manager", "installer", "installer-lead"]);
+  return hasAny(roles, ["admin", "field-manager", "installer", "installer-lead", "writeup-rep"]);
 }
 
 /** Who can uncheck someone else's check-off. Anyone can undo their own. */
@@ -240,7 +292,7 @@ export function canUndoAnyCheckOff(roles: RoleInput): boolean {
  * canDoFieldWork / canReviewWriteUps, which exclude them).
  */
 export function canSeeWriteUps(roles: RoleInput): boolean {
-  return hasAny(roles, ["admin", "field-manager", "scheduling", "scheduling_manager"]);
+  return hasAny(roles, ["admin", "field-manager", "scheduling", "scheduling_manager", "writeup-rep"]);
 }
 
 /**
@@ -374,6 +426,8 @@ export const ROLE_LABELS: Record<string, string> = {
   "mfm-submitter": "More for More Submitter",
   // Handed out in the NWO hub (it creates roster roles), so it gets no checkbox here.
   feedback: "Feedback",
+  // Handed out in the NWO hub, so it gets no checkbox here.
+  "writeup-rep": "Write-Up Rep",
 };
 
 export const ROLE_STYLES: Record<string, string> = {
@@ -395,4 +449,5 @@ export const ROLE_STYLES: Record<string, string> = {
   "installer-lead": "bg-stone-500/15 text-stone-700 dark:text-stone-300",
   "mfm-submitter": "bg-rba-green/15 text-rba-green",
   feedback: "bg-pink-500/15 text-pink-600 dark:text-pink-400",
+  "writeup-rep": "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400",
 };

@@ -33,7 +33,7 @@ import WriteUpModal from "./WriteUpModal";
 import ProductSpecs from "./ProductSpecs";
 import JobReferencePanel from "./JobReferencePanel";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork, canEditLegacyLink, canSubmitJobComplete } from "@/lib/roles";
+import { canDoFieldWork, canEditLegacyLink, canSubmitJobComplete, canWriteUps } from "@/lib/roles";
 import { jobCompleteDue, jobLastDay } from "@/lib/job-complete-core";
 import JobCompleteModal from "./JobCompleteModal";
 import JobCompleteTag from "./JobCompleteTag";
@@ -126,7 +126,8 @@ export default function JobCard({
   // from: no write-up / log-action buttons, no install-document or product
   // status, no legacy install link on it.
   const isMeasure = order.workOrderType === "Tech Measure";
-  const fieldWorker = canDoFieldWork(roles) && !isMeasure;
+  // Write-Up button: field managers, admins and Write-Up Reps.
+  const fieldWorker = canWriteUps(roles) && !isMeasure;
   const canEditLegacy = canEditLegacyLink(roles);
   const router = useRouter();
   const typeBg = typeColor(order.workOrderType);
@@ -346,7 +347,7 @@ export default function JobCard({
                   <Hammer className="w-5 h-5 text-amber-600" />
                 </button>
               )}
-              {fieldWorker && LOG_ACTION_ENABLED && (
+              {canDoFieldWork(roles) && !isMeasure && LOG_ACTION_ENABLED && (
                 <button
                   onClick={() => setShowAction(true)}
                   className="p-1.5 rounded-lg border border-primary/30 bg-primary/10 hover:bg-primary/20 transition-colors"

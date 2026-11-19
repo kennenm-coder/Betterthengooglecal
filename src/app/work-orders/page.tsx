@@ -4,12 +4,20 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import BottomNav from "@/components/BottomNav";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork, canReviewWriteUps, canSeeWriteUps } from "@/lib/roles";
+import {
+  canDoFieldWork,
+  canEditWriteUp,
+  canReviewWriteUps,
+  canSeeWriteUps,
+  canWriteUps,
+  isWriteUpRepOnly,
+} from "@/lib/roles";
 import { FieldWorkOrder, WriteUpStatus, MaterialUnit, MaterialJobData, WorkOrder } from "@/lib/types";
 import {
   fetchWriteUps,
   updateWriteUpStatus,
   updateWriteUpLineItems,
+  crewSetItemsDone,
   updateWriteUpSuggestedCrews,
   snoozeWriteUpNudge,
   writeUpsToPlainText,
@@ -169,10 +177,24 @@ export default function WorkOrdersPage() {
   // (view-only). Edit/create/review capabilities below stay field-work-gated.
   const canView = canSeeWriteUps(roles);
   const canReview = canReviewWriteUps(roles);
-  const canCreate = canDoFieldWork(roles);
-  const canEdit = canDoFieldWork(roles);
-  // Desktop resend-notification button: field managers + admin only.
-  const canResendEmail = canDoFieldWork(roles);
+  // Write-Up Reps create, submit and resend like field managers, but edit only
+  // their own write-ups (canEditFor) and can't close, delete photos, approve,
+  // reopen or archive (canManage / canReview).
+  const canCreate = canWriteUps(roles);
+  const repOnly = isWriteUpRepOnly(roles);
+  // Mark closed and deleting a closed write-up's photos: field managers + admin.
+  const canManage = canDoFieldWork(roles);
+  // Checking work off on this page. A rep's tick goes through the crew
+  // check-off function, which only lets them undo their own.
+  const canTickWork = canManage || repOnly;
+  /** Can this login edit this write-up? A rep: only their own, and not once
+   *  it's closed or archived (editing would quietly reopen it). */
+  function canEditFor(section: WriteUpSection): boolean {
+    if (!canEditWriteUp(roles, user?.email, section.rows)) return false;
+    return !repOnly || (section.status !== "closed" && section.status !== "archived");
+  }
+  // Desktop resend-notification button.
+  const canResendEmail = canWriteUps(roles);
 
   const [showPicker, setShowPicker] = useState(false);
   const [pending, setPending] = useState<{ target: WriteUpTarget; units: MaterialUnit[] } | null>(null);
@@ -461,12 +483,26 @@ export default function WorkOrdersPage() {
       li.completed = completed;
       touched.add(src.rowId);
     }
-    const results = await Promise.all(
-      [...touched].map((rowId) => updateWriteUpLineItems(rowId, nextItemsByRow.get(rowId)!))
-    );
-    if (!results.every(Boolean)) {
-      alert("Couldn't save — try again.");
-      return;
+    if (repOnly) {
+      // A Write-Up Rep can't rewrite other people's write-ups, so their tick
+      // goes through the same narrow function a crew uses from the service
+      // tile. It stamps them from the login and only lets them undo their own.
+      const res = await crewSetItemsDone(
+        sources.filter((s) => touched.has(s.rowId)),
+        completed
+      );
+      if (!res.ok) {
+        alert(res.error ? `Couldn't save: ${res.error}` : "Couldn't save — try again.");
+        return;
+      }
+    } else {
+      const results = await Promise.all(
+        [...touched].map((rowId) => updateWriteUpLineItems(rowId, nextItemsByRow.get(rowId)!))
+      );
+      if (!results.every(Boolean)) {
+        alert("Couldn't save — try again.");
+        return;
+      }
     }
     setWriteUps((prev) =>
       prev.map((w) => (touched.has(w.id) ? { ...w, lineItems: nextItemsByRow.get(w.id)! } : w))
@@ -969,8 +1005,13 @@ export default function WorkOrdersPage() {
                           section={sec}
                           total={sections.length}
                           canReview={canReview}
-                          canComplete={canEdit}
-                          canEdit={canEdit}
+                          canComplete={
+                            // The crew check-off a rep goes through only takes
+                            // write-ups still being worked.
+                            canTickWork && (!repOnly || sec.status === "open" || sec.status === "in_review")
+                          }
+                          canManage={canManage}
+                          canEdit={canEditFor(sec)}
                           onEdit={() => startEdit(sec.rows)}
                           onReviewItems={(itemsToReview, reviewed) => setItemsReviewed(sec, itemsToReview, reviewed)}
                           onToggleCompleted={(itemsToToggle, completed) => setItemsCompleted(sec, itemsToToggle, completed)}
@@ -1105,6 +1146,7 @@ function ReviewSection({
   total,
   canReview,
   canComplete,
+  canManage,
   canEdit,
   onEdit,
   onReviewItems,
@@ -1120,7 +1162,11 @@ function ReviewSection({
   section: WriteUpSection;
   total: number;
   canReview: boolean;
+  /** Tick work items done on this page. */
   canComplete: boolean;
+  /** Mark closed, and delete a closed write-up's photos (field managers). */
+  canManage: boolean;
+  /** Edit this write-up: pencil, crews note, submit a draft. */
   canEdit: boolean;
   onEdit: () => void;
   onReviewItems: (items: NumberedWorkItem[], reviewed: boolean) => void;
@@ -1205,7 +1251,7 @@ function ReviewSection({
   const defectCode = responsibility === "retail" ? respRow?.defectCode || "" : "";
   const unitRows = section.rows.filter((r) => r.unitLabel);
   const canDeletePhotos =
-    canEdit && (section.status === "closed" || section.status === "archived") && section.photos.length > 0;
+    canManage && (section.status === "closed" || section.status === "archived") && section.photos.length > 0;
 
   const done = isSectionDone(section);
   return (
@@ -1746,7 +1792,7 @@ function ReviewSection({
             </button>
           )
         )}
-        {section.status === "open" && canComplete && (
+        {section.status === "open" && canManage && (
           <button
             onClick={() => onStatus("closed")}
             disabled={!allCompleted}
