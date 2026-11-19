@@ -70,6 +70,8 @@ export default function MoreForMoreCrews() {
     setLoading(true);
     try {
       setPeople(await fetchMfmPeople());
+    } catch {
+      // Weak signal: keep the list that's showing.
     } finally {
       setLoading(false);
     }

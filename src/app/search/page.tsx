@@ -25,6 +25,15 @@ export default function SearchPage() {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<WorkOrder | null>(null);
+  // The open card follows the live copy of its job (see the calendar page).
+  const liveSelectedOrder = useMemo(() => {
+    if (!selectedOrder) return null;
+    return (
+      orders.find((o) => o.id === selectedOrder.id) ??
+      measureOrders.find((o) => o.id === selectedOrder.id) ??
+      selectedOrder
+    );
+  }, [selectedOrder, orders, measureOrders]);
   const [selectedJob, setSelectedJob] = useState<MaterialJobData | null>(null);
 
   const scheduledPOs = useMemo(
@@ -195,9 +204,9 @@ export default function SearchPage() {
         )}
       </div>
 
-      {selectedOrder && (
+      {liveSelectedOrder && (
         <OrderSheet
-          order={selectedOrder}
+          order={liveSelectedOrder}
           onClose={() => setSelectedOrder(null)}
         />
       )}

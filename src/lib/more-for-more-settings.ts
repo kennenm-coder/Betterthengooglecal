@@ -41,7 +41,11 @@ function db() {
  */
 export async function fetchMfmRates(): Promise<MfmRates> {
   const { data, error } = await db().from("more_for_more_settings").select("rates").eq("id", 1).maybeSingle();
-  if (error || !data) return normalizeRates(DEFAULT_RATES);
+  // A failed read throws: answering with the paper rates let a sheet saved on
+  // a weak signal be stamped with them instead of today's. (Nothing saved yet
+  // is a real answer and still gets the paper rates.)
+  if (error) throw new Error(error.message);
+  if (!data) return normalizeRates(DEFAULT_RATES);
   return normalizeRates(data.rates);
 }
 
@@ -106,7 +110,7 @@ export async function fetchMfmPeople(): Promise<MfmPerson[]> {
     () => undefined
   );
   const { data, error } = await db().from("more_for_more_people").select("*").order("name");
-  if (error) return [];
+  if (error) throw new Error(error.message);
   return (data || []).map(toPerson);
 }
 

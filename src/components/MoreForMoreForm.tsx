@@ -370,7 +370,11 @@ export default function MoreForMoreForm({
   const [rejectReason, setRejectReason] = useState<string | null>(null);
 
   // Today's rates and the people list from More for More settings.
-  const { rates: liveRates, people: savedRoster } = useMfmSettings();
+  const { rates: liveRates, people: savedRoster, ratesReady } = useMfmSettings();
+  // A save stamps the sheet with the rates showing, so hold saves until
+  // today's real rates are in (the paper-sheet rates stand in until then).
+  const ratesNotReady = (): string =>
+    ratesReady ? "" : "Still loading today's pay rates. Check your signal and try again in a moment.";
   const roster = previewPeople ?? savedRoster;
 
   // A lead starting a new sheet: their own account is on the people list
@@ -465,6 +469,7 @@ export default function MoreForMoreForm({
    * shows the lead their total.
    */
   async function handleSubmit(status: "draft" | "submitted") {
+    if (ratesNotReady()) return setError(ratesNotReady());
     if (status === "submitted") {
       const v = validate();
       if (v) return setError(v);
@@ -501,6 +506,7 @@ export default function MoreForMoreForm({
   async function handleReject() {
     if (!sheet || rejectReason === null) return;
     if (!rejectReason.trim()) return setError("Say why it's being sent back.");
+    if (ratesNotReady()) return setError(ratesNotReady());
     setError("");
     setSaving("reject");
     try {
@@ -521,6 +527,7 @@ export default function MoreForMoreForm({
   }
 
   async function handleOffice(complete: boolean) {
+    if (ratesNotReady()) return setError(ratesNotReady());
     const v = validate();
     if (v) return setError(v);
     setError("");

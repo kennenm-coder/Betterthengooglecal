@@ -30,7 +30,7 @@ import MoreForMoreNotices from "@/components/MoreForMoreNotices";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
 import { fetchSpecialDays, groupSpecialDaysByDate, isMeasureOnlyCrew, specialDayMatchesCrew, type SpecialDay } from "@/lib/special-days-store";
-import { addDays, addWeeks, subDays, subWeeks, format, isToday, parseISO, startOfWeek } from "date-fns";
+import { addDays, addWeeks, subDays, subWeeks, format, isToday, isValid, parseISO, startOfWeek } from "date-fns";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Loader2, RefreshCw, CalendarDays, Plus, UserCog, BadgeDollarSign } from "lucide-react";
 
@@ -43,7 +43,7 @@ export default function CalendarPageWrapper() {
 }
 
 function CalendarPage() {
-  const { orders, measureOrders, loading, loadingBackground, refresh, ensureDateLoaded, linkedJobsStale } = useData();
+  const { orders, measureOrders, loading, loadingBackground, refresh, refreshExtras, ensureDateLoaded, linkedJobsStale } = useData();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
@@ -64,6 +64,15 @@ function CalendarPage() {
 
   useEffect(() => {
     fetchTimeOffRequests().then(setTimeOffRequests);
+    // Approving or denying from the bell in this header changes who is off, so
+    // re-pull straight away: otherwise the time-off banner and Floaters kept
+    // showing the old answer (someone just approved still listed as free)
+    // until Refresh. One small read per decision.
+    const onDecided = () => {
+      fetchTimeOffRequests().then(setTimeOffRequests);
+    };
+    window.addEventListener("time-off-decided", onDecided);
+    return () => window.removeEventListener("time-off-decided", onDecided);
   }, []);
 
   // Special Ops / Office Day tiles from the scheduling app. Fetched a whole week
@@ -97,6 +106,9 @@ function CalendarPage() {
           }
         }
       }
+      // Parts/ETA, Job Complete tags, write-up buttons and legacy links are
+      // otherwise only pulled when the app opens.
+      refreshExtras();
       await refresh();
       fetchTimeOffRequests().then(setTimeOffRequests);
       setRefreshTick((n) => n + 1);
@@ -124,6 +136,18 @@ function CalendarPage() {
     return new Date();
   });
   const [selectedOrder, setSelectedOrder] = useState<WorkOrder | null>(null);
+  // The open card follows the live copy of its job, so a change made while it
+  // is open (a legacy link saved from the card, Refresh, install instructions
+  // arriving) shows without closing and reopening it. Falls back to the copy
+  // taken at tap time if the job has since left the list.
+  const liveSelectedOrder = useMemo(() => {
+    if (!selectedOrder) return null;
+    return (
+      orders.find((o) => o.id === selectedOrder.id) ??
+      measureOrders.find((o) => o.id === selectedOrder.id) ??
+      selectedOrder
+    );
+  }, [selectedOrder, orders, measureOrders]);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
 
   // Reopen the tile when the user comes back (back button) from a page opened
@@ -318,7 +342,14 @@ function CalendarPage() {
                 value={format(currentDate, "yyyy-MM-dd")}
                 onChange={(e) => {
                   if (e.target.value) {
-                    setCurrentDate(parseISO(e.target.value));
+                    // A computer's date box takes up to six year digits, and a
+                    // date like "20266-11-19" is invalid — which crashed the
+                    // whole calendar. Ignore anything outside sensible years.
+                    const picked = parseISO(e.target.value);
+                    const year = picked.getFullYear();
+                    if (isValid(picked) && year >= 2000 && year <= 2100) {
+                      setCurrentDate(picked);
+                    }
                   }
                 }}
               />
@@ -419,8 +450,8 @@ function CalendarPage() {
         )}
       </div>
 
-      {selectedOrder && (
-        <OrderSheet order={selectedOrder} onClose={() => setSelectedOrder(null)} />
+      {liveSelectedOrder && (
+        <OrderSheet order={liveSelectedOrder} onClose={() => setSelectedOrder(null)} />
       )}
 
       <BottomNav />

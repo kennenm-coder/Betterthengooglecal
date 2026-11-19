@@ -103,6 +103,11 @@ interface DataContextType {
   completionFor: (orderNumber: string) => JcTag | null;
   /** Re-pull the tags after a report is filed or reviewed. */
   refreshCompletions: () => Promise<void>;
+  /**
+   * Re-pull the extras (write-up index, parts/ETA, Job Complete tags, legacy
+   * links) — for the Refresh button, alongside refresh().
+   */
+  refreshExtras: () => void;
 }
 
 const DataContext = createContext<DataContextType>({
@@ -123,6 +128,7 @@ const DataContext = createContext<DataContextType>({
   partsFor: () => null,
   completionFor: () => null,
   refreshCompletions: async () => {},
+  refreshExtras: () => {},
 });
 
 export function useData() {
@@ -324,22 +330,35 @@ export default function DataProvider({ children }: { children: ReactNode }) {
       // Until they land, each tile keeps the install instructions / legacy
       // link it was showing (passing `prev`), so the buttons don't blink off
       // and the saved copy isn't overwritten without them.
+      //
+      // Only the window is replaced. Jobs outside it — older months someone
+      // paged back to, far-future pages — stay as they are: Refresh used to
+      // drop them AND forget their months were loaded, so a day more than 90
+      // days back went blank until you moved off it and back. (The saved copy
+      // only ever holds the window, so nothing old is kept past this session.)
+      const win = getInitialWindow();
       setOrders((prev) => {
+        const outside = prev.filter(
+          (o) => o.scheduledStart && (o.scheduledStart < win.start || o.scheduledStart > win.end)
+        );
         const initialEnriched = enrichWithMaterials(initial, jobByPORef.current, undefined, prev);
-        saveBoundedCache(initialEnriched);
-        return initialEnriched;
+        const next = outside.length ? mergeOrders(outside, initialEnriched) : initialEnriched;
+        saveBoundedCache(next);
+        return next;
       });
       setLoading(false);
       setLastUpdated(new Date().toISOString());
 
-      // Mark initial months as loaded
+      // Mark initial months as loaded, keeping the months already loaded
+      // outside the window (their jobs were kept above).
       const today = new Date();
       const start = new Date(today);
       start.setDate(start.getDate() - 90);
       const end = new Date(today);
       end.setDate(end.getDate() + 90);
-      const initialMonths = getMonthsInRange(start.toISOString(), end.toISOString());
-      loadedMonthsRef.current = initialMonths;
+      for (const m of getMonthsInRange(start.toISOString(), end.toISOString())) {
+        loadedMonthsRef.current.add(m);
+      }
 
       // Background phases
       setLoadingBackground(true);
@@ -522,6 +541,20 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     refreshCompletions();
   }, [canSeeCompletions, userId, refreshCompletions]);
 
+  // For the Refresh button. Everything above is otherwise pulled once per app
+  // open, so a phone left open for days showed yesterday's parts/ETA lines,
+  // tags and write-up buttons. All small reads — the write-up index is three
+  // short columns of open write-ups, the parts feed ~530 rows, the tags one
+  // row per report, legacy links a tiny table — and only on a tap, never on a
+  // timer.
+  const refreshExtras = useCallback(() => {
+    // refresh() re-pulls these; until it lands, tiles keep the links they show.
+    invalidateLegacyLinksCache();
+    if (canViewWriteUps) void refreshActiveWriteUps();
+    void refreshPurchaseOrders();
+    if (canSeeCompletions && userId) void refreshCompletions();
+  }, [canViewWriteUps, canSeeCompletions, userId, refreshActiveWriteUps, refreshPurchaseOrders, refreshCompletions]);
+
   const completionFor = useCallback(
     (orderNumber: string): JcTag | null => {
       if (!canSeeCompletions) return null;
@@ -654,6 +687,9 @@ export default function DataProvider({ children }: { children: ReactNode }) {
     jobsSigRef.current = "";
     if (last || someoneElsesCopy) {
       // A different person on the same screen: don't leave the last one's tiles up.
+      // Refresh keeps months already loaded, so forget them too — they were
+      // loaded for the other person.
+      loadedMonthsRef.current = new Set();
       setOrders([]);
       setMaterialJobs([]);
       setLoading(true);
@@ -695,6 +731,7 @@ export default function DataProvider({ children }: { children: ReactNode }) {
         partsFor,
         completionFor,
         refreshCompletions,
+        refreshExtras,
       }}
     >
       {children}

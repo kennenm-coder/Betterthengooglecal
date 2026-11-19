@@ -230,7 +230,7 @@ export default function WorkOrdersPage() {
   // The calendar's copy is the better one — it carries the schedule, the crew
   // and the customer's phone — but it is only loaded for a window of dates,
   // and a write-up usually outlives its install. The stand-in covers the rest.
-  const { orders } = useData();
+  const { orders, refreshActiveWriteUps } = useData();
   const editReferenceJob: WorkOrder | null = useMemo(() => {
     const row = editing?.rows[0];
     if (!row) return null;
@@ -366,6 +366,10 @@ export default function WorkOrdersPage() {
             : w
         )
       );
+      // Closing, archiving or reopening changes which write-ups are active,
+      // so the service tiles' Active Write-Ups buttons must follow. Before,
+      // a closed job kept its button, which opened an empty viewer.
+      void refreshActiveWriteUps();
     }
   }
 
