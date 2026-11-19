@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Bell, CheckCheck } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
+import { usePanelPosition } from "@/hooks/usePanelPosition";
 
 /** Refresh the badge this often while the page is open (a push refreshes it
  *  straight away, so this only matters for people without buzzes turned on). */
@@ -46,6 +47,8 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<NotificationRow[]>([]);
   const panelRef = useRef<HTMLDivElement>(null);
+  // Kept on screen: the bell isn't at the right edge of a phone.
+  const panelStyle = usePanelPosition(panelRef, open, 384);
   const signedIn = !loading && !!user;
 
   const refresh = useCallback(async () => {
@@ -125,7 +128,7 @@ export default function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-[min(92vw,24rem)] max-h-[70vh] overflow-auto rounded-xl border border-border bg-background shadow-xl z-50">
+        <div style={panelStyle} className="overflow-auto rounded-xl border border-border bg-background shadow-xl z-50">
           <div className="sticky top-0 z-10 flex items-center gap-2 bg-background border-b border-border px-4 py-2.5">
             <p className="text-sm font-semibold flex-1">Notifications</p>
             {unread > 0 && (
@@ -156,7 +159,7 @@ export default function NotificationBell() {
                     />
                     <span className="min-w-0 flex-1">
                       <span className={`block text-sm ${r.read_at ? "font-medium" : "font-semibold"}`}>{r.title}</span>
-                      {r.body && <span className="block text-xs text-muted mt-0.5">{r.body}</span>}
+                      {r.body && <span className="block text-xs text-muted mt-0.5 whitespace-pre-line">{r.body}</span>}
                       <span className="block text-[11px] text-muted mt-1">{ago(r.created_at)}</span>
                     </span>
                   </button>
