@@ -85,13 +85,12 @@ export async function runJobAlerts(now: Date = new Date()): Promise<JobAlertRun>
     const appt = appointmentDate(o?.scheduled_start);
     if (!o || !appt) continue;
 
-    // The job buzzes if ANY of its notes is due; one buzz covers them all.
-    let stage: JobAlertStage | null = null;
-    for (const n of jobNotes) {
-      const s = dueStage(appt, n.sent5_for_date, n.sent1_for_date, today);
-      if (s === "one") stage = "one";
-      else if (s === "five" && !stage) stage = "five";
-    }
+    // One buzz per JOB: a buzz counts as sent once ANY note records it for this
+    // appointment date, so a note added after the 5-day buzz doesn't set off a
+    // second one (the day-before buzz lists every note anyway).
+    const sent5 = jobNotes.find((n) => n.sent5_for_date === appt)?.sent5_for_date ?? null;
+    const sent1 = jobNotes.find((n) => n.sent1_for_date === appt)?.sent1_for_date ?? null;
+    const stage: JobAlertStage | null = dueStage(appt, sent5, sent1, today);
     if (!stage) continue;
 
     managers ??= await emailsWithRole(["field-manager", "admin"]);

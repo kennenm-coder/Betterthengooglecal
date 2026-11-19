@@ -50,35 +50,65 @@ export async function fetchJobAlerts(workOrderId: string): Promise<JobAlert[]> {
   return (data as JobAlertRow[]).map(toAlert);
 }
 
-/** Create or replace MY note on this appointment. */
+/** Fired after any save or delete, so the tile's Job Alert field, the card
+ *  button's count and an open pop-up all refresh together. detail = work order id. */
+export const JOB_ALERTS_CHANGED = "job-alerts-changed";
+function announce(workOrderId: string): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(JOB_ALERTS_CHANGED, { detail: workOrderId }));
+}
+
+/** Add a new note on this appointment, or change one of MINE (pass its id). */
 export async function saveJobAlert(input: {
   workOrderId: string;
   orderNumber: string;
   note: string;
   email: string;
   name: string;
+  /** Set to edit an existing note of mine; leave off to add a new one. */
+  id?: string;
 }): Promise<{ ok: boolean; error: string | null }> {
   const supabase = getSupabase();
   if (!supabase) return { ok: false, error: "Not signed in." };
-  const { error } = await supabase.from("job_alerts").upsert(
-    {
-      work_order_id: input.workOrderId,
-      order_number: input.orderNumber || null,
-      note: input.note.trim(),
-      created_by: input.email.toLowerCase(),
-      created_by_name: input.name || null,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "work_order_id,created_by" }
-  );
+  const now = new Date().toISOString();
+  const { error } = input.id
+    ? await supabase.from("job_alerts").update({ note: input.note.trim(), updated_at: now }).eq("id", input.id)
+    : await supabase.from("job_alerts").insert({
+        work_order_id: input.workOrderId,
+        order_number: input.orderNumber || null,
+        note: input.note.trim(),
+        created_by: input.email.toLowerCase(),
+        created_by_name: input.name || null,
+        updated_at: now,
+      });
+  if (!error) announce(input.workOrderId);
   return { ok: !error, error: error?.message ?? null };
 }
 
-export async function deleteJobAlert(id: string): Promise<boolean> {
+export async function deleteJobAlert(id: string, workOrderId: string): Promise<boolean> {
   const supabase = getSupabase();
   if (!supabase) return false;
   const { error } = await supabase.from("job_alerts").delete().eq("id", id);
+  if (!error) announce(workOrderId);
   return !error;
+}
+
+/** Keeps a list of a job's notes fresh: loads, then reloads on any change to that job. */
+export function watchJobAlerts(workOrderId: string, onRows: (rows: JobAlert[]) => void): () => void {
+  let cancelled = false;
+  const load = () => {
+    fetchJobAlerts(workOrderId).then((rows) => {
+      if (!cancelled) onRows(rows);
+    });
+  };
+  const onChanged = (e: Event) => {
+    if ((e as CustomEvent).detail === workOrderId) load();
+  };
+  load();
+  window.addEventListener(JOB_ALERTS_CHANGED, onChanged);
+  return () => {
+    cancelled = true;
+    window.removeEventListener(JOB_ALERTS_CHANGED, onChanged);
+  };
 }
 
 /** Every Job Alert note (field managers / admins can read them all). */
