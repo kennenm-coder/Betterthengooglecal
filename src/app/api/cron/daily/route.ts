@@ -6,8 +6,9 @@
 // goes through notify() — the same channel the instant notifications use.
 //
 // Today's jobs:
-//   1. Job Alert: email + buzz + bell the field manager who wrote a note,
-//      5 workdays before the appointment (src/lib/job-alerts-server.ts)
+//   1. Job Alert: buzz + bell every field manager and admin, 5 business days
+//      before an appointment with notes and again the business day before
+//      (src/lib/job-alerts-server.ts)
 //   2. clear bell history older than 90 days
 //
 // Auth: Vercel sends `Authorization: Bearer <CRON_SECRET>` when CRON_SECRET is
@@ -41,9 +42,7 @@ export async function GET(req: Request) {
 
   const ran: Record<string, unknown> = {};
   try {
-    // Links in the email go to the public site, not whichever Vercel address
-    // the cron was called on (those can sit behind Vercel's login).
-    ran.jobAlerts = await runJobAlerts(process.env.APP_URL || "https://duckforce.nwotoolbox.com");
+    ran.jobAlerts = await runJobAlerts();
   } catch (err) {
     ran.jobAlertsError = (err as Error).message;
   }

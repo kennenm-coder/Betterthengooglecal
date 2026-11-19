@@ -434,7 +434,13 @@ checks(migration, feature, verdict, checked) as (values
   case when exists(select 1 from tbl where k = 'job_alerts')
         and exists(select 1 from pol where t = 'job_alerts' and p = 'fieldmgr_insert_own_job_alerts')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'job_alerts table AND the own-insert policy')
+  'job_alerts table AND the own-insert policy'),
+
+ ('065', 'Job Alert two buzzes (5 business days + day before)',
+  case when exists(select 1 from col where k = 'job_alerts.sent5_for_date')
+        and exists(select 1 from col where k = 'job_alerts.sent1_for_date')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'job_alerts.sent5_for_date AND sent1_for_date')
 )
 select migration, feature, verdict, checked
 from checks

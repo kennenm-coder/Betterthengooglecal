@@ -156,7 +156,7 @@ export default function NotificationBell() {
                     />
                     <span className="min-w-0 flex-1">
                       <span className={`block text-sm ${r.read_at ? "font-medium" : "font-semibold"}`}>{r.title}</span>
-                      {r.body && <span className="block text-xs text-muted mt-0.5">{r.body}</span>}
+                      {r.body && <span className="block text-xs text-muted mt-0.5 whitespace-pre-line">{r.body}</span>}
                       <span className="block text-[11px] text-muted mt-1">{ago(r.created_at)}</span>
                     </span>
                   </button>

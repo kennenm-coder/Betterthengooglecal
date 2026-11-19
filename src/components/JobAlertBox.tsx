@@ -9,10 +9,11 @@ import type { WorkOrder } from "@/lib/types";
 
 /**
  * Job Alert — above Install Notes on the job card, field managers and admins
- * only (the caller gates it). Write a note; 5 workdays before this appointment
- * (weekends skipped) it's emailed to you, plus a phone buzz and a bell entry,
- * by the daily cron. Every field manager sees everyone's notes on the job;
- * you can only change your own. Migration 064.
+ * only (the caller gates it). Leave a note on the appointment; the daily cron
+ * buzzes EVERY field manager and admin (phone + bell, no email) 5 business
+ * days before and again the business day before, one buzz per job listing
+ * every note with who wrote it. Everyone sees all notes; you change only your
+ * own. Migrations 064 + 065.
  */
 export default function JobAlertBox({ order }: { order: WorkOrder }) {
   const { user, name } = useAuth();
@@ -37,6 +38,10 @@ export default function JobAlertBox({ order }: { order: WorkOrder }) {
 
   const mine = alerts?.find((a) => a.createdBy.toLowerCase() === me) || null;
   const others = (alerts || []).filter((a) => a.createdBy.toLowerCase() !== me);
+  // The buzzes are per job, so any note's record of them speaks for the job.
+  const sent5 = (alerts || []).find((a) => a.sent5ForDate === appt)?.sent5ForDate ?? null;
+  const sent1 = (alerts || []).find((a) => a.sent1ForDate === appt)?.sent1ForDate ?? null;
+  const status = reminderStatus(appt, sent5, sent1);
 
   function startEdit() {
     setDraft(mine?.note || "");
@@ -107,7 +112,7 @@ export default function JobAlertBox({ order }: { order: WorkOrder }) {
               placeholder="e.g. Bring the long ladder. Customer has a dog. Confirm the trim came in."
               className="w-full rounded-lg border border-border bg-background px-3 py-2 text-base resize-none focus:outline-none focus:ring-2 focus:ring-amber-400/50"
             />
-            <p className="text-[11px] text-muted">{reminderStatus(appt, null, null)}</p>
+            <p className="text-[11px] text-muted">{status}</p>
             <div className="flex gap-2">
               <button
                 onClick={save}
@@ -137,15 +142,15 @@ export default function JobAlertBox({ order }: { order: WorkOrder }) {
           </div>
         ) : mine ? (
           <div>
+            <p className="text-[11px] font-semibold text-muted">You</p>
             <p className="text-sm whitespace-pre-wrap">{mine.note}</p>
-            <p className="text-[11px] text-muted mt-1">{reminderStatus(appt, mine.sentAt, mine.sentForDate)}</p>
           </div>
         ) : (
           <button
             onClick={startEdit}
             className="w-full text-left text-sm text-muted hover:text-foreground rounded-lg border border-dashed border-border px-3 py-2"
           >
-            + Add a note. It&apos;s emailed to you 5 workdays before this appointment.
+            + Add a note. All field managers get a buzz 5 business days before and the day before.
           </button>
         )}
 
@@ -157,6 +162,8 @@ export default function JobAlertBox({ order }: { order: WorkOrder }) {
             <p className="text-sm whitespace-pre-wrap">{a.note}</p>
           </div>
         ))}
+
+        {!editing && (alerts?.length ?? 0) > 0 && <p className="text-[11px] text-muted">{status}</p>}
       </div>
     </div>
   );
