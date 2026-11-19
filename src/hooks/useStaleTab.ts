@@ -33,6 +33,19 @@ function getRefreshBlock(date: Date): number {
   return block;
 }
 
+/**
+ * Which import a moment belongs to, as "YYYY-MM-DD#block". Two moments with
+ * different keys have an rForce import between them — so data loaded at the
+ * first is out of date at the second. Includes the date so 5 PM yesterday and
+ * 5 PM today don't look like the same block. Used by AutoRefresh.
+ */
+export function importBlockKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}#${getRefreshBlock(date)}`;
+}
+
 /** Formats a 24-hour hour for display, e.g. 13 → "1:00 PM". */
 function formatHour(hour: number): string {
   const h = hour > 12 ? hour - 12 : hour;

@@ -217,6 +217,18 @@ export function useBackClose(
 }
 
 /**
+ * How many pop-ups are open right now (on any page). Every pop-up in the app
+ * registers here for the back button, which makes this the one reliable
+ * "is someone in the middle of something?" signal — used by AutoRefresh so it
+ * never swaps data or reloads under an open tile, write-up or form.
+ */
+export function openPopupCount(): number {
+  if (typeof window === "undefined") return 0;
+  pruneDead();
+  return stack.length;
+}
+
+/**
  * The key of the pop-up whose history entry the page is standing on, if any —
  * set when the user went back to a page from inside one of its pop-ups.
  * Client-side only; read it after mount.

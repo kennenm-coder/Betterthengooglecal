@@ -135,6 +135,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|json|js|css|ico)$).*)",
+    // api/version is the auto-refresh connection test: it must answer fast and
+    // carries nothing private, so it skips the Supabase sign-in check here.
+    "/((?!_next/static|_next/image|favicon.ico|api/version|.*\\.(?:svg|png|jpg|jpeg|gif|webp|json|js|css|ico)$).*)",
   ],
 };

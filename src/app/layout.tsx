@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import DataProvider from "@/components/DataProvider";
+import AutoRefresh from "@/components/AutoRefresh";
 import ColorLoader from "@/components/ColorLoader";
 import "./globals.css";
 
@@ -50,7 +51,10 @@ export default function RootLayout({
       <head />
       <body className="h-full flex flex-col">
         <ColorLoader />
-        <DataProvider>{children}</DataProvider>
+        <DataProvider>
+          <AutoRefresh />
+          {children}
+        </DataProvider>
         <script
           dangerouslySetInnerHTML={{
             __html: `

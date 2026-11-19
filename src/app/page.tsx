@@ -14,6 +14,8 @@ import StaleTabTag from "@/components/StaleTabBanner";
 import { useStaleTab } from "@/hooks/useStaleTab";
 import NotificationBell from "@/components/NotificationBell";
 import PushInvite from "@/components/PushInvite";
+import { AUTO_REFRESHED_EVENT } from "@/components/AutoRefresh";
+import { checkConnection } from "@/lib/connection-check";
 import { useAuth } from "@/hooks/useAuth";
 import {
   canManageTimeOff as canManageTimeOffRole,
@@ -81,31 +83,57 @@ function CalendarPage() {
   // to another week shows nothing rather than last week's tiles while loading.
   const [specialCache, setSpecialCache] = useState<{ week: string; days: SpecialDay[] } | null>(null);
 
+  // AutoRefresh (mounted in the layout) re-pulls the shared calendar data on
+  // its own when the connection is good. These bits live on this page only,
+  // so catch them up too — exactly what the tail of handleRefresh does.
+  useEffect(() => {
+    const onAuto = () => {
+      fetchTimeOffRequests().then(setTimeOffRequests);
+      setRefreshTick((n) => n + 1);
+      resetBlock();
+    };
+    window.addEventListener(AUTO_REFRESHED_EVENT, onAuto);
+    return () => window.removeEventListener(AUTO_REFRESHED_EVENT, onAuto);
+  }, [resetBlock]);
+
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      // Check for a new service worker and activate it
-      if ("serviceWorker" in navigator) {
-        const reg = await navigator.serviceWorker.getRegistration();
-        if (reg) {
-          await reg.update();
-          const waiting = reg.waiting;
-          if (waiting) {
-            waiting.postMessage({ type: "SKIP_WAITING" });
-            await new Promise<void>((resolve) => {
-              const onStateChange = () => {
-                if (waiting.state === "activated") {
-                  waiting.removeEventListener("statechange", onStateChange);
-                  resolve();
-                }
-              };
-              waiting.addEventListener("statechange", onStateChange);
-              setTimeout(resolve, 3000);
-            });
-            window.location.reload();
-            return;
+      // A newer version of the app is deployed: reload onto it — but only if
+      // the connection is proven good, so a tap in a dead zone never reloads.
+      const conn = await checkConnection({ fresh: true }).catch(() => null);
+      if (conn?.good && conn.newVersion) {
+        window.location.reload();
+        return;
+      }
+      // Check for a new service worker and activate it. Wrapped so that with
+      // no signal (update() fails) the button still re-pulls below instead of
+      // giving up.
+      try {
+        if (conn?.good && "serviceWorker" in navigator) {
+          const reg = await navigator.serviceWorker.getRegistration();
+          if (reg) {
+            await reg.update();
+            const waiting = reg.waiting;
+            if (waiting) {
+              waiting.postMessage({ type: "SKIP_WAITING" });
+              await new Promise<void>((resolve) => {
+                const onStateChange = () => {
+                  if (waiting.state === "activated") {
+                    waiting.removeEventListener("statechange", onStateChange);
+                    resolve();
+                  }
+                };
+                waiting.addEventListener("statechange", onStateChange);
+                setTimeout(resolve, 3000);
+              });
+              window.location.reload();
+              return;
+            }
           }
         }
+      } catch {
+        /* offline or the worker refused — carry on with the data refresh */
       }
       // Parts/ETA, Job Complete tags, write-up buttons and legacy links are
       // otherwise only pulled when the app opens.
