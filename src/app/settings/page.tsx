@@ -9,6 +9,7 @@ import { canDoFieldWork, canEditLegacyLink, canSeeMeasureTiles } from "@/lib/rol
 import BottomNav from "@/components/BottomNav";
 import LoadingScheduleModal from "@/components/LoadingScheduleModal";
 import CatalogModal from "@/components/CatalogModal";
+import PhoneNotificationsCard from "@/components/PhoneNotificationsCard";
 import {
   getStoredColors,
   saveColors,
@@ -158,6 +159,9 @@ export default function SettingsPage() {
             ))}
           </div>
         </section>
+
+        {/* Phone notifications — everyone, per device */}
+        <PhoneNotificationsCard />
 
         {/* Loading Schedule — field managers */}
         {fieldManager && (

@@ -32,6 +32,7 @@ import {
 import { fetchMaterialJobs } from "@/lib/store";
 import { getWriteUpEmails } from "@/lib/action-settings";
 import { dedupeRecipients } from "@/lib/email-recipients";
+import { notifyWriteUpRepChange } from "@/lib/push-client";
 import { groupWriteUpSections, isReadyToClose, isSectionDone, padSeq, pcsOf, splitInstalled, splitMaterialLines, type SectionMaterialLine, type WriteUpSection, type NumberedWorkItem } from "@/lib/writeup-sections";
 import { responsibilityLabel, defectCodeLabel } from "@/lib/writeup-responsibility";
 import WriteUpModal, { WriteUpTarget } from "@/components/WriteUpModal";
@@ -341,6 +342,12 @@ export default function WorkOrdersPage() {
     const ids = section.rows.map((r) => r.id);
     const results = await Promise.all(ids.map((id) => updateWriteUpStatus(id, status)));
     if (results.every(Boolean)) {
+      // A rep sending their draft in for review is a submit → field managers'
+      // bell + buzz (the server re-checks the role).
+      if (repOnly && section.status === "draft" && status === "in_review") {
+        const first = section.rows[0];
+        if (first) notifyWriteUpRepChange("submitted", first.orderNumber, first.customerName || "");
+      }
       // Mirror what updateWriteUpStatus stamps server-side so the nudges
       // recompute without a refetch.
       const now = new Date().toISOString();

@@ -85,3 +85,57 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
+
+// ─── Phone notifications ────────────────────────────────────────────────────
+// The server (src/lib/notify-server.ts) posts { title, body, url, tag, kind }.
+// Show it, and tell any open Duck Force window so its bell refreshes.
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch (e) {
+    payload = { title: "Duck Force", body: event.data ? event.data.text() : "" };
+  }
+  event.waitUntil(
+    (async () => {
+      const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const c of wins) {
+        try {
+          c.postMessage({ type: "notification-received", kind: payload.kind || "" });
+        } catch (e) {
+          /* a closing window */
+        }
+      }
+      await self.registration.showNotification(payload.title || "Duck Force", {
+        body: payload.body || "",
+        tag: payload.tag || undefined,
+        icon: "/icon-192.png",
+        badge: "/icon-192.png",
+        data: { url: payload.url || "/" },
+      });
+    })()
+  );
+});
+
+// Tapping a notification: reuse an open Duck Force window (sent to the right
+// page), or open one.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin).toString();
+  event.waitUntil(
+    (async () => {
+      const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const c of wins) {
+        if (new URL(c.url).origin === self.location.origin && "focus" in c) {
+          try {
+            await c.navigate(target);
+          } catch (e) {
+            /* navigate can refuse an uncontrolled window; focusing still helps */
+          }
+          return c.focus();
+        }
+      }
+      return self.clients.openWindow(target);
+    })()
+  );
+});

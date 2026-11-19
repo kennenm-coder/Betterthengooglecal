@@ -402,7 +402,14 @@ checks(migration, feature, verdict, checked) as (values
   case when exists(select 1 from col where k = 'work_orders.nsa_owned')
         and exists(select 1 from col where k = 'work_orders_visible.nsa_owned')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'nsa_owned on the table AND passed through the installer view')
+  'nsa_owned on the table AND passed through the installer view'),
+
+ ('063', 'notifications: bell history + phone push devices',
+  case when exists(select 1 from tbl where k = 'push_subscriptions')
+        and exists(select 1 from tbl where k = 'notifications')
+        and exists(select 1 from pol where t = 'notifications' and p = 'own_read_notifications')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'push_subscriptions and notifications tables AND the own-rows read policy')
 )
 select migration, feature, verdict, checked
 from checks

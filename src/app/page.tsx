@@ -12,6 +12,7 @@ import FilterPanel, { Filters, EMPTY_FILTERS, applyFilters } from "@/components/
 import TimeOffBanner from "@/components/TimeOffBanner";
 import StaleTabTag from "@/components/StaleTabBanner";
 import { useStaleTab } from "@/hooks/useStaleTab";
+import NotificationBell from "@/components/NotificationBell";
 import TimeOffBell from "@/components/TimeOffBell";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -280,6 +281,8 @@ function CalendarPage() {
               <span className="hidden sm:inline">More for More</span>
             </button>
           )}
+
+          <NotificationBell />
 
           <TimeOffBell />
 

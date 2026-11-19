@@ -52,6 +52,7 @@ import {
   type WorkSource,
 } from "@/lib/work-order-store";
 import { canWriteUps, isWriteUpRepOnly } from "@/lib/roles";
+import { notifyWriteUpRepChange } from "@/lib/push-client";
 import type { MaterialCatalog } from "@/lib/nwo-builder";
 import { familyMatcher, isInstallBucket, isUniversalType } from "@/lib/product-family";
 import {
@@ -1718,6 +1719,10 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       return;
     }
     if (saveStatus !== "draft") requestWriteUpKindStamp(order.orderNumber || editWriteUp.orderNumber);
+    // A rep's edit → field managers' bell + buzz (the server re-checks the role).
+    if (repOnly && saveStatus !== "draft") {
+      notifyWriteUpRepChange("edited", order.orderNumber || editWriteUp.orderNumber, order.customerName || editWriteUp.customerName || "");
+    }
     finishAfterEdit(await handOffEditedTrim(materialItems));
   }
 
@@ -1782,6 +1787,8 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
     }
     autoAddToCatalogs();
     if (ctx.status !== "draft") requestWriteUpKindStamp(ctx.orderNumber);
+    // A rep's edit → field managers' bell + buzz (the server re-checks the role).
+    if (repOnly && ctx.status !== "draft") notifyWriteUpRepChange("edited", ctx.orderNumber, ctx.customerName || "");
     finishAfterEdit(await handOffEditedTrim(buildInputs(mergedIssues).flatMap((i) => i.materialItems)));
   }
   async function saveAndClose() {
@@ -1868,6 +1875,9 @@ export default function WriteUpModal({ order, units, onClose, onSaved, editWrite
       // JIP or Service is decided on the server; ask now so the trim order
       // handed over below can print it (lib/writeup-kind.ts).
       requestWriteUpKindStamp(order.orderNumber);
+      // A rep's submit → field managers' bell + buzz. The write-up email below
+      // still goes out exactly as before; this is in addition to it.
+      if (repOnly) notifyWriteUpRepChange("submitted", order.orderNumber, order.customerName || "");
     }
     // An installer can't open trim orders (that queue is field-manager and
     // office only), so a crew follow-up leaves the trim for the office to send.
