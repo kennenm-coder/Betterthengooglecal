@@ -6,6 +6,8 @@ interface StaleTabTagProps {
   isStale: boolean;
   staleAfter: string;
   nextUpdate: string;
+  /** Tooltip text when stale; falls back to the "since <time>" wording. */
+  reason?: string;
   onRefresh: () => void;
 }
 
@@ -18,6 +20,7 @@ export default function StaleTabTag({
   isStale,
   staleAfter,
   nextUpdate,
+  reason,
   onRefresh,
 }: StaleTabTagProps) {
   if (isStale) {
@@ -25,7 +28,7 @@ export default function StaleTabTag({
       <button
         onClick={onRefresh}
         className="hidden md:flex items-center gap-1 text-[11px] font-medium bg-amber-500 text-white rounded-full px-2 py-0.5 hover:bg-amber-600 transition-colors shrink-0 animate-pulse"
-        title={`Data may be outdated — new data available since ${staleAfter}`}
+        title={reason ?? `Data may be outdated — new data available since ${staleAfter}`}
       >
         <AlertTriangle className="w-3 h-3" />
         <span>Update available</span>

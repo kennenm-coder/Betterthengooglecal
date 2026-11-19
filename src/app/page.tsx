@@ -41,8 +41,7 @@ export default function CalendarPageWrapper() {
 }
 
 function CalendarPage() {
-  const { orders, measureOrders, loading, loadingBackground, refresh, ensureDateLoaded, linkedJobsStale, resyncLinkedJobs } = useData();
-  const [resyncingJobs, setResyncingJobs] = useState(false);
+  const { orders, measureOrders, loading, loadingBackground, refresh, ensureDateLoaded, linkedJobsStale } = useData();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [refreshing, setRefreshing] = useState(false);
@@ -52,7 +51,14 @@ function CalendarPage() {
   const canManageTimeOff = canManageTimeOffRole(roles);
   // The More for More Submitter's quick way to the office More for More tab.
   const showMfmButton = isMfmSubmitter(roles);
-  const { isStale, staleAfter, nextUpdate, isDesktop, dismiss, resetBlock } = useStaleTab();
+  const { isStale: hourlyStale, staleAfter, nextUpdate, isDesktop, dismiss, resetBlock } = useStaleTab();
+  // One refresh button for everything: it lights up amber when an hourly import
+  // has landed OR when linked material jobs were edited. Tapping it re-pulls
+  // both (refresh() re-checks the jobs and clears linkedJobsStale itself).
+  const isStale = hourlyStale || linkedJobsStale;
+  const staleReason = hourlyStale
+    ? `New data available since ${staleAfter}`
+    : "Linked jobs changed — refresh to update";
 
   useEffect(() => {
     fetchTimeOffRequests().then(setTimeOffRequests);
@@ -245,6 +251,7 @@ function CalendarPage() {
             <StaleTabTag
               isStale={isStale}
               staleAfter={staleAfter}
+              reason={staleReason}
               nextUpdate={nextUpdate}
               onRefresh={handleRefresh}
             />
@@ -337,7 +344,7 @@ function CalendarPage() {
                 ? "bg-amber-500/20 text-amber-600 ring-2 ring-amber-500/60 shadow-[0_0_10px_2px_rgba(245,158,11,0.55)] animate-pulse"
                 : "hover:bg-surface"
             }`}
-            title={isStale ? `New data available since ${staleAfter}` : "Refresh data"}
+            title={isStale ? staleReason : "Refresh data"}
           >
             <RefreshCw className={`w-4.5 h-4.5 ${refreshing ? "animate-spin" : ""}`} />
           </button>
@@ -356,24 +363,6 @@ function CalendarPage() {
           same question from opposite sides. Field managers and admins only. */}
       {canSeeFloaters(roles) && (
         <FloatersBanner date={currentDate} timeOffRequests={timeOffRequests} />
-      )}
-
-      {linkedJobsStale && (
-        <button
-          onClick={async () => {
-            setResyncingJobs(true);
-            try {
-              await resyncLinkedJobs();
-            } finally {
-              setResyncingJobs(false);
-            }
-          }}
-          disabled={resyncingJobs}
-          className="w-full bg-amber-500/15 text-amber-700 text-xs font-medium py-2 px-4 border-b border-amber-500/30 flex items-center justify-center gap-2 active:bg-amber-500/25 disabled:opacity-60"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${resyncingJobs ? "animate-spin" : ""}`} />
-          {resyncingJobs ? "Resyncing linked jobs…" : "Linked jobs changed — tap to resync"}
-        </button>
       )}
 
       {loadingBackground && (
