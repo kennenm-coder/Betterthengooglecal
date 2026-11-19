@@ -34,6 +34,31 @@
 const UNIVERSAL = /^(universal|any|all|custom|n\/?a|generic|misc\.?|miscellaneous|installation|installation parts?)$/;
 
 /**
+ * …except on the Andersen products the office orders in IQ (patio and storm
+ * doors). Renewal's install bucket is brickmould, flanges and fasteners for
+ * Renewal windows and entry doors; Kennen, 2026-11-19, after filtering by a
+ * 200 Series patio door and getting Renewal brickmould: "Renewal parts
+ * shouldnt show up on IQ products". Their parts are in the IQ Parts section.
+ */
+const RENEWAL_INSTALL = /^(installation|installation parts?)$/;
+const IQ_FAMILIES = new Set(["patio door", "storm door"]);
+
+/** True for Renewal's "Installation Parts" bucket (universal for Renewal products only). */
+export function isInstallBucket(raw: string | null | undefined): boolean {
+  return RENEWAL_INSTALL.test(clean(raw));
+}
+
+/**
+ * True when every one of these types is an IQ product (a patio or storm door),
+ * so Renewal's install bucket does not belong to them. A mix with a window
+ * still shows it: the window needs it.
+ */
+export function onlyIqProducts(types: (string | null | undefined)[]): boolean {
+  const fams = types.filter((t) => clean(t)).map((t) => productFamilies(t));
+  return fams.length > 0 && fams.every((f) => f.length > 0 && f.every((k) => IQ_FAMILIES.has(k)));
+}
+
+/**
  * Families, in the order they are tested. Order matters: "Gliding Patio Door"
  * has to be caught by patio door before "gliding" makes it a gliding window.
  */
@@ -133,13 +158,15 @@ export function familyMatcher(unitTypes: (string | null | undefined)[]): FamilyM
     for (const w of significantWords(t)) words.add(w);
   }
   const empty = !anyType;
+  const iqOnly = families.size > 0 && [...families].every((f) => IQ_FAMILIES.has(f));
   return {
     empty,
     families: [...families],
     matches(type) {
       if (empty) return true;
-      // Blank / universal / custom parts belong to every unit.
-      if (isUniversalType(type)) return true;
+      // Blank / universal / custom parts belong to every unit — but Renewal's
+      // install bucket not to units that are all IQ products (patio / storm doors).
+      if (isUniversalType(type)) return !(iqOnly && isInstallBucket(type));
       const theirs = productFamilies(type);
       if (theirs.some((f) => families.has(f))) return true;
       // Unrecognised on either side: share a significant word and it counts.

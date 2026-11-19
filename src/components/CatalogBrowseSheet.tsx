@@ -28,7 +28,7 @@ import {
   partPrice,
   bundlePrice,
 } from "@/lib/work-order-store";
-import { familyMatcher, isUniversalType } from "@/lib/product-family";
+import { familyMatcher, isInstallBucket, isUniversalType, onlyIqProducts } from "@/lib/product-family";
 import { catalogPhotoUrl } from "@/lib/catalog-photo";
 import {
   settleVariant,
@@ -129,9 +129,12 @@ export default function CatalogBrowseSheet({
 
   const typeOk = useMemo(() => {
     return (type: string | null | undefined, cat?: string | null): boolean => {
-      if ((cat || "").trim().toLowerCase() === "custom" || isUniversalType(type)) return true;
+      if ((cat || "").trim().toLowerCase() === "custom") return true;
       if (typeMode.kind === "all") return true;
       if (typeMode.kind === "units") return matcher.matches(type);
+      // Renewal's "Installation Parts" stay with every chip except IQ products
+      // (patio / storm doors): their parts are the IQ Parts section's.
+      if (isUniversalType(type)) return !(isInstallBucket(type) && onlyIqProducts(typeMode.types));
       return typeMode.types.includes((type || "").trim());
     };
   }, [typeMode, matcher]);

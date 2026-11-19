@@ -53,7 +53,7 @@ import {
 } from "@/lib/work-order-store";
 import { canDoFieldWork } from "@/lib/roles";
 import type { MaterialCatalog } from "@/lib/nwo-builder";
-import { familyMatcher, isUniversalType } from "@/lib/product-family";
+import { familyMatcher, isInstallBucket, isUniversalType } from "@/lib/product-family";
 import {
   partLabel,
   partDescription,
@@ -4006,7 +4006,8 @@ function PartsPicker({
    */
   const unitMismatch = useCallback(
     (p: PartItem): string | null => {
-      if (!p.productType || isUniversalType(p.productType)) return null;
+      // Renewal's install bucket goes on to the matcher: on a patio / storm door it is a mismatch.
+      if (!p.productType || (isUniversalType(p.productType) && !isInstallBucket(p.productType))) return null;
       const pinned = p.unitKeys.length ? affectedUnits.filter((u) => p.unitKeys.includes(u.key)) : affectedUnits;
       if (pinned.length === 0) return null;
       const m = familyMatcher(pinned.map((u) => u.unitType));
