@@ -14,7 +14,6 @@ import StaleTabTag from "@/components/StaleTabBanner";
 import { useStaleTab } from "@/hooks/useStaleTab";
 import NotificationBell from "@/components/NotificationBell";
 import PushInvite from "@/components/PushInvite";
-import TimeOffBell from "@/components/TimeOffBell";
 import { useAuth } from "@/hooks/useAuth";
 import {
   canManageTimeOff as canManageTimeOffRole,
@@ -301,9 +300,8 @@ function CalendarPage() {
             </button>
           )}
 
+          {/* One bell: kiosk requests waiting on you + notification history. */}
           <NotificationBell />
-
-          <TimeOffBell />
 
           <Link
             href="/settings"

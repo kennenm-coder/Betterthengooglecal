@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Bell, CheckCheck } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { getSupabase } from "@/lib/supabase";
 import { usePanelPosition } from "@/hooks/usePanelPosition";
+import { useKioskInbox } from "@/hooks/useKioskInbox";
+import InboxItemCard from "@/components/kiosk-inbox/InboxItemCard";
 
 /** Refresh the badge this often while the page is open (a push refreshes it
  *  straight away, so this only matters for people without buzzes turned on). */
@@ -35,20 +38,25 @@ function ago(iso: string): string {
 }
 
 /**
- * The bell at the top of the calendar: everything this account has been
- * notified about, newest first, kept 90 days. It fills whether or not phone
- * buzzes are turned on — the history is the record, the buzz is the extra.
- * Rows come straight from `notifications`, which only lets a person read their
- * own (migration 063).
+ * The ONE bell at the top of the calendar (Kennen, 2026-11-19: the separate
+ * kiosk inbox button was folded in here). Two parts:
+ *   1. "Waiting on you" — kiosk requests this person can decide (time off,
+ *      time cards, forms, nominations), with the same decide buttons as the
+ *      Time Off inbox. Only for approvers (useKioskInbox).
+ *   2. "Notifications" — everything this account was notified about, newest
+ *      first, kept 90 days, whether or not phone buzzes are on (migration 063;
+ *      a person reads only their own rows).
+ * The red number counts unread notifications plus new requests waiting.
  */
 export default function NotificationBell() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const inbox = useKioskInbox();
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<NotificationRow[]>([]);
   const panelRef = useRef<HTMLDivElement>(null);
   // Kept on screen: the bell isn't at the right edge of a phone.
-  const panelStyle = usePanelPosition(panelRef, open, 384);
+  const panelStyle = usePanelPosition(panelRef, open, 448);
   const signedIn = !loading && !!user;
 
   const refresh = useCallback(async () => {
@@ -94,6 +102,8 @@ export default function NotificationBell() {
   if (!signedIn) return null;
 
   const unread = rows.filter((r) => !r.read_at).length;
+  const badge = unread + inbox.unseen;
+  const waiting = inbox.items;
 
   async function markRead(ids: string[]) {
     if (ids.length === 0) return;
@@ -108,27 +118,65 @@ export default function NotificationBell() {
     if (r.url) router.push(r.url);
   }
 
+  function toggle() {
+    if (open) return setOpen(false);
+    setOpen(true);
+    refresh();
+    if (inbox.canReview) {
+      inbox.refresh();
+      inbox.markSeen();
+    }
+  }
+
+  const title = [
+    unread ? `${unread} unread notification${unread === 1 ? "" : "s"}` : "",
+    waiting.length ? `${waiting.length} request${waiting.length === 1 ? "" : "s"} waiting on you` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <div className="relative shrink-0" ref={panelRef}>
       <button
-        onClick={() => {
-          setOpen((v) => !v);
-          if (!open) refresh();
-        }}
+        onClick={toggle}
         className="relative p-1.5 rounded-md hover:bg-surface text-muted hover:text-foreground"
-        title={unread ? `${unread} unread notification${unread === 1 ? "" : "s"}` : "Notifications"}
+        title={title || "Notifications"}
         aria-label="Notifications"
       >
         <Bell className="w-5 h-5" />
-        {unread > 0 && (
+        {badge > 0 && (
           <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-danger text-white text-[10px] font-bold flex items-center justify-center">
-            {unread > 99 ? "99+" : unread}
+            {badge > 99 ? "99+" : badge}
           </span>
         )}
       </button>
 
       {open && (
         <div style={panelStyle} className="overflow-auto rounded-xl border border-border bg-background shadow-xl z-50">
+          {/* 1. Kiosk requests this person can decide (approvers only). */}
+          {inbox.canReview && waiting.length > 0 && (
+            <>
+              <div className="sticky top-0 z-10 flex items-center gap-2 bg-background border-b border-border px-4 py-2.5">
+                <p className="text-sm font-semibold flex-1">Waiting on you ({waiting.length})</p>
+                <Link
+                  href="/time-off"
+                  onClick={() => setOpen(false)}
+                  className="text-xs font-medium text-primary hover:underline"
+                >
+                  Open inbox
+                </Link>
+              </div>
+              <ul className="divide-y divide-border border-b border-border">
+                {waiting.map((item) => (
+                  <li key={`${item.decision_table}:${item.item_id}`} className="px-4 py-3">
+                    <InboxItemCard item={item} kioskUrl={inbox.kioskUrl} compact onDecided={inbox.handleDecided} />
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {/* 2. Notification history. */}
           <div className="sticky top-0 z-10 flex items-center gap-2 bg-background border-b border-border px-4 py-2.5">
             <p className="text-sm font-semibold flex-1">Notifications</p>
             {unread > 0 && (
@@ -159,7 +207,9 @@ export default function NotificationBell() {
                     />
                     <span className="min-w-0 flex-1">
                       <span className={`block text-sm ${r.read_at ? "font-medium" : "font-semibold"}`}>{r.title}</span>
-                      {r.body && <span className="block text-xs text-muted mt-0.5 whitespace-pre-line">{r.body}</span>}
+                      {r.body && (
+                        <span className="block text-xs text-muted mt-0.5 whitespace-pre-line">{r.body}</span>
+                      )}
                       <span className="block text-[11px] text-muted mt-1">{ago(r.created_at)}</span>
                     </span>
                   </button>
