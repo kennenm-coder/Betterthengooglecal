@@ -57,6 +57,15 @@ export default function RootLayout({
               if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.register('/sw.js');
               }
+              // Android / desktop Chrome offer "install this app" once the page
+              // loads — often before React is up. Hold on to that offer (and
+              // stop Chrome's own banner) so the calendar's one-time card can
+              // ask instead (PushInvite). iPhones never send this.
+              window.addEventListener('beforeinstallprompt', function (e) {
+                e.preventDefault();
+                window.__duckInstallPrompt = e;
+                window.dispatchEvent(new Event('duck-install-ready'));
+              });
             `,
           }}
         />
