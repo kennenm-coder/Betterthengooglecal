@@ -1,5 +1,8 @@
-// The daily alarm clock. Vercel Cron calls this once a day (vercel.json) —
-// the free plan allows once a day, which is all anything here needs.
+// The daily alarm clock. Vercel schedules in UTC and doesn't follow daylight
+// saving, so vercel.json calls this at BOTH 16:00 and 17:00 UTC and the code
+// below runs Job Alerts only on the call that lands at 12 noon in New York
+// (17:00 UTC in winter, 16:00 UTC in summer). Job Alerts therefore buzz at
+// noon Eastern all year (Kennen, 2026-11-19). The other call does nothing.
 //
 // It's where TIME-based notifications go: nobody taps anything, so something
 // has to wake up and look. Each job is one step below, and anything it sends
@@ -41,10 +44,19 @@ export async function GET(req: Request) {
   }
 
   const ran: Record<string, unknown> = {};
-  try {
-    ran.jobAlerts = await runJobAlerts();
-  } catch (err) {
-    ran.jobAlertsError = (err as Error).message;
+  // Noon at the office, or a manual run with ?force=1 (for testing).
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(new Date())
+  );
+  const forced = new URL(req.url).searchParams.get("force") === "1";
+  if (hour % 24 === 12 || forced) {
+    try {
+      ran.jobAlerts = await runJobAlerts();
+    } catch (err) {
+      ran.jobAlertsError = (err as Error).message;
+    }
+  } else {
+    ran.jobAlerts = `skipped: it's ${hour % 24}:00 at the office, not noon`;
   }
   try {
     ran.purgedNotifications = await purgeOldNotifications(90);
