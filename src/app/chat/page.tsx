@@ -591,65 +591,81 @@ function ChatPageInner() {
               only see linked chats your GroupMe account is already in — never
               your personal groups or direct messages.
             </p>
-            {/* Pasting the token is the PRIMARY path, not a fallback:
-                GroupMe's OAuth sign-in loops on its own broken http redirect.
-                See the POST handler in /api/groupme/connection. */}
+            {/* Signing in through GroupMe is the main path: each person logs
+                in to their OWN GroupMe account from here. GroupMe uses the
+                browser's existing GroupMe login, so someone already signed
+                in to a different GroupMe account on this browser should use
+                a private window. Pasting a token stays as a fallback. */}
             <div className="max-w-sm mx-auto text-left">
-              <label
-                htmlFor="groupme-token"
-                className="block text-xs font-medium mb-1"
+              <a
+                href="/api/groupme/connect"
+                className="w-full inline-flex items-center justify-center gap-2 bg-primary text-white rounded-xl px-4 py-2.5 text-sm font-medium"
               >
-                Access token
-              </label>
-              <input
-                id="groupme-token"
-                type="password"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && connectWithToken()}
-                placeholder="Paste from dev.groupme.com"
-                autoComplete="off"
-                spellCheck={false}
-                className="w-full bg-surface border border-border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-              <p className="text-[11px] text-muted mt-1.5 mb-3">
-                Sign in at{" "}
-                <a
-                  href="https://dev.groupme.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline"
-                >
-                  dev.groupme.com
-                </a>{" "}
-                with your normal GroupMe login, then click{" "}
-                <strong>Access Token</strong> at the top right and copy it here.
-                Treat it like a password.
+                <MessageCircle className="w-4 h-4" />
+                Sign in with GroupMe
+              </a>
+              <p className="text-[11px] text-muted mt-2 text-center">
+                You&apos;ll sign in on GroupMe&apos;s own page, then come right
+                back. Already signed in to a different GroupMe account in this
+                browser? Use a private window.
               </p>
 
               {connectError && (
-                <p className="text-xs text-red-600 mb-3">{connectError}</p>
+                <p className="text-xs text-red-600 mt-3 text-center">
+                  {connectError}
+                </p>
               )}
 
-              <button
-                onClick={connectWithToken}
-                disabled={!tokenInput.trim() || connecting}
-                className="w-full inline-flex items-center justify-center gap-2 bg-primary text-white rounded-xl px-4 py-2.5 text-sm font-medium disabled:opacity-40"
-              >
-                {connecting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <MessageCircle className="w-4 h-4" />
-                )}
-                Connect GroupMe
-              </button>
-
-              <a
-                href="/api/groupme/connect"
-                className="block text-center text-[11px] text-muted mt-3 hover:text-foreground"
-              >
-                Or try signing in through GroupMe instead
-              </a>
+              <details className="mt-6 text-center">
+                <summary className="text-[11px] text-muted cursor-pointer hover:text-foreground">
+                  Trouble signing in? Paste an access token instead
+                </summary>
+                <div className="mt-3 text-left">
+                  <label
+                    htmlFor="groupme-token"
+                    className="block text-xs font-medium mb-1"
+                  >
+                    Access token
+                  </label>
+                  <input
+                    id="groupme-token"
+                    type="password"
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && connectWithToken()}
+                    placeholder="Paste from dev.groupme.com"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="w-full bg-surface border border-border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <p className="text-[11px] text-muted mt-1.5 mb-3">
+                    Sign in at{" "}
+                    <a
+                      href="https://dev.groupme.com"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline"
+                    >
+                      dev.groupme.com
+                    </a>{" "}
+                    with your own GroupMe login, then click{" "}
+                    <strong>Access Token</strong> at the top right and copy it
+                    here. Treat it like a password.
+                  </p>
+                  <button
+                    onClick={connectWithToken}
+                    disabled={!tokenInput.trim() || connecting}
+                    className="w-full inline-flex items-center justify-center gap-2 bg-surface border border-border rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-40"
+                  >
+                    {connecting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <MessageCircle className="w-4 h-4" />
+                    )}
+                    Connect with token
+                  </button>
+                </div>
+              </details>
             </div>
           </div>
         ) : !available ? (
