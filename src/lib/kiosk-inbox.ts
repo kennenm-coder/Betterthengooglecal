@@ -196,6 +196,32 @@ export const SECTION_ROLES: Record<SectionKind, string[]> = {
 /** Who can read the supply log. Supplies have no decision yet; see the kiosk's SUPPLY-REQUEST-PLAN. */
 export const SUPPLY_ROLES = SECTION_ROLES.supply;
 
+/** The four kinds of feedback, as the kiosk names them (feedback.ts there). */
+export const FEEDBACK_CATEGORY_LABELS: Record<string, string> = {
+  idea: "Idea or suggestion",
+  comment: "Comment",
+  question: "Question",
+  complaint: "Complaint",
+};
+
+/** One piece of feedback, as the Feedback tab shows it. */
+export interface FeedbackItem {
+  id: string;
+  feedback_number: number;
+  category: string;
+  message: string;
+  anonymous: boolean;
+  /** Null when anonymous, or when they gave none. */
+  submitter_name: string | null;
+  wants_discussion: boolean;
+  /** How to reach them, only when they asked to talk it over. */
+  contact: string | null;
+  status: "new" | "handled";
+  handled_by_name: string | null;
+  handled_at: string | null;
+  created_at: string;
+}
+
 /** What an emailed link asks for: one submission, or one supply request. */
 export interface InboxFocus {
   sub: string | null;

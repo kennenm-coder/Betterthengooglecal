@@ -39,7 +39,10 @@ export type UserRole =
   | "installer-lead"
   // Puts More for More sheets in for every crew, auto-approved. Additive (not
   // restricted). Assigned in the NWO hub, not the calendar's Team page.
-  | "mfm-submitter";
+  | "mfm-submitter"
+  // Reads the office kiosk's feedback on the Payroll Admin page, and nothing
+  // else there. Additive; created in the NWO hub's roster-roles.ts.
+  | "feedback";
 
 interface AuthState {
   user: User | null;

@@ -15,6 +15,7 @@ import {
   isPending,
 } from "@/lib/time-off-store";
 import KioskInboxSection from "@/components/kiosk-inbox/KioskInboxSection";
+import FeedbackPanel from "@/components/kiosk-inbox/FeedbackPanel";
 import { canSeeShareLinks, canUseInbox } from "@/lib/kiosk-inbox";
 import {
   ArrowLeft,
@@ -32,7 +33,7 @@ import {
   FileSignature,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { canManageTimeOff, canProcessMoreForMore } from "@/lib/roles";
+import { canManageTimeOff, canProcessMoreForMore, canReadFeedback } from "@/lib/roles";
 import MoreForMoreOffice from "@/components/MoreForMoreOffice";
 import { format } from "date-fns";
 
@@ -135,7 +136,7 @@ function ApprovedBy({
   );
 }
 
-type PayrollTab = "timeoff" | "mfm" | "kiosk";
+type PayrollTab = "timeoff" | "mfm" | "kiosk" | "feedback";
 
 function TimeOffContent() {
   const router = useRouter();
@@ -147,21 +148,27 @@ function TimeOffContent() {
   //   Time Off          — the time-off log (time-off managers)
   //   More for More     — finishing bonus sheets (payroll + the submitter)
   //   Kiosk Submissions — everything sent in at the kiosk (kiosk approvers)
+  //   Feedback          — ideas, comments, questions and complaints from the
+  //                       kiosk (admins and the feedback role only)
   const showTimeOff = canManageTimeOff(roles);
   const showMfm = canProcessMoreForMore(roles);
   const showKiosk = canUseInbox(roles);
+  const showFeedback = canReadFeedback(roles);
   const tabs = (
     [
       ["timeoff", "Time Off", showTimeOff],
       ["mfm", "More for More", showMfm],
       ["kiosk", "Kiosk Submissions", showKiosk],
+      ["feedback", "Feedback", showFeedback],
     ] as const
   ).filter(([, , show]) => show);
-  // ?tab=mfm / ?tab=kiosk open that tab. The kiosk's email links carry
-  // ?sub= or ?supply= to focus one submission, so they open Kiosk too.
+  // ?tab=mfm / ?tab=kiosk / ?tab=feedback open that tab. The kiosk's email links
+  // carry ?sub= or ?supply= to focus one submission (so they open Kiosk too), or
+  // ?feedback= to focus one piece of feedback.
   const [tab, setTab] = useState<PayrollTab>(() => {
     const t = searchParams.get("tab");
-    if (t === "mfm" || t === "kiosk") return t;
+    if (t === "mfm" || t === "kiosk" || t === "feedback") return t;
+    if (searchParams.get("feedback")) return "feedback";
     if (searchParams.get("sub") || searchParams.get("supply")) return "kiosk";
     return "timeoff";
   });
@@ -425,7 +432,7 @@ function TimeOffContent() {
           <ArrowLeft className="w-5 h-5" />
         </button>
         {tabs.length > 1 ? (
-          <div className="flex-1 min-w-0 flex items-center gap-1 rounded-lg bg-surface p-0.5 max-w-md">
+          <div className="flex-1 min-w-0 flex items-center gap-1 rounded-lg bg-surface p-0.5 max-w-xl">
             {tabs.map(([key, label]) => (
               <button
                 key={key}
@@ -475,6 +482,12 @@ function TimeOffContent() {
 
       {activeTab === "mfm" ? (
         <MoreForMoreOffice />
+      ) : activeTab === "feedback" ? (
+        <div className="flex-1 overflow-auto">
+          <div className="max-w-3xl mx-auto w-full">
+            <FeedbackPanel focusId={searchParams.get("feedback")} />
+          </div>
+        </div>
       ) : activeTab === "kiosk" ? (
         <div className="flex-1 overflow-auto">
           <div className="max-w-3xl mx-auto w-full">

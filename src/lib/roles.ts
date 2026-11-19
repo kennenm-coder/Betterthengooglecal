@@ -259,6 +259,19 @@ export function canViewWriteUpDoc(roles: RoleInput): boolean {
 }
 
 /**
+ * Who can read the kiosk's feedback (ideas, comments, questions, complaints).
+ *
+ * Deliberately narrower than the rest of the Payroll Admin page: feedback can be
+ * about anyone, payroll and managers included, so payroll admins do not get it
+ * just by being payroll admins. It is admins plus the `feedback` role, which is
+ * handed out in the NWO hub. Mirrors OPEN_ROLES.feedback in the kiosk's
+ * src/lib/mail/recipients.ts, and the hub's Feedback email card.
+ */
+export function canReadFeedback(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "feedback"]);
+}
+
+/**
  * Who can APPROVE or deny a time-off request.
  *
  * Payroll approvers are managers given a say over time off and nothing else:
@@ -359,6 +372,8 @@ export const ROLE_LABELS: Record<string, string> = {
   // Not in ROLE_OPTIONS on purpose: it is handed out in the NWO hub, so it
   // gets no checkbox on this app's Team page. Labelled here for badges only.
   "mfm-submitter": "More for More Submitter",
+  // Handed out in the NWO hub (it creates roster roles), so it gets no checkbox here.
+  feedback: "Feedback",
 };
 
 export const ROLE_STYLES: Record<string, string> = {
@@ -379,4 +394,5 @@ export const ROLE_STYLES: Record<string, string> = {
   installer: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
   "installer-lead": "bg-stone-500/15 text-stone-700 dark:text-stone-300",
   "mfm-submitter": "bg-rba-green/15 text-rba-green",
+  feedback: "bg-pink-500/15 text-pink-600 dark:text-pink-400",
 };
