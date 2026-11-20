@@ -2,11 +2,13 @@
 //
 // Each weekday morning, for every appointment that has Job Alert notes: if
 // it's 5 business days out, or the business day before, ONE notification goes
-// to every field manager and admin — a phone buzz plus a bell entry, no email
-// (Kennen, 2026-11-19). It lists every note on the job with who wrote it.
+// to everyone in that job's group — a phone buzz plus a bell entry, no email
+// (Kennen, 2026-11-19). Two groups (migration 071, 2026-11-20): Tech Measure
+// jobs buzz every measure tech and admin; every other job buzzes every field
+// manager and admin. It lists every note on the job with who wrote it.
 // The appointment date is read fresh from work_orders, so a rescheduled job
 // buzzes for its new date. Date rules: src/lib/job-alert-dates.ts.
-// Tables: 064 + 065.
+// Tables: 064 + 065 + 066 + 071.
 
 import { getAdminClient } from "@/lib/auth";
 import { emailsWithRole, notify } from "@/lib/notify-server";
@@ -21,6 +23,7 @@ interface AlertRow {
   created_at: string;
   sent5_for_date: string | null;
   sent1_for_date: string | null;
+  audience: string | null;
 }
 interface OrderRow {
   id: string;
@@ -59,7 +62,7 @@ export async function runJobAlerts(now: Date = new Date()): Promise<JobAlertRun>
   const admin = getAdminClient();
   const { data } = await admin
     .from("job_alerts")
-    .select("id, work_order_id, note, created_by, created_by_name, created_at, sent5_for_date, sent1_for_date")
+    .select("id, work_order_id, note, created_by, created_by_name, created_at, sent5_for_date, sent1_for_date, audience")
     .order("created_at", { ascending: true });
   const notes = (data || []) as AlertRow[];
 
@@ -78,7 +81,14 @@ export async function runJobAlerts(now: Date = new Date()): Promise<JobAlertRun>
     for (const o of (rows || []) as OrderRow[]) orders.set(o.id, o);
   }
 
-  let managers: string[] | null = null;
+  // Who gets the buzz, per group — looked up once, only if needed.
+  const recipients = new Map<string, string[]>();
+  const recipientsFor = async (audience: string): Promise<string[]> => {
+    if (!recipients.has(audience)) {
+      recipients.set(audience, await emailsWithRole(audience === "measure" ? ["measure-tech", "admin"] : ["field-manager", "admin"]));
+    }
+    return recipients.get(audience)!;
+  };
 
   for (const [id, jobNotes] of byJob) {
     const o = orders.get(id);
@@ -93,13 +103,13 @@ export async function runJobAlerts(now: Date = new Date()): Promise<JobAlertRun>
     const stage: JobAlertStage | null = dueStage(appt, sent5, sent1, today);
     if (!stage) continue;
 
-    managers ??= await emailsWithRole(["field-manager", "admin"]);
+    const audience = jobNotes[0]?.audience === "measure" ? "measure" : "field";
     const customer = o.customer_name || "Job";
     const when = `${shortDay(appt)}${timeOf(o.scheduled_start)}`;
     const lines = jobNotes.map((n) => `${n.created_by_name?.trim() || shortName(n.created_by)}: ${n.note.trim()}`);
 
     await notify({
-      emails: managers,
+      emails: await recipientsFor(audience),
       kind: "job_alert",
       title: `Job Alert: ${customer} — ${when}${stage === "one" ? " (next business day)" : " (5 business days)"}`,
       body: lines.join("\n"),

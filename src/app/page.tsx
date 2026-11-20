@@ -193,15 +193,22 @@ function CalendarPage() {
     if (match) setSelectedOrder(match);
   }, [orders]);
 
-  // Older links that name the order in the address (?order=123).
+  // Links that name the order in the address (?order=123) — Job Alert buzzes
+  // and emails use these. Looks in the Tech Measure list too (those load
+  // separately), and keeps the link until the job turns up or loading is done,
+  // so a job that hasn't arrived yet isn't dropped.
   useEffect(() => {
     const orderId = searchParams.get("order");
-    if (orderId && orders.length > 0) {
-      const match = orders.find((o) => o.id === orderId);
-      if (match) setSelectedOrder(match);
+    if (!orderId) return;
+    const match =
+      orders.find((o) => o.id === orderId) ?? measureOrders.find((o) => o.id === orderId);
+    if (match) {
+      setSelectedOrder(match);
+      window.history.replaceState(null, "", "/");
+    } else if (!loading && !loadingBackground && orders.length > 0) {
       window.history.replaceState(null, "", "/");
     }
-  }, [searchParams, orders]);
+  }, [searchParams, orders, measureOrders, loading, loadingBackground]);
 
   useEffect(() => {
     ensureDateLoaded(currentDate);

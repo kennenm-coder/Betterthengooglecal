@@ -12,7 +12,7 @@ import { typeColor, formatTime, formatDateShort } from "@/lib/calendar-utils";
 import { MaterialJobData, WorkOrder } from "@/lib/types";
 import { Search, Loader2, X, Database, MapPin, FileText, ClipboardList, Package, AlarmClock } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork } from "@/lib/roles";
+import { jobAlertAudiences, type JobAlertAudience } from "@/lib/roles";
 import { appointmentDate, reminderStatus, todayAtOffice } from "@/lib/job-alert-dates";
 import { fetchAllJobAlerts, fetchJobAlertJobs, type JobAlert, type JobAlertJobLite } from "@/lib/job-alerts-store";
 import { useRouter } from "next/navigation";
@@ -26,8 +26,10 @@ export default function SearchPage() {
   // Use material jobs already loaded by DataProvider — no extra fetch.
   const { orders, measureOrders, materialJobs, loading, loadingBackground, ensureDateLoaded } = useData();
   const { roles } = useAuth();
-  // Field managers + admins: the Job Alerts quick list under the search bar.
-  const canSeeJobAlerts = canDoFieldWork(roles);
+  // The Job Alerts quick list under the search bar: field managers + admins see
+  // the non-measure jobs; measure techs + admins see the Tech Measure jobs.
+  const alertAudiences = jobAlertAudiences(roles);
+  const canSeeJobAlerts = alertAudiences.length > 0;
   const [showAlerts, setShowAlerts] = useState(false);
   const jobsLoading = loadingBackground && materialJobs.length === 0;
   const router = useRouter();
@@ -182,7 +184,12 @@ export default function SearchPage() {
 
       <div className="flex-1 overflow-y-auto">
         {showAlerts && canSeeJobAlerts ? (
-          <JobAlertsView orders={searchable} ensureDateLoaded={ensureDateLoaded} onOpen={setSelectedOrder} />
+          <JobAlertsView
+            orders={searchable}
+            audiences={alertAudiences}
+            ensureDateLoaded={ensureDateLoaded}
+            onOpen={setSelectedOrder}
+          />
         ) : loading || jobsLoading ? (
           <div className="flex items-center justify-center h-40">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -535,19 +542,27 @@ interface AlertedJob {
  */
 function JobAlertsView({
   orders,
+  audiences,
   ensureDateLoaded,
   onOpen,
 }: {
   orders: WorkOrder[];
+  /** Which groups' notes this person may list (field and/or measure). */
+  audiences: JobAlertAudience[];
   ensureDateLoaded: (date: Date) => void;
   onOpen: (order: WorkOrder) => void;
 }) {
   const [jobs, setJobs] = useState<AlertedJob[] | null>(null);
+  // A string, so the effect below doesn't re-run every time the page redraws
+  // (the audiences array is rebuilt on every render).
+  const audienceKey = audiences.join(",");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const notes = await fetchAllJobAlerts();
+      // The database already hides the other group's notes; this keeps an admin
+      // (who holds both) listing exactly what their roles cover.
+      const notes = (await fetchAllJobAlerts()).filter((n) => audienceKey.split(",").includes(n.audience));
       const byJob = new Map<string, JobAlert[]>();
       for (const n of notes) byJob.set(n.workOrderId, [...(byJob.get(n.workOrderId) || []), n]);
       const lite = await fetchJobAlertJobs([...byJob.keys()]);
@@ -570,7 +585,7 @@ function JobAlertsView({
     return () => {
       cancelled = true;
     };
-  }, [ensureDateLoaded]);
+  }, [ensureDateLoaded, audienceKey]);
 
   if (jobs === null) {
     return (

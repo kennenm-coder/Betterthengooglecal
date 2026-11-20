@@ -448,6 +448,13 @@ checks(migration, feature, verdict, checked) as (values
        then 'APPLIED' else 'NOT APPLIED' end,
   'the one-note-per-person unique index on job_alerts is gone'),
 
+ ('071', 'Job Alert measure group (field vs measure notes)',
+  case when exists(select 1 from col where k = 'job_alerts.audience')
+        and exists(select 1 from fn where k = 'job_alerts_set_audience')
+        and exists(select 1 from pol where t = 'job_alerts' and p = 'fieldmgr_read_job_alerts' and body like '%measure-tech%')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'job_alerts.audience AND the set-audience trigger function AND measure-tech in the read policy'),
+
  ('067', 'GroupMe chat: each person picks their own groups',
   case when exists(select 1 from tbl where k = 'groupme_chat_picks')
        then 'APPLIED' else 'NOT APPLIED' end,
