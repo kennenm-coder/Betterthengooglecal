@@ -180,7 +180,7 @@ export default function ChatBotPanel({
           <p className="text-xs text-muted">
             Add the bot once and it works for everyone who chose this chat: instant buzzes (instead of up to a
             minute later), exact unread counts, and a Messages button on the installer&apos;s job cards. Group
-            members will see &quot;Duck Force&quot; in the chat.
+            members will see &quot;Duck Force Bot&quot; (with the duck picture) in the chat.
           </p>
           <label className="block text-xs font-medium">This chat is for</label>
           {select}

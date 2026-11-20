@@ -73,7 +73,7 @@ export async function POST(req: Request) {
     const callbackKey = randomBytes(24).toString("hex");
     const origin = new URL(req.url).origin;
     const callbackUrl = `${origin}/api/groupme/bot?k=${callbackKey}`;
-    const botId = await createGroupMeBot(ctx.token, group, callbackUrl);
+    const botId = await createGroupMeBot(ctx.token, group, callbackUrl, origin);
 
     const pick = (await listPicks(ctx.user.id)).find((p) => p.groupId === group);
     await saveBot({

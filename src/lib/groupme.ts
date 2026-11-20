@@ -579,16 +579,61 @@ export async function getBot(groupId: string): Promise<ChatBot | null> {
   return (await listBots([groupId]))[0] ?? null;
 }
 
-/** Ask GroupMe to create the bot in this group, as the person whose token it is. */
+/** What the bot is called in every GroupMe chat. */
+export const BOT_NAME = "Duck Force Bot";
+
+/** The bot's picture once it's in GroupMe's own picture storage (per server instance). */
+let botAvatarUrl: string | null = null;
+
+/**
+ * Put the Duck Force duck (public/icon-512.png) into GroupMe's picture storage
+ * and return its GroupMe address, for the bot's profile picture. GroupMe
+ * pictures have to live on GroupMe's image service. Returns null if anything
+ * goes wrong -- the bot is still added, just without the duck.
+ */
+async function uploadBotAvatar(token: string, siteOrigin: string): Promise<string | null> {
+  if (botAvatarUrl) return botAvatarUrl;
+  try {
+    const icon = await fetch(`${siteOrigin}/icon-512.png`, { cache: "no-store" });
+    if (!icon.ok) return null;
+    const bytes = await icon.arrayBuffer();
+    const res = await fetch("https://image.groupme.com/pictures", {
+      method: "POST",
+      headers: { "X-Access-Token": token, "Content-Type": "image/png" },
+      body: bytes,
+    });
+    if (!res.ok) return null;
+    const body = (await res.json().catch(() => null)) as
+      | { payload?: { url?: string; picture_url?: string } }
+      | null;
+    botAvatarUrl = body?.payload?.url || body?.payload?.picture_url || null;
+    return botAvatarUrl;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ask GroupMe to create "Duck Force Bot" (with the duck as its picture) in this
+ * group, as the person whose token it is. GroupMe has no way to change a bot's
+ * picture later, so it's set here or not at all.
+ */
 export async function createGroupMeBot(
   token: string,
   groupId: string,
-  callbackUrl: string
+  callbackUrl: string,
+  siteOrigin: string
 ): Promise<string> {
+  const avatarUrl = await uploadBotAvatar(token, siteOrigin);
   const { data } = await groupmeFetch<{ bot?: { bot_id?: string } }>(token, "/bots", {
     method: "POST",
     body: JSON.stringify({
-      bot: { name: "Duck Force", group_id: groupId, callback_url: callbackUrl },
+      bot: {
+        name: BOT_NAME,
+        group_id: groupId,
+        callback_url: callbackUrl,
+        ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
+      },
     }),
   });
   const botId = data?.bot?.bot_id;
