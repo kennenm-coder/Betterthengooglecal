@@ -6,6 +6,7 @@ import {
   Bell,
   BellOff,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ListChecks,
@@ -20,6 +21,7 @@ import { canUseInstallerChat } from "@/lib/roles";
 import BottomNav from "@/components/BottomNav";
 import InstallerChat from "@/components/InstallerChat";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
+import NotificationScheduleEditor from "@/components/NotificationScheduleEditor";
 import {
   fetchChatConnection,
   prefetchMessages,
@@ -136,6 +138,8 @@ function ChatPageInner() {
   );
   const [selected, setSelected] = useState<ChatRow | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The notification menu under the header (GroupMe buzz + schedule).
+  const [notifyOpen, setNotifyOpen] = useState(false);
   // Re-color the list every minute even when nothing new arrives.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -463,28 +467,63 @@ function ChatPageInner() {
                 ? `Connected to GroupMe as ${connection.groupmeName}`
                 : "Connected to GroupMe"}
             </p>
-            {/* Once-a-minute check: one buzz per chat with new messages.
-                Needs this device's notifications on (Settings). */}
+            {/* Opens the notification menu: GroupMe buzz on/off, plus the
+                account-wide schedule (same one as Settings). */}
             <button
-              onClick={toggleBuzz}
+              onClick={() => setNotifyOpen((o) => !o)}
               className="text-xs text-muted hover:text-foreground inline-flex items-center gap-1 shrink-0"
-              aria-pressed={connection.notifyMessages !== false}
+              aria-expanded={notifyOpen}
             >
               {connection.notifyMessages !== false ? (
-                <>
-                  <Bell className="w-3.5 h-3.5 text-primary" />
-                  Buzz me: on
-                </>
+                <Bell className="w-3.5 h-3.5 text-primary" />
               ) : (
-                <>
-                  <BellOff className="w-3.5 h-3.5" />
-                  Buzz me: off
-                </>
+                <BellOff className="w-3.5 h-3.5" />
               )}
+              Notifications
+              <ChevronDown
+                className={`w-3.5 h-3.5 transition-transform ${notifyOpen ? "rotate-180" : ""}`}
+              />
             </button>
           </div>
         )}
       </header>
+
+      {connection?.connected && notifyOpen && (
+        <div className="border-b border-border bg-surface px-4 py-3 space-y-3 shrink-0 max-h-[60vh] overflow-y-auto">
+          {/* Once-a-minute check: one buzz per chat with new messages. */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Buzz me for GroupMe messages</p>
+              <p className="text-xs text-muted">
+                One buzz per chat when something new arrives in your chosen chats.
+              </p>
+            </div>
+            <button
+              onClick={toggleBuzz}
+              role="switch"
+              aria-checked={connection.notifyMessages !== false}
+              className={`relative w-10 h-6 rounded-full shrink-0 transition-colors ${
+                connection.notifyMessages !== false ? "bg-primary" : "bg-border"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${
+                  connection.notifyMessages !== false ? "left-[18px]" : "left-0.5"
+                }`}
+              />
+            </button>
+          </div>
+
+          <div>
+            <p className="text-sm font-medium mb-1">When Duck Force can buzz you</p>
+            <NotificationScheduleEditor compact />
+            <p className="text-[11px] text-muted mt-2">
+              This is your account&apos;s schedule for ALL Duck Force notifications. You can also
+              change it in Settings. Phones must be turned on in Settings to buzz at all.
+            </p>
+          </div>
+        </div>
+      )}
 
       {notice && (
         <div className="px-4 py-2 text-xs bg-surface border-b border-border text-muted shrink-0">

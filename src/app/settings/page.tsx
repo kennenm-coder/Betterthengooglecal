@@ -10,6 +10,7 @@ import BottomNav from "@/components/BottomNav";
 import LoadingScheduleModal from "@/components/LoadingScheduleModal";
 import CatalogModal from "@/components/CatalogModal";
 import PhoneNotificationsCard from "@/components/PhoneNotificationsCard";
+import NotificationScheduleEditor from "@/components/NotificationScheduleEditor";
 import {
   getStoredColors,
   saveColors,
@@ -162,6 +163,17 @@ export default function SettingsPage() {
 
         {/* Phone notifications — everyone, per device */}
         <PhoneNotificationsCard />
+
+        {/* When buzzes are allowed — everyone, per account (all devices). The
+            Chat tab's notification menu edits the same schedule. */}
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-3">
+            Notification Schedule
+          </h2>
+          <div className="rounded-lg border border-border bg-surface px-3 py-3">
+            <NotificationScheduleEditor />
+          </div>
+        </section>
 
         {/* Loading Schedule — field managers */}
         {fieldManager && (

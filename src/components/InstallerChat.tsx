@@ -174,6 +174,7 @@ function Avatar({ name, url }: { name: string; url: string | null }) {
       <img
         src={url}
         alt=""
+        referrerPolicy="no-referrer"
         className="w-7 h-7 rounded-full object-cover shrink-0 mt-auto"
       />
     );
@@ -627,6 +628,7 @@ export default function InstallerChat({
                                 src={url}
                                 alt="Shared photo"
                                 loading="lazy"
+                                referrerPolicy="no-referrer"
                                 decoding="async"
                                 style={{ aspectRatio: photoAspect(url) }}
                                 onLoad={() => {

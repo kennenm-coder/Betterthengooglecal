@@ -16,6 +16,12 @@
 
 import webpush from "web-push";
 import { getAdminClient } from "@/lib/auth";
+import {
+  isQuietAt,
+  normalizeSchedule,
+  OFFICE_TIMEZONE,
+  type Schedule,
+} from "@/lib/quiet-hours";
 
 const APP = "calendar";
 
@@ -66,6 +72,8 @@ export interface NotifyResult {
   pushed: number;
   /** Dead subscriptions (phone uninstalled, permission revoked) removed. */
   pruned: number;
+  /** People not buzzed because it's their quiet time (migration 070). */
+  quiet: number;
   pushConfigured: boolean;
 }
 
@@ -85,7 +93,7 @@ export async function emailsWithRole(roles: string[]): Promise<string[]> {
 
 export async function notify(input: NotifyInput): Promise<NotifyResult> {
   const emails = [...new Set(input.emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
-  const result: NotifyResult = { saved: 0, pushed: 0, pruned: 0, pushConfigured: pushConfigured() };
+  const result: NotifyResult = { saved: 0, pushed: 0, pruned: 0, quiet: 0, pushConfigured: pushConfigured() };
   if (emails.length === 0) return result;
 
   const admin = getAdminClient();
@@ -106,13 +114,19 @@ export async function notify(input: NotifyInput): Promise<NotifyResult> {
     else result.saved = emails.length;
   }
 
-  // 2. The buzz.
+  // 2. The buzz -- except for anyone in their quiet hours / day off right now.
+  //    The bell above still has it. "Send me a test" always buzzes, so the
+  //    button works whatever the schedule says.
   if (!result.pushConfigured) return result;
+  const quiet = input.kind === "test" ? new Set<string>() : await quietEmails(emails);
+  result.quiet = quiet.size;
+  const buzzable = emails.filter((e) => !quiet.has(e));
+  if (buzzable.length === 0) return result;
   const { data: subs } = await admin
     .from("push_subscriptions")
     .select("id, email, endpoint, p256dh, auth")
     .eq("app", APP)
-    .in("email", emails);
+    .in("email", buzzable);
   if (!subs?.length) return result;
 
   const payload = JSON.stringify({
@@ -145,6 +159,63 @@ export async function notify(input: NotifyInput): Promise<NotifyResult> {
     })
   );
   return result;
+}
+
+// ─── Notification schedule (quiet hours / days off), migration 070 ─────────
+
+/** Which of these people are in their quiet time right now. */
+async function quietEmails(emails: string[]): Promise<Set<string>> {
+  const admin = getAdminClient();
+  const { data, error } = await admin
+    .from("notification_prefs")
+    .select("email, schedule, timezone")
+    .eq("app", APP)
+    .in("email", emails);
+  // Can't read schedules (e.g. before migration 070): buzz as before rather
+  // than going silent.
+  if (error || !data) return new Set();
+  const now = new Date();
+  return new Set(
+    data
+      .filter((r) => isQuietAt(normalizeSchedule(r.schedule), r.timezone || OFFICE_TIMEZONE, now))
+      .map((r) => String(r.email).toLowerCase())
+  );
+}
+
+export async function getNotificationPrefs(
+  email: string
+): Promise<{ schedule: Schedule; timezone: string }> {
+  const admin = getAdminClient();
+  const { data } = await admin
+    .from("notification_prefs")
+    .select("schedule, timezone")
+    .eq("app", APP)
+    .eq("email", email.toLowerCase())
+    .maybeSingle();
+  return {
+    schedule: normalizeSchedule(data?.schedule),
+    timezone: data?.timezone || OFFICE_TIMEZONE,
+  };
+}
+
+/** Returns an error message, or null when saved. */
+export async function saveNotificationPrefs(
+  email: string,
+  schedule: Schedule,
+  timezone: string
+): Promise<string | null> {
+  const admin = getAdminClient();
+  const { error } = await admin.from("notification_prefs").upsert(
+    {
+      app: APP,
+      email: email.toLowerCase(),
+      schedule,
+      timezone,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "app,email" }
+  );
+  return error ? error.message : null;
 }
 
 /** Save (or take over) this device's subscription for the signed-in person. */
