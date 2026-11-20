@@ -5,6 +5,7 @@
 import type { FieldWorkOrder } from "./types";
 import { groupWriteUpSections, isSectionDone, jobMaterialTotal, openUnitsOf, padSeq, pcsOf, splitInstalled, splitMaterialLines, writeUpRefs, type SectionMaterialLine } from "./writeup-sections";
 import { withOrderVendors } from "./trim-order-handoff";
+import { specLabel, specValue } from "./spec-format";
 
 export interface WriteUpExportInput {
   orderNumber: string;
@@ -100,6 +101,16 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     }
   }
 
+  /** Shortens text with "…" so it fits `width` at the CURRENT font. splitTextToSize
+   *  can't do this: it never breaks a single long word, so that word ran on into
+   *  the next table column and printed over its text. */
+  function fit(str: string, width: number): string {
+    if (doc.getTextWidth(str) <= width) return str;
+    let s = str;
+    while (s.length > 1 && doc.getTextWidth(s + "…") > width) s = s.slice(0, -1);
+    return s.trimEnd() + "…";
+  }
+
   // ── Header ──
   const sections = groupWriteUpSections(input.writeUps);
   // When every write-up on the order is finished the whole header goes green,
@@ -115,10 +126,14 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
   doc.setFontSize(11);
   setColor([255, 255, 255]);
   doc.text(allDone ? "FIELD WORK ORDER — ALL WORK COMPLETED" : "FIELD WORK ORDER — ISSUES TO FIX", M + 8 + (allDone ? 4 : 0), y + 15);
-  y += 32;
+  // Room under the black bar: the name's capitals reach ~10pt above its line,
+  // and the bar is 22pt tall, so anything less had the name touching the bar.
+  y += 42;
 
-  line(input.customerName || "—", M, { size: 14, bold: true });
-  if (input.address) line(input.address, M, { size: 10, color: MUTED });
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  line(fit(input.customerName || "—", contentW), M, { size: 14, bold: true, gap: 20 });
+  if (input.address) wrapped(input.address, M, contentW, { size: 10, color: MUTED });
   line(
     `PO# ${input.orderNumber || "—"}${input.workOrderNumber ? `    WO# ${input.workOrderNumber}` : ""}`,
     M,
@@ -217,7 +232,7 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
       x = M + 4;
       for (let i = 0; i < cols.length; i++) {
         setColor(done ? MUTED : i === 0 ? BLACK : MUTED);
-        const clipped = doc.splitTextToSize(String(cells[i]), cols[i].w - 4)[0] as string;
+        const clipped = fit(String(cells[i]), cols[i].w - 6);
         doc.text(clipped, x, y + 9);
         if (done) {
           // Struck through, same as the completed work items above.
@@ -327,6 +342,7 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
     }
     const title = `WRITE-UP ${sec.index} OF ${sections.length}`;
     doc.text(title, titleX, y + 12.5);
+    let titleEnd = titleX + doc.getTextWidth(title);
     if (done) {
       const tagX = titleX + doc.getTextWidth(title) + 8;
       doc.setFontSize(8);
@@ -335,13 +351,15 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
       doc.rect(tagX, y + 3.5, tagW, 11, "F");
       setColor([255, 255, 255]);
       doc.text("COMPLETED", tagX + 5, y + 11.5);
+      titleEnd = tagX + tagW;
     }
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     const edited = sec.updatedByName ? ` · edited by ${sec.updatedByName}` : "";
     const meta = `${sec.createdByName} · ${new Date(sec.createdAt).toLocaleDateString()}${edited}${sec.status === "closed" ? " · CLOSED" : ""}`;
-    doc.text(meta, M + contentW - 6, y + 12.5, { align: "right" });
-    y += 26;
+    // A long name list used to run back across the title; cut it to the room left.
+    doc.text(fit(meta, M + contentW - 6 - titleEnd - 12), M + contentW - 6, y + 12.5, { align: "right" });
+    y += 30;
 
     // Same order as the new-write-up screen:
     // 1. What's wrong / financing / paint (parsed from the whole-job note).
@@ -387,8 +405,8 @@ async function buildPdf(input: WriteUpExportInput, thumbs: Map<string, string>):
       line("SPEC CORRECTIONS", M, { size: 8, bold: true, color: MUTED, gap: 12 });
       for (const c of sec.specChanges) {
         const u = c.unitLabel ? `${c.unitLabel} · ` : "";
-        // jsPDF's built-in Helvetica has no "→" glyph (it prints "!"), so use "->".
-        wrapped(`${u}${c.field}:  ${c.oldValue || "—"}  ->  ${c.newValue}`, M + 4, contentW - 4, { size: 10, color: done ? GREEN : undefined });
+        // jsPDF's built-in Helvetica has no "→" glyph (it prints "!"), so use "=>".
+        wrapped(`${u}${specLabel(c.field)}:  ${specValue(c.field, c.oldValue) || "—"}  =>  ${specValue(c.field, c.newValue)}`, M + 4, contentW - 4, { size: 10, color: done ? GREEN : undefined });
       }
     }
 

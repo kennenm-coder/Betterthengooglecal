@@ -72,6 +72,7 @@ import {
   sendTrimToOrdering, syncEditedTrim, handoffFailed,
   TrimHandoff,
 } from "@/lib/trim-order-handoff";
+import { specLabel, specValue } from "@/lib/spec-format";
 import {
   WriteUpDraft,
   DraftIssue,
@@ -479,11 +480,21 @@ function readCurrentSpec(unit: MaterialUnit, label: string): string {
   const f = SPEC_FIELDS.find((s) => s.label.toLowerCase() === label.toLowerCase());
   if (f) return f.read(unit);
   const l = label.toLowerCase();
-  if (l === "width") return composeMeasure(String(unit.widthWhole || ""), fracLabelFromNum(unit.widthFrac));
-  if (l === "height") return composeMeasure(String(unit.heightWhole || ""), fracLabelFromNum(unit.heightFrac));
+  if (l === "width" || l === "sales width") {
+    const v = composeMeasure(String(unit.widthWhole || ""), fracLabelFromNum(unit.widthFrac));
+    if (v) return v;
+  }
+  if (l === "height" || l === "sales height") {
+    const v = composeMeasure(String(unit.heightWhole || ""), fracLabelFromNum(unit.heightFrac));
+    if (v) return v;
+  }
+  // A job's own spec lines call these "Sales Width" / "Sales Height".
+  const alt = l === "width" || l === "height" ? `sales ${l}` : null;
   for (const line of String(unit.specDescription || "").split("\n")) {
     const idx = line.indexOf(":");
-    if (idx > 0 && line.slice(0, idx).trim().toLowerCase() === l) return line.slice(idx + 1).trim();
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim().toLowerCase();
+    if (key === l || key === alt) return specValue(label, line.slice(idx + 1).trim());
   }
   return "";
 }
@@ -497,7 +508,7 @@ function unitSpecLabels(unit: MaterialUnit | null): string[] {
   if (unit.heightWhole) labels.add("Height");
   for (const line of String(unit.specDescription || "").split("\n")) {
     const idx = line.indexOf(":");
-    if (idx > 0) labels.add(line.slice(0, idx).trim());
+    if (idx > 0) labels.add(specLabel(line.slice(0, idx).trim()));
   }
   return [...labels];
 }
@@ -3175,7 +3186,7 @@ function UnitSpecSection({
   stainOptions: string[];
 }) {
   function addSpec(label: string) {
-    const clean = label.trim();
+    const clean = specLabel(label);
     if (!clean || specEntries.some((e) => e.label.toLowerCase() === clean.toLowerCase())) return;
     const kind = specKindOf(clean);
     const oldValue = unit ? readCurrentSpec(unit, clean) : "";
@@ -4465,7 +4476,7 @@ function UnitSummary({
                 <div className="mt-1 text-xs text-muted">
                   {inp.specChanges.map((c, j) => (
                     <div key={j}>
-                      {c.field}: {c.oldValue || "—"} → {c.newValue}
+                      {specLabel(c.field)}: {specValue(c.field, c.oldValue) || "—"} ⇒ {specValue(c.field, c.newValue)}
                     </div>
                   ))}
                 </div>

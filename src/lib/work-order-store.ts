@@ -4,6 +4,7 @@ import { fetchMaterialJobs } from "./store";
 import { addressKey } from "./address-match";
 import type { StageDetail, StageKey } from "./writeup-stage";
 import type { KindDetail, WriteUpKind } from "./writeup-kind";
+import { specLabel, specValue } from "./spec-format";
 import {
   FieldWorkOrder,
   WriteUpLineItem,
@@ -1760,7 +1761,7 @@ export function writeUpsToPlainText(writeUps: FieldWorkOrder[]): string {
     if (w.specChanges.length) {
       lines.push("  Spec corrections:");
       for (const c of w.specChanges) {
-        lines.push(`   - ${c.field}: ${c.oldValue || "—"} -> ${c.newValue}`);
+        lines.push(`   - ${specLabel(c.field)}: ${specValue(c.field, c.oldValue) || "—"} => ${specValue(c.field, c.newValue)}`);
       }
     }
     // Trim and parts listed apart, because they're two orders to two different
@@ -1888,7 +1889,7 @@ export function buildWriteUpEmailContent(
         }${e.newProduct.interiorColor ? ` / int ${e.newProduct.interiorColor}` : ""}`
       );
     for (const li of e.lineItems) lines.push(`   - ${li.label}`);
-    for (const c of e.specChanges) lines.push(`   - Spec: ${c.field} -> ${c.newValue}`);
+    for (const c of e.specChanges) lines.push(`   - Spec: ${specLabel(c.field)} => ${specValue(c.field, c.newValue)}`);
     for (const m of e.materialItems)
       lines.push(
         m.kind === "part"

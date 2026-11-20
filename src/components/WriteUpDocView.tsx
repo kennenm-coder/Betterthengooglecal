@@ -10,6 +10,7 @@ import JobMaterialTotal from "./JobMaterialTotal";
 import ShownVendorText from "./ShownVendorText";
 import { useOrderVendors } from "@/hooks/useOrderVendors";
 import { shownVendor } from "@/lib/trim-order-handoff";
+import { specLabel, specValue } from "@/lib/spec-format";
 import { ArrowLeft, Loader2, Printer, Wrench, Download, Copy, Check } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -291,12 +292,12 @@ export default function WriteUpDocView({
                     <div key={i} className="text-sm">
                       <span className="text-muted">
                         {c.unitLabel ? `${c.unitLabel} · ` : ""}
-                        {c.field}:
+                        {specLabel(c.field)}:
                       </span>{" "}
-                      <span className="text-foreground">{c.oldValue || "—"}</span>
-                      {" → "}
+                      <span className="text-foreground">{specValue(c.field, c.oldValue) || "—"}</span>
+                      {" ⇒ "}
                       <span className="font-semibold" style={{ color: accentText }}>
-                        {c.newValue}
+                        {specValue(c.field, c.newValue)}
                       </span>
                     </div>
                   ))}

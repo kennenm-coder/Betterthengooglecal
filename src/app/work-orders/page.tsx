@@ -103,6 +103,7 @@ import {
   LayoutGrid,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { specLabel, specValue } from "@/lib/spec-format";
 
 type Filter = "draft" | "in_review" | "open" | "job_closed" | "closed" | "archived" | "all";
 /** The pills at the top: write-ups asking to be archived, asking to be closed,
@@ -1553,10 +1554,10 @@ function ReviewSection({
                   )}
                   {specs.map((c, i) => (
                     <div key={i} className="text-xs ml-4">
-                      <span className="text-muted">{c.field}:</span>{" "}
-                      <span className="text-foreground">{c.oldValue || "—"}</span>
-                      {" → "}
-                      <span className={`font-semibold ${done ? "text-green-700" : "text-amber-600"}`}>{c.newValue}</span>
+                      <span className="text-muted">{specLabel(c.field)}:</span>{" "}
+                      <span className="text-foreground">{specValue(c.field, c.oldValue) || "—"}</span>
+                      {" ⇒ "}
+                      <span className={`font-semibold ${done ? "text-green-700" : "text-amber-600"}`}>{specValue(c.field, c.newValue)}</span>
                     </div>
                   ))}
                 </div>
