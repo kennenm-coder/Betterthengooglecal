@@ -47,7 +47,10 @@ export type UserRole =
   | "feedback"
   // Write-ups without the manager powers (see canWriteUps / isWriteUpRepOnly
   // in lib/roles.ts and migration 061). Created in the NWO hub.
-  | "writeup-rep";
+  | "writeup-rep"
+  // The Chat tab (their own GroupMe chats); admins have it anyway. See
+  // canUseInstallerChat in lib/roles.ts. Created in the NWO hub.
+  | "groupme";
 
 interface AuthState {
   user: User | null;

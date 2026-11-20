@@ -32,7 +32,7 @@ import {
 /**
  * Chat tab -- your own GroupMe conversations, inside Duck Force.
  *
- * Admin only for now (canUseInstallerChat). Three screens:
+ * Admins and the "GroupMe Chat" role (canUseInstallerChat). Three screens:
  *   1. Connect       -- each person signs in to THEIR OWN GroupMe, once
  *   2. Chats         -- the groups that person ticked, newest activity first
  *   3. Choose chats  -- a checklist of every group their GroupMe account is in
@@ -160,7 +160,7 @@ function ChatPageInner() {
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
 
-  // Admin only -- same redirect pattern as the legacy-links screen.
+  // Admins + GroupMe Chat role only -- same redirect pattern as legacy-links.
   // Wait for the sign-in check to finish first: until then `roles` is empty, so
   // an admin opening /chat directly (a refresh, a bookmark) was bounced to
   // Settings before their roles had loaded.

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { CHAT_ROLES } from "@/lib/roles";
 import { requireRole } from "@/lib/auth";
 import {
   deleteToken,
@@ -17,7 +18,7 @@ export const runtime = "nodejs";
  * Never returns the token. Each person has their own connection.
  */
 export async function GET() {
-  const { user, error: authError } = await requireRole("admin");
+  const { user, error: authError } = await requireRole(...CHAT_ROLES);
   if (authError) return authError;
 
   // Only the encryption key is actually required. GROUPME_CLIENT_ID feeds the
@@ -55,7 +56,7 @@ export async function GET() {
  * is left in place in case GroupMe ever fixes their end.
  */
 export async function POST(request: Request) {
-  const { user, error: authError } = await requireRole("admin");
+  const { user, error: authError } = await requireRole(...CHAT_ROLES);
   if (authError) return authError;
 
   if (!isTokenCryptoConfigured()) {
@@ -109,7 +110,7 @@ export async function POST(request: Request) {
  * that -- so the UI says so plainly rather than implying a kill switch.
  */
 export async function DELETE() {
-  const { user, error: authError } = await requireRole("admin");
+  const { user, error: authError } = await requireRole(...CHAT_ROLES);
   if (authError) return authError;
 
   // Only this person's own connection. Everyone else stays connected.
@@ -122,7 +123,7 @@ export async function DELETE() {
  * GroupMe messages on or off (the once-a-minute check, /api/cron/groupme).
  */
 export async function PATCH(request: Request) {
-  const { user, error: authError } = await requireRole("admin");
+  const { user, error: authError } = await requireRole(...CHAT_ROLES);
   if (authError) return authError;
 
   let payload: { notifyMessages?: unknown };

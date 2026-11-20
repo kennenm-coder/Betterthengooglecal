@@ -394,15 +394,18 @@ export function canEditLegacyLink(roles: RoleInput): boolean {
 /**
  * Who can open the Chat tab (GroupMe installer conversations).
  *
- * Admin ONLY for now — this is a pilot. Each person signs in to THEIR OWN
- * GroupMe account and picks which of their groups show in Chat (migration 067).
+ * Admins, plus anyone given the "GroupMe Chat" role (`groupme`, created in the
+ * NWO hub). Each person signs in to THEIR OWN GroupMe account and picks which
+ * of their groups show in Chat (migration 067).
  *
- * To widen it, change it in both places together: here, and the role checks
- * in the /api/groupme/* routes (chatContext() in src/lib/groupme-route.ts plus
- * connect/connection/callback/read).
+ * The server checks the same list: CHAT_ROLES is what the /api/groupme/*
+ * routes pass to requireRole (chatContext() in src/lib/groupme-route.ts plus
+ * connect/connection/callback/read), so change it there, never one side only.
  */
+export const CHAT_ROLES: UserRole[] = ["admin", "groupme"];
+
 export function canUseInstallerChat(roles: RoleInput): boolean {
-  return isAdmin(roles);
+  return hasAny(roles, CHAT_ROLES);
 }
 
 /** Assignable roles, in the order shown in the admin Team checkboxes. */
@@ -453,6 +456,8 @@ export const ROLE_LABELS: Record<string, string> = {
   feedback: "Feedback",
   // Handed out in the NWO hub, so it gets no checkbox here.
   "writeup-rep": "Write-Up Rep",
+  // Handed out in the NWO hub, so it gets no checkbox here.
+  groupme: "GroupMe Chat",
 };
 
 export const ROLE_STYLES: Record<string, string> = {
@@ -475,4 +480,5 @@ export const ROLE_STYLES: Record<string, string> = {
   "mfm-submitter": "bg-rba-green/15 text-rba-green",
   feedback: "bg-pink-500/15 text-pink-600 dark:text-pink-400",
   "writeup-rep": "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400",
+  groupme: "bg-cyan-500/15 text-cyan-700 dark:text-cyan-400",
 };

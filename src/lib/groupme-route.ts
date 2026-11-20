@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { CHAT_ROLES } from "@/lib/roles";
 import { requireRole, type AuthenticatedUser } from "@/lib/auth";
 import {
   getMyGroupIndex,
@@ -36,7 +37,7 @@ export type ChatContext =
   | { ok: false; response: NextResponse };
 
 export async function chatContext(groupId?: string): Promise<ChatContext> {
-  const { user, error } = await requireRole("admin");
+  const { user, error } = await requireRole(...CHAT_ROLES);
   if (error) return { ok: false, response: error };
 
   // Named group: the token and "did they tick it?" are both quick database

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { CHAT_ROLES } from "@/lib/roles";
 import { requireRole } from "@/lib/auth";
 import { markRead } from "@/lib/groupme";
 
@@ -15,7 +16,7 @@ export const runtime = "nodejs";
  * (markRead updates their own groupme_chat_picks row; it never creates one).
  */
 export async function POST(request: Request) {
-  const { user, error: authError } = await requireRole("admin");
+  const { user, error: authError } = await requireRole(...CHAT_ROLES);
   if (authError) return authError;
 
   let payload: { group?: unknown; messageId?: unknown };

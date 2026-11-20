@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { CHAT_ROLES } from "@/lib/roles";
 import { requireRole } from "@/lib/auth";
 import { getMe, storeToken, GroupMeError } from "@/lib/groupme";
 import { isTokenCryptoConfigured } from "@/lib/groupme-crypto";
@@ -20,7 +21,7 @@ export const runtime = "nodejs";
  * If GroupMe ever ships an authorization-code flow, switch to it.
  */
 export async function GET(request: Request) {
-  const { user, error: authError } = await requireRole("admin");
+  const { user, error: authError } = await requireRole(...CHAT_ROLES);
   if (authError) return authError;
 
   const origin = new URL(request.url).origin;

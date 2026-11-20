@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { CHAT_ROLES } from "@/lib/roles";
 import { requireRole } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -19,8 +20,8 @@ export const runtime = "nodejs";
  *   GROUPME_CLIENT_ID  from the app registered at dev.groupme.com
  */
 export async function GET() {
-  // Admin only during the pilot -- same gate as canUseInstallerChat().
-  const { error: authError } = await requireRole("admin");
+  // Admins and the GroupMe Chat role -- same gate as canUseInstallerChat().
+  const { error: authError } = await requireRole(...CHAT_ROLES);
   if (authError) return authError;
 
   const clientId = process.env.GROUPME_CLIENT_ID;
