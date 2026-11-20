@@ -168,15 +168,6 @@ function ChatPageInner() {
   const [chats, setChatsState] = useState<ChatRow[] | null>(
     () => readChatCache(user?.id)?.chats ?? null
   );
-  /** Open a chat, showing it as read everywhere at once (src/lib/chat-cache). */
-  const openChat = useCallback(
-    (c: ChatRow) => {
-      setSelected(c);
-      markChatReadLocally(user?.id, c.id);
-      setChatsState(readChatCache(user?.id)?.chats ?? null);
-    },
-    [user?.id]
-  );
   const setConnection = useCallback(
     (next: ConnectionState) => {
       setConnectionState(next);
@@ -192,6 +183,15 @@ function ChatPageInner() {
     [user?.id]
   );
   const [selected, setSelected] = useState<ChatRow | null>(null);
+  /** Open a chat, showing it as read everywhere at once (src/lib/chat-cache). */
+  const openChat = useCallback(
+    (c: ChatRow) => {
+      setSelected(c);
+      markChatReadLocally(user?.id, c.id);
+      setChatsState(readChatCache(user?.id)?.chats ?? null);
+    },
+    [user?.id]
+  );
   // Opened straight from a link (job card's Messages button, or a buzz):
   // Back returns to where they came from instead of the chat list.
   const [openedFromLink, setOpenedFromLink] = useState(false);
