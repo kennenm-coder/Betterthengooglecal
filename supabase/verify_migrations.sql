@@ -467,7 +467,13 @@ checks(migration, feature, verdict, checked) as (values
  ('070', 'Notification schedule: quiet hours and days off',
   case when exists(select 1 from tbl where k = 'notification_prefs')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'notification_prefs table')
+  'notification_prefs table'),
+
+ ('071', 'GroupMe bot: instant buzzes, unread counts, installer link',
+  case when exists(select 1 from tbl where k = 'groupme_bots')
+        and exists(select 1 from col where k = 'groupme_chat_picks.unread_count')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'groupme_bots table AND groupme_chat_picks.unread_count')
 )
 select migration, feature, verdict, checked
 from checks

@@ -416,6 +416,8 @@ export interface ChatPick {
   lastReadMessageId: string | null;
   /** When the first unread message (from someone else) arrived. Migration 069. */
   unreadSince: string | null;
+  /** Unread messages from others, counted by the Duck Force bot (071). */
+  unreadCount: number;
 }
 
 /** The groups THIS user ticked. Nobody else's choices are involved. */
@@ -423,7 +425,7 @@ export async function listPicks(userId: string): Promise<ChatPick[]> {
   const admin = getAdminClient();
   const { data } = await admin
     .from("groupme_chat_picks")
-    .select("group_id, group_name, last_read_message_id, unread_since")
+    .select("group_id, group_name, last_read_message_id, unread_since, unread_count")
     .eq("user_id", userId);
 
   return ((data ?? []) as {
@@ -431,11 +433,13 @@ export async function listPicks(userId: string): Promise<ChatPick[]> {
     group_name: string | null;
     last_read_message_id: string | null;
     unread_since?: string | null;
+    unread_count?: number | null;
   }[]).map((r) => ({
     groupId: r.group_id,
     groupName: r.group_name,
     lastReadMessageId: r.last_read_message_id,
     unreadSince: r.unread_since ?? null,
+    unreadCount: r.unread_count ?? 0,
   }));
 }
 
@@ -478,7 +482,7 @@ export async function markRead(
   await admin
     .from("groupme_chat_picks")
     // Read = no longer waiting, so the color clock stops (migration 069).
-    .update({ last_read_message_id: messageId, unread_since: null })
+    .update({ last_read_message_id: messageId, unread_since: null, unread_count: 0 })
     .eq("user_id", userId)
     .eq("group_id", groupId);
 }
@@ -507,4 +511,137 @@ export async function isPicked(userId: string, groupId: string): Promise<boolean
     .eq("group_id", groupId)
     .maybeSingle();
   return !!data;
+}
+
+// --- The Duck Force bot (migration 071) ---
+//
+// One bot per GroupMe group, added once by anyone in that group; it works for
+// everyone who ticked the chat. GroupMe posts every new message in the group
+// to the bot's callback address (/api/groupme/bot) the moment it is sent.
+
+export interface ChatBot {
+  groupId: string;
+  botId: string;
+  callbackKey: string;
+  groupName: string | null;
+  installerName: string | null;
+  addedByUser: string | null;
+  addedByEmail: string | null;
+}
+
+function toBot(r: Record<string, unknown>): ChatBot {
+  return {
+    groupId: String(r.group_id),
+    botId: String(r.bot_id),
+    callbackKey: String(r.callback_key),
+    groupName: (r.group_name as string | null) ?? null,
+    installerName: (r.installer_name as string | null) ?? null,
+    addedByUser: (r.added_by_user as string | null) ?? null,
+    addedByEmail: (r.added_by_email as string | null) ?? null,
+  };
+}
+
+/** The bots on these groups (or every bot, with no list). */
+export async function listBots(groupIds?: string[]): Promise<ChatBot[]> {
+  const admin = getAdminClient();
+  let q = admin.from("groupme_bots").select("*");
+  if (groupIds) {
+    if (groupIds.length === 0) return [];
+    q = q.in("group_id", groupIds);
+  }
+  const { data, error } = await q;
+  if (error) return []; // before migration 071: no bots yet
+  return (data ?? []).map(toBot);
+}
+
+export async function getBot(groupId: string): Promise<ChatBot | null> {
+  return (await listBots([groupId]))[0] ?? null;
+}
+
+/** Ask GroupMe to create the bot in this group, as the person whose token it is. */
+export async function createGroupMeBot(
+  token: string,
+  groupId: string,
+  callbackUrl: string
+): Promise<string> {
+  const { data } = await groupmeFetch<{ bot?: { bot_id?: string } }>(token, "/bots", {
+    method: "POST",
+    body: JSON.stringify({
+      bot: { name: "Duck Force", group_id: groupId, callback_url: callbackUrl },
+    }),
+  });
+  const botId = data?.bot?.bot_id;
+  if (!botId) throw new GroupMeError("GroupMe didn't create the bot.", 502);
+  return botId;
+}
+
+/** Remove the bot at GroupMe. Only the account that created it can. */
+export async function destroyGroupMeBot(token: string, botId: string): Promise<void> {
+  await groupmeFetch(token, "/bots/destroy", {
+    method: "POST",
+    body: JSON.stringify({ bot_id: botId }),
+  });
+}
+
+export async function saveBot(bot: ChatBot): Promise<void> {
+  const admin = getAdminClient();
+  const { error } = await admin.from("groupme_bots").upsert(
+    {
+      group_id: bot.groupId,
+      bot_id: bot.botId,
+      callback_key: bot.callbackKey,
+      group_name: bot.groupName,
+      installer_name: bot.installerName,
+      added_by_user: bot.addedByUser,
+      added_by_email: bot.addedByEmail,
+    },
+    { onConflict: "group_id" }
+  );
+  if (error) throw new Error(`Could not save the bot: ${error.message}`);
+}
+
+export async function setBotInstaller(groupId: string, installerName: string | null): Promise<void> {
+  const admin = getAdminClient();
+  const { error } = await admin
+    .from("groupme_bots")
+    .update({ installer_name: installerName })
+    .eq("group_id", groupId);
+  if (error) throw new Error(`Could not save that: ${error.message}`);
+}
+
+export async function deleteBotRow(groupId: string): Promise<void> {
+  const admin = getAdminClient();
+  await admin.from("groupme_bots").delete().eq("group_id", groupId);
+}
+
+/**
+ * One new message in a bot group: bump everyone's unread count (except the
+ * sender) and return who might need a buzz. One statement in the database, so
+ * two messages arriving together can't lose a count.
+ */
+export async function recordBotMessage(
+  groupId: string,
+  messageId: string,
+  senderId: string,
+  createdAt: Date
+): Promise<{ userId: string; email: string; unreadCount: number; notify: boolean }[]> {
+  const admin = getAdminClient();
+  const { data, error } = await admin.rpc("groupme_bot_message", {
+    p_group_id: groupId,
+    p_message_id: messageId,
+    p_sender_id: senderId,
+    p_created_at: createdAt.toISOString(),
+  });
+  if (error) throw new Error(`Could not record the message: ${error.message}`);
+  return ((data ?? []) as {
+    user_id: string;
+    email: string;
+    unread_count: number;
+    notify_messages: boolean;
+  }[]).map((r) => ({
+    userId: r.user_id,
+    email: r.email,
+    unreadCount: r.unread_count,
+    notify: r.notify_messages !== false,
+  }));
 }

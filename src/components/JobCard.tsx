@@ -45,6 +45,7 @@ import { describeParts } from "@/lib/purchase-orders";
 import CrewWorkChecklist from "./CrewWorkChecklist";
 import WriteUpCompletedBy from "./WriteUpCompletedBy";
 import JobAlertButton from "./JobAlertButton";
+import ChatMessagesButton from "./ChatMessagesButton";
 import JobAlertField from "./JobAlertField";
 
 function isValidHttpUrl(s: string): boolean {
@@ -355,6 +356,10 @@ export default function JobCard({
               {/* Job Alert sits where Log Action used to be, on every job card
                   (Tech Measures too). Field managers + admins only. */}
               {canDoFieldWork(roles) && <JobAlertButton order={order} />}
+              {/* Messages: this installer's GroupMe chat (via the Duck Force
+                  bot), with your unread count. Hides itself when there's no
+                  linked chat you're in. */}
+              <ChatMessagesButton order={order} />
               {canDoFieldWork(roles) && !isMeasure && LOG_ACTION_ENABLED && (
                 <button
                   onClick={() => setShowAction(true)}

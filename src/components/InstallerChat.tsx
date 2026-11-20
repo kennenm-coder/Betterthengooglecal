@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronLeft, Loader2, RefreshCw, Send } from "lucide-react";
+import { Bot, ChevronLeft, Loader2, RefreshCw, Send } from "lucide-react";
 import { format, isSameYear, isToday, isYesterday } from "date-fns";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
+import ChatBotPanel from "@/components/ChatBotPanel";
 import { readMessages, writeMessages, type CachedMessage } from "@/lib/chat-cache";
 
 /**
@@ -190,10 +191,16 @@ export default function InstallerChat({
   groupId,
   title: installerName,
   userId,
+  installerNames = [],
+  onBotChanged,
   onBack,
 }: {
   /** The signed-in Duck Force user, for the in-memory message cache. */
   userId?: string | null;
+  /** Calendar installers, for the bot's "which installer is this chat for?". */
+  installerNames?: string[];
+  /** Called after the bot is added/removed or its installer changes. */
+  onBotChanged?: () => void;
   /** The GroupMe group to show -- one the person ticked under Choose chats. */
   groupId: string;
   /** Shown in the header and the composer placeholder (the group's name). */
@@ -211,6 +218,7 @@ export default function InstallerChat({
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [showBot, setShowBot] = useState(false);
 
   // --- @-mentions ---
   const [members, setMembers] = useState<Member[]>([]);
@@ -508,7 +516,27 @@ export default function InstallerChat({
           </h1>
           <GroupMeAttribution compact className="leading-tight" />
         </div>
+        <button
+          onClick={() => setShowBot((v) => !v)}
+          aria-expanded={showBot}
+          aria-label="Duck Force bot"
+          title="Duck Force bot"
+          className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors shrink-0 ${
+            showBot ? "text-primary bg-surface" : "text-muted hover:text-foreground hover:bg-surface"
+          }`}
+        >
+          <Bot className="w-5 h-5" />
+        </button>
       </header>
+
+      {showBot && (
+        <ChatBotPanel
+          groupId={groupId}
+          title={installerName}
+          installerNames={installerNames}
+          onChanged={onBotChanged}
+        />
+      )}
 
       <div
         ref={scrollRef}

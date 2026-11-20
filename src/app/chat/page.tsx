@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { formatDistanceToNowStrict } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
+import { useData } from "@/components/DataProvider";
+import { crewsForDate } from "@/lib/format-utils";
 import { canUseInstallerChat } from "@/lib/roles";
 import BottomNav from "@/components/BottomNav";
 import InstallerChat from "@/components/InstallerChat";
@@ -61,6 +63,10 @@ interface ChatRow {
   unreadSince?: number;
   /** The newest message, for the second line. */
   preview?: { name: string; text: string } | null;
+  /** Exact unread count (chats with the Duck Force bot); 0 = unknown/none. */
+  unreadCount?: number;
+  hasBot?: boolean;
+  installerName?: string | null;
 }
 
 /**
@@ -137,7 +143,21 @@ function ChatPageInner() {
     [user?.id]
   );
   const [selected, setSelected] = useState<ChatRow | null>(null);
+  // Opened straight from a link (job card's Messages button, or a buzz):
+  // Back returns to where they came from instead of the chat list.
+  const [openedFromLink, setOpenedFromLink] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const { orders } = useData();
+  // Every installer the calendar knows, for the bot's "which installer is
+  // this chat for?" pick.
+  const installerNames = useMemo(() => {
+    const set = new Set<string>();
+    for (const o of orders) {
+      if (o.installer?.trim()) set.add(o.installer.trim());
+      for (const n of crewsForDate(o)) if (n?.trim()) set.add(n.trim());
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [orders]);
   // The notification menu under the header (GroupMe buzz + schedule).
   const [notifyOpen, setNotifyOpen] = useState(false);
   // Re-color the list every minute even when nothing new arrives.
@@ -176,6 +196,21 @@ function ChatPageInner() {
     setNotice(CONNECT_MESSAGES[status] ?? null);
     router.replace("/chat");
   }, [searchParams, router]);
+
+  // /chat?open=<group id>: go straight into that conversation once the list
+  // knows it.
+  const openParam = searchParams.get("open");
+  useEffect(() => {
+    if (!openParam || !chats) return;
+    const hit = chats.find((c) => c.id === openParam);
+    if (hit) {
+      setSelected(hit);
+      setOpenedFromLink(true);
+    } else {
+      setNotice("That chat isn't one of your chosen chats. Add it under Choose chats.");
+    }
+    router.replace("/chat");
+  }, [openParam, chats, router]);
 
   const loadConnection = useCallback(async () => {
     const next = await fetchChatConnection(user?.id);
@@ -344,7 +379,15 @@ function ChatPageInner() {
             groupId={selected.id}
             title={selected.name}
             userId={user?.id}
-            onBack={() => setSelected(null)}
+            installerNames={installerNames}
+            onBotChanged={loadChats}
+            onBack={() => {
+              setSelected(null);
+              if (openedFromLink) {
+                setOpenedFromLink(false);
+                if (window.history.length > 1) router.back();
+              }
+            }}
           />
         </div>
         <BottomNav />
@@ -674,6 +717,11 @@ function ChatPageInner() {
                         >
                           {c.name}
                         </span>
+                        {(c.unreadCount ?? 0) > 0 && (
+                          <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shrink-0">
+                            {(c.unreadCount ?? 0) > 99 ? "99+" : c.unreadCount}
+                          </span>
+                        )}
                         {c.lastAt > 0 && (
                           <span className="ml-auto text-[11px] text-muted shrink-0">
                             {ago(c.lastAt)}

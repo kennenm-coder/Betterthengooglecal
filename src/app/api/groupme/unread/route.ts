@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   getConnection,
   getMessages,
+  listBots,
   listPicks,
   markRead,
   setUnreadSince,
@@ -14,7 +15,8 @@ export const runtime = "nodejs";
  * The person's chosen chats, newest activity first, and which have something
  * they haven't read.
  *
- *   chats   [{ id, name, unread, lastAt, unreadSince, preview }]
+ *   chats   [{ id, name, unread, lastAt, unreadSince, preview, unreadCount,
+ *             hasBot, installerName }]
  *             - only groups they ticked AND are still in
  *             - lastAt / unreadSince are unix seconds (0 = none). unreadSince
  *               is when the FIRST unread message arrived; the list colors the
@@ -47,6 +49,10 @@ export async function GET() {
     getConnection(ctx.user.id),
   ]);
   const me = connection?.groupmeUserId ?? null;
+  // Chats with the Duck Force bot: exact unread counts + which installer.
+  const bots = new Map(
+    (await listBots(picks.map((p) => p.groupId))).map((b) => [b.groupId, b])
+  );
 
   const chats: {
     id: string;
@@ -55,6 +61,11 @@ export async function GET() {
     lastAt: number;
     unreadSince: number;
     preview: { name: string; text: string } | null;
+    /** Exact unread count when the chat has the bot; 0 = unknown/none. */
+    unreadCount: number;
+    hasBot: boolean;
+    /** The calendar installer this chat is linked to (via the bot), if any. */
+    installerName: string | null;
   }[] = [];
   const writes: Promise<void>[] = [];
   let lookups = 0;
@@ -106,6 +117,7 @@ export async function GET() {
       }
     }
     if (unread) total++;
+    const bot = bots.get(pick.groupId);
 
     chats.push({
       id: pick.groupId,
@@ -115,6 +127,9 @@ export async function GET() {
       lastAt: group.lastAt,
       unreadSince: unread ? unreadSince : 0,
       preview: group.preview,
+      unreadCount: unread ? pick.unreadCount : 0,
+      hasBot: !!bot,
+      installerName: bot?.installerName ?? null,
     });
   }
 

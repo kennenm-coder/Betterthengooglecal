@@ -32,6 +32,11 @@ export interface CachedChat {
   unreadSince?: number;
   /** The newest message, for the list's second line. */
   preview?: { name: string; text: string } | null;
+  /** Exact unread count (chats with the Duck Force bot); 0 = unknown/none. */
+  unreadCount?: number;
+  hasBot?: boolean;
+  /** Calendar installer this chat is linked to via the bot. */
+  installerName?: string | null;
 }
 
 /** One message as the conversation view draws it (see InstallerChat). */
@@ -70,6 +75,17 @@ export function writeChatCache(
   if (!userId) return;
   if (cache.userId !== userId) cache = { userId, connection: null, chats: null };
   cache = { ...cache, ...patch };
+  if ("chats" in patch) for (const fn of listeners) fn();
+}
+
+const listeners = new Set<() => void>();
+
+/** Be told whenever the chat list changes (the job card's Messages button). */
+export function watchChatCache(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
 export function readMessages(
