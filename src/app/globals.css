@@ -92,6 +92,54 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* ─── Scrollbars that match the app ───────────────────────────────────────
+   Without this, Windows draws the default light-grey scrollbar with arrow
+   buttons even in dark mode, which sticks out. Now: a slim bar in the app's
+   own border color on a see-through track, no arrows, darker on hover, in
+   both light and dark. color-scheme also tells the browser which way the app
+   leans, so built-in bits (date/time pickers, form controls) follow suit. */
+:root {
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+*:hover {
+  scrollbar-color: var(--muted) transparent;
+}
+
+/* Older Safari / WebKit, which don't understand the two lines above. */
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-button {
+    display: none;
+  }
+}
+
 @keyframes slide-up {
   from {
     transform: translateY(100%);
