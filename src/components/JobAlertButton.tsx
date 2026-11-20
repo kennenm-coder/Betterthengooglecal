@@ -20,7 +20,10 @@ export default function JobAlertButton({ order }: { order: WorkOrder }) {
   const [open, setOpen] = useState(false);
   const [count, setCount] = useState(0);
 
-  useEffect(() => watchJobAlerts(order.id, (rows) => setCount(rows.length)), [order.id]);
+  useEffect(
+    () => watchJobAlerts({ id: order.id, orderNumber: order.orderNumber, workOrderType: order.workOrderType }, (rows) => setCount(rows.length)),
+    [order.id, order.orderNumber, order.workOrderType]
+  );
 
   return (
     <>

@@ -14,7 +14,8 @@ import { Search, Loader2, X, Database, MapPin, FileText, ClipboardList, Package,
 import { useAuth } from "@/hooks/useAuth";
 import { jobAlertAudiences, type JobAlertAudience } from "@/lib/roles";
 import { appointmentDate, reminderStatus, todayAtOffice } from "@/lib/job-alert-dates";
-import { fetchAllJobAlerts, fetchJobAlertJobs, type JobAlert, type JobAlertJobLite } from "@/lib/job-alerts-store";
+import { fetchAllJobAlerts, fetchJobAlertJobs, jobAlertKey, noteKey, type JobAlert, type JobAlertJobLite } from "@/lib/job-alerts-store";
+import { isCancelledAppointment } from "@/lib/store";
 import { useRouter } from "next/navigation";
 import { isSameDay, parseISO } from "date-fns";
 
@@ -536,7 +537,9 @@ interface AlertedJob {
 /**
  * Field managers' quick list under the search bar: every job with a Job Alert
  * note whose appointment is today or later (Kennen: upcoming only, no past
- * ones), soonest first. Each shows its notes with who wrote them and when the
+ * ones), soonest first. Notes follow the order + kind of appointment
+ * (migration 076), so every upcoming, uncancelled appointment of that kind on
+ * the order is listed with them. Each shows its notes with who wrote them and when the
  * buzzes go out; tapping opens the job card. Jobs in months the calendar
  * hasn't loaded yet are loaded on the way so they can be opened.
  */
@@ -563,17 +566,20 @@ function JobAlertsView({
       // The database already hides the other group's notes; this keeps an admin
       // (who holds both) listing exactly what their roles cover.
       const notes = (await fetchAllJobAlerts()).filter((n) => audienceKey.split(",").includes(n.audience));
-      const byJob = new Map<string, JobAlert[]>();
-      for (const n of notes) byJob.set(n.workOrderId, [...(byJob.get(n.workOrderId) || []), n]);
-      const lite = await fetchJobAlertJobs([...byJob.keys()]);
+      const byKey = new Map<string, JobAlert[]>();
+      for (const n of notes) byKey.set(noteKey(n), [...(byKey.get(noteKey(n)) || []), n]);
+      const orderNumbers = [...new Set(notes.filter((n) => n.orderNumber).map((n) => n.orderNumber))];
+      const loneIds = notes.filter((n) => !n.orderNumber).map((n) => n.workOrderId);
+      const lite = await fetchJobAlertJobs(orderNumbers, loneIds);
       if (cancelled) return;
       const today = todayAtOffice();
       const upcoming: AlertedJob[] = [];
       const months = new Set<string>();
-      for (const [id, n] of byJob) {
-        const appt = appointmentDate(lite.get(id)?.scheduledStart);
-        if (!appt || appt < today) continue;
-        upcoming.push({ id, appt, notes: n, lite: lite.get(id) || null });
+      for (const job of lite) {
+        const n = byKey.get(jobAlertKey(job));
+        const appt = appointmentDate(job.scheduledStart);
+        if (!n || !appt || appt < today || isCancelledAppointment(job)) continue;
+        upcoming.push({ id: job.id, appt, notes: n, lite: job });
         if (!months.has(appt.slice(0, 7))) {
           months.add(appt.slice(0, 7));
           ensureDateLoaded(parseISO(appt));

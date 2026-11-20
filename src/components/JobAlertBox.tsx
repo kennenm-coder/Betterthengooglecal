@@ -14,7 +14,9 @@ import type { WorkOrder } from "@/lib/types";
  * Delete; anyone can Add a new note (a person can keep several). Everyone sees
  * all notes; you can only change your own. The daily cron buzzes every field
  * manager and admin 5 business days before and the business day before.
- * Migrations 064 + 065 + 066.
+ * Notes belong to the order + kind of appointment (076), so the same notes
+ * show on a rebooked work order after the office cancels the old one.
+ * Migrations 064 + 065 + 066 + 071 + 076.
  */
 export default function JobAlertBox({ order }: { order: WorkOrder }) {
   const { user, name } = useAuth();
@@ -29,7 +31,10 @@ export default function JobAlertBox({ order }: { order: WorkOrder }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => watchJobAlerts(order.id, setAlerts), [order.id]);
+  useEffect(
+    () => watchJobAlerts({ id: order.id, orderNumber: order.orderNumber, workOrderType: order.workOrderType }, setAlerts),
+    [order.id, order.orderNumber, order.workOrderType]
+  );
 
   // The buzzes are per job, so any note's record of them speaks for the job.
   const sent5 = (alerts || []).find((a) => a.sent5ForDate === appt)?.sent5ForDate ?? null;
@@ -51,8 +56,7 @@ export default function JobAlertBox({ order }: { order: WorkOrder }) {
     setBusy(true);
     setError("");
     const res = await saveJobAlert({
-      workOrderId: order.id,
-      orderNumber: order.orderNumber,
+      job: order,
       note: draft,
       email: me,
       name: name || "",
@@ -68,7 +72,7 @@ export default function JobAlertBox({ order }: { order: WorkOrder }) {
 
   async function remove(id: string) {
     setBusy(true);
-    const ok = await deleteJobAlert(id, order.id);
+    const ok = await deleteJobAlert(id, order);
     setBusy(false);
     setConfirmDelete(null);
     if (!ok) setError("Couldn't delete. Try again.");
@@ -118,7 +122,7 @@ export default function JobAlertBox({ order }: { order: WorkOrder }) {
       ) : (
         <>
           {alerts.length === 0 && editing !== "new" && (
-            <p className="text-sm text-muted">No notes on this job yet.</p>
+            <p className="text-sm text-muted">No notes on this job yet. Notes stay with this order&apos;s {order.workOrderType.toLowerCase() || "appointment"}s, even if it&apos;s cancelled and rebooked.</p>
           )}
 
           {alerts.map((a) => {

@@ -15,7 +15,10 @@ import type { WorkOrder } from "@/lib/types";
 export default function JobAlertField({ order }: { order: WorkOrder }) {
   const [alerts, setAlerts] = useState<JobAlert[]>([]);
 
-  useEffect(() => watchJobAlerts(order.id, setAlerts), [order.id]);
+  useEffect(
+    () => watchJobAlerts({ id: order.id, orderNumber: order.orderNumber, workOrderType: order.workOrderType }, setAlerts),
+    [order.id, order.orderNumber, order.workOrderType]
+  );
 
   if (alerts.length === 0) return null;
   return (

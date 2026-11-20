@@ -499,7 +499,11 @@ checks(migration, feature, verdict, checked) as (values
   case when exists(select 1 from col where k = 'groupme_shared_chats.emails')
         and exists(select 1 from col where k = 'groupme_shared_chats.installer_name')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'groupme_shared_chats.emails AND groupme_shared_chats.installer_name')
+  'groupme_shared_chats.emails AND groupme_shared_chats.installer_name'),
+ ('076', 'Job Alert notes follow the order + kind of appointment',
+  case when exists(select 1 from col where k = 'job_alerts.work_order_type')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'job_alerts.work_order_type')
 )
 select migration, feature, verdict, checked
 from checks
