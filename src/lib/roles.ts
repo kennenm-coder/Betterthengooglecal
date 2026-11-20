@@ -420,6 +420,15 @@ export function canLogSiteVisits(roles: RoleInput): boolean {
   return isAdmin(roles) || hasAny(roles, ["measure-tech"]);
 }
 
+/**
+ * Who sees the Site Visits tab on Payroll Admin: the whole visit history,
+ * read-only. Admins and payroll admins. Mirrors the job_site_visits read
+ * policy (migration 079).
+ */
+export function canReviewSiteVisits(roles: RoleInput): boolean {
+  return hasAny(roles, ["admin", "payroll-admin"]);
+}
+
 /** Roles allowed to set/edit/clear the legacy install-instructions link. */
 export const LEGACY_LINK_ROLES: UserRole[] = ["admin", "scheduling", "scheduling_manager"];
 

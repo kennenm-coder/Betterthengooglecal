@@ -74,6 +74,38 @@ export async function fetchSiteVisitsSince(since: string): Promise<SiteVisit[]> 
   return data as SiteVisit[];
 }
 
+/** Every visit ever logged, newest first (Payroll Admin's Site Visits tab). */
+export async function fetchAllSiteVisits(): Promise<SiteVisit[]> {
+  const supabase = getSupabase();
+  if (!supabase) return [];
+  const out: SiteVisit[] = [];
+  // Paged: Supabase hands back at most 1000 rows per ask.
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("job_site_visits")
+      .select(COLUMNS)
+      .order("visit_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .range(from, from + 999);
+    if (error || !data) break;
+    out.push(...(data as SiteVisit[]));
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+
+/** Months the monthly email already went out for: "2026-11" -> when, how many. */
+export async function fetchSiteVisitReports(): Promise<Map<string, { sentAt: string; count: number }>> {
+  const supabase = getSupabase();
+  const out = new Map<string, { sentAt: string; count: number }>();
+  if (!supabase) return out;
+  const { data } = await supabase.from("job_site_visit_reports").select("month, sent_at, visit_count");
+  for (const r of (data || []) as { month: string; sent_at: string; visit_count: number }[]) {
+    out.set(r.month, { sentAt: r.sent_at, count: r.visit_count });
+  }
+  return out;
+}
+
 /** Fired after any save or delete. detail = the job's order number. */
 export const SITE_VISITS_CHANGED = "site-visits-changed";
 function announce(orderNumber: string): void {

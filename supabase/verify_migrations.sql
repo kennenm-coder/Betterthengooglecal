@@ -509,7 +509,14 @@ checks(migration, feature, verdict, checked) as (values
   case when exists(select 1 from tbl where k = 'job_site_visits')
         and exists(select 1 from tbl where k = 'job_site_visit_reports')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'job_site_visits AND job_site_visit_reports tables')
+  'job_site_visits AND job_site_visit_reports tables'),
+
+ ('079', 'Job Site Visits: payroll admins read the history',
+  case when exists(select 1 from pg_policies
+                    where tablename = 'job_site_visits' and policyname = 'measure_read_site_visits'
+                      and qual like '%payroll-admin%')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'job_site_visits read policy names payroll-admin')
 )
 select migration, feature, verdict, checked
 from checks

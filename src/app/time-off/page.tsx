@@ -33,7 +33,8 @@ import {
   FileSignature,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { canManageTimeOff, canProcessMoreForMore, canReadFeedback } from "@/lib/roles";
+import { canManageTimeOff, canProcessMoreForMore, canReadFeedback, canReviewSiteVisits } from "@/lib/roles";
+import SiteVisitsHistory from "@/components/SiteVisitsHistory";
 import MoreForMoreOffice from "@/components/MoreForMoreOffice";
 import { format } from "date-fns";
 
@@ -136,7 +137,7 @@ function ApprovedBy({
   );
 }
 
-type PayrollTab = "timeoff" | "mfm" | "kiosk" | "feedback";
+type PayrollTab = "timeoff" | "mfm" | "kiosk" | "feedback" | "visits";
 
 function TimeOffContent() {
   const router = useRouter();
@@ -150,16 +151,20 @@ function TimeOffContent() {
   //   Kiosk Submissions — everything sent in at the kiosk (kiosk approvers)
   //   Feedback          — ideas, comments, questions and complaints from the
   //                       kiosk (admins and the feedback role only)
+  //   Site Visits       — every measure-tech Job Site Visit, read-only
+  //                       (admins and payroll admins)
   const showTimeOff = canManageTimeOff(roles);
   const showMfm = canProcessMoreForMore(roles);
   const showKiosk = canUseInbox(roles);
   const showFeedback = canReadFeedback(roles);
+  const showVisits = canReviewSiteVisits(roles);
   const tabs = (
     [
       ["timeoff", "Time Off", showTimeOff],
       ["mfm", "More for More", showMfm],
       ["kiosk", "Kiosk Submissions", showKiosk],
       ["feedback", "Feedback", showFeedback],
+      ["visits", "Site Visits", showVisits],
     ] as const
   ).filter(([, , show]) => show);
   // ?tab=mfm / ?tab=kiosk / ?tab=feedback open that tab. The kiosk's email links
@@ -167,7 +172,7 @@ function TimeOffContent() {
   // ?feedback= to focus one piece of feedback.
   const [tab, setTab] = useState<PayrollTab>(() => {
     const t = searchParams.get("tab");
-    if (t === "mfm" || t === "kiosk" || t === "feedback") return t;
+    if (t === "mfm" || t === "kiosk" || t === "feedback" || t === "visits") return t;
     if (searchParams.get("feedback")) return "feedback";
     if (searchParams.get("sub") || searchParams.get("supply")) return "kiosk";
     return "timeoff";
@@ -482,6 +487,8 @@ function TimeOffContent() {
 
       {activeTab === "mfm" ? (
         <MoreForMoreOffice />
+      ) : activeTab === "visits" ? (
+        <SiteVisitsHistory />
       ) : activeTab === "feedback" ? (
         <div className="flex-1 overflow-auto">
           <div className="max-w-3xl mx-auto w-full">
