@@ -33,7 +33,7 @@ import WriteUpModal from "./WriteUpModal";
 import ProductSpecs from "./ProductSpecs";
 import JobReferencePanel from "./JobReferencePanel";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork, canEditLegacyLink, canSubmitJobComplete, canWriteUps } from "@/lib/roles";
+import { canDoFieldWork, canEditLegacyLink, canSubmitJobComplete, canUseJobAlert, canWriteUps, jobAlertAudienceFor } from "@/lib/roles";
 import { jobCompleteDue, jobLastDay } from "@/lib/job-complete-core";
 import JobCompleteModal from "./JobCompleteModal";
 import JobCompleteTag from "./JobCompleteTag";
@@ -355,7 +355,9 @@ export default function JobCard({
               )}
               {/* Job Alert sits where Log Action used to be, on every job card
                   (Tech Measures too). Field managers + admins only. */}
-              {canDoFieldWork(roles) && <JobAlertButton order={order} />}
+              {/* Measure tiles: measure techs + admins. Every other job: field
+                  managers + admins. */}
+              {canUseJobAlert(roles, jobAlertAudienceFor(order.workOrderType)) && <JobAlertButton order={order} />}
               {/* Messages: this installer's GroupMe chat (via the Duck Force
                   bot), with your unread count. Hides itself when there's no
                   linked chat you're in. */}
@@ -588,8 +590,9 @@ export default function JobCard({
 
           {/* Job Alert notes, read-only, right above Install Notes. Appears only
               when the job has notes; edit them from the alarm-clock button in
-              the header. Field managers + admins only. */}
-          {canDoFieldWork(roles) && <JobAlertField order={order} />}
+              the header. Measure tiles: measure techs + admins; everything else:
+              field managers + admins. */}
+          {canUseJobAlert(roles, jobAlertAudienceFor(order.workOrderType)) && <JobAlertField order={order} />}
 
           {/* Install Notes — always visible when material job is paired */}
           {mat?.job.installNotes?.trim() && (

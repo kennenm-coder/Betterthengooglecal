@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Bot, Loader2 } from "lucide-react";
 
 /**
- * The Duck Force bot for one chat (migration 071), shown under a conversation's
+ * The Duck Force bot for one chat (migration 072), shown under a conversation's
  * header. Added ONCE per GroupMe group by anyone in it, and it works for
  * everyone who ticked the chat:
  *   - instant buzzes and exact unread counts

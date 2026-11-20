@@ -416,7 +416,7 @@ export interface ChatPick {
   lastReadMessageId: string | null;
   /** When the first unread message (from someone else) arrived. Migration 069. */
   unreadSince: string | null;
-  /** Unread messages from others, counted by the Duck Force bot (071). */
+  /** Unread messages from others, counted by the Duck Force bot (072). */
   unreadCount: number;
 }
 
@@ -513,7 +513,7 @@ export async function isPicked(userId: string, groupId: string): Promise<boolean
   return !!data;
 }
 
-// --- The Duck Force bot (migration 071) ---
+// --- The Duck Force bot (migration 072) ---
 //
 // One bot per GroupMe group, added once by anyone in that group; it works for
 // everyone who ticked the chat. GroupMe posts every new message in the group
@@ -550,7 +550,7 @@ export async function listBots(groupIds?: string[]): Promise<ChatBot[]> {
     q = q.in("group_id", groupIds);
   }
   const { data, error } = await q;
-  if (error) return []; // before migration 071: no bots yet
+  if (error) return []; // before migration 072: no bots yet
   return (data ?? []).map(toBot);
 }
 

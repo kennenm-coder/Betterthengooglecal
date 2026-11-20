@@ -229,7 +229,38 @@ export function canWriteUps(roles: RoleInput): boolean {
  * write-up approved), or the invite will keep missing the people it's for.
  */
 export function receivesNotifications(roles: RoleInput): boolean {
-  return canDoFieldWork(roles);
+  // Measure techs get Job Alert buzzes for measure appointments (071).
+  return canDoFieldWork(roles) || hasAny(roles, ["measure-tech"]);
+}
+
+// ─── Job Alert groups ───────────────────────────────────────────────────────
+//
+// Job Alert is split in two (migration 071, Kennen 2026-11-20):
+//   "field"   — every job except Tech Measure: field managers + admins.
+//   "measure" — Tech Measure appointments: measure techs + admins.
+// Admins hold both. The database enforces the same split (the note's group is
+// set by a trigger from the job itself); these only decide what to draw.
+
+export type JobAlertAudience = "field" | "measure";
+
+/** Which group a job's notes belong to. */
+export function jobAlertAudienceFor(workOrderType: string | null | undefined): JobAlertAudience {
+  return workOrderType === "Tech Measure" ? "measure" : "field";
+}
+
+/** Can this login use Job Alert on a job of this group? */
+export function canUseJobAlert(roles: RoleInput, audience: JobAlertAudience): boolean {
+  return audience === "measure"
+    ? isAdmin(roles) || hasAny(roles, ["measure-tech"])
+    : canDoFieldWork(roles);
+}
+
+/** Which Job Alert groups this login belongs to (drives the Search list). */
+export function jobAlertAudiences(roles: RoleInput): JobAlertAudience[] {
+  const out: JobAlertAudience[] = [];
+  if (canUseJobAlert(roles, "field")) out.push("field");
+  if (canUseJobAlert(roles, "measure")) out.push("measure");
+  return out;
 }
 
 /**

@@ -13,7 +13,7 @@ import type { WorkOrder } from "@/lib/types";
  * The Messages button on a job card, next to the Job Alert alarm clock.
  *
  * Shows only when this job's installer has a GroupMe chat linked to them via
- * the Duck Force bot (migration 071) AND the signed-in person chose that chat
+ * the Duck Force bot (migration 072) AND the signed-in person chose that chat
  * (so their own GroupMe account is in it). The red number is THEIR unread
  * count in that chat. Tapping opens the chat; Back returns here.
  *

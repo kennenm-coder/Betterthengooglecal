@@ -1,5 +1,7 @@
 -- ============================================================
--- Migration 071: The Duck Force bot in GroupMe chats
+-- Migration 072: The Duck Force bot in GroupMe chats
+-- (written as 071; renumbered because 071 went to the Job Alert measure
+-- split. Applied live 2026-11-20 either way.)
 --
 -- Anyone with Chat access can add a "Duck Force" bot to a GroupMe
 -- group they're in -- ONCE per group, and it works for everybody.
@@ -32,7 +34,7 @@
 --
 -- Nothing here stores message text (GroupMe licence §4.5).
 -- ACCESS: server only (service role), like the other GroupMe tables.
--- Run in Supabase SQL Editor AFTER 070. Idempotent.
+-- Run in Supabase SQL Editor AFTER 071. Idempotent.
 -- ============================================================
 
 begin;

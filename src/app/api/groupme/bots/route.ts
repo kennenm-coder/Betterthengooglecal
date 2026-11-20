@@ -1,4 +1,4 @@
-// Add, link, or remove the Duck Force bot on one GroupMe chat (migration 071).
+// Add, link, or remove the Duck Force bot on one GroupMe chat (migration 072).
 //
 //   GET    ?group=ID                       -> { bot: { installerName, addedByEmail, mine } | null }
 //   POST   { group, installerName }        -> adds the bot (if the chat has none) and/or

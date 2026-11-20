@@ -11,6 +11,8 @@ export interface JobAlert {
   createdBy: string;
   createdByName: string;
   updatedAt: string;
+  /** Which group the note belongs to (migration 071), set by the database. */
+  audience: "field" | "measure";
   /** Appointment dates each buzz already went out for (migration 065). */
   sent5ForDate: string | null;
   sent1ForDate: string | null;
@@ -25,6 +27,7 @@ interface JobAlertRow {
   updated_at: string;
   sent5_for_date: string | null;
   sent1_for_date: string | null;
+  audience: string | null;
 }
 
 const toAlert = (r: JobAlertRow): JobAlert => ({
@@ -34,6 +37,7 @@ const toAlert = (r: JobAlertRow): JobAlert => ({
   createdBy: r.created_by,
   createdByName: r.created_by_name || r.created_by.split("@")[0],
   updatedAt: r.updated_at,
+  audience: r.audience === "measure" ? "measure" : "field",
   sent5ForDate: r.sent5_for_date,
   sent1ForDate: r.sent1_for_date,
 });
@@ -43,7 +47,7 @@ export async function fetchJobAlerts(workOrderId: string): Promise<JobAlert[]> {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from("job_alerts")
-    .select("id, work_order_id, note, created_by, created_by_name, updated_at, sent5_for_date, sent1_for_date")
+    .select("id, work_order_id, note, created_by, created_by_name, updated_at, sent5_for_date, sent1_for_date, audience")
     .eq("work_order_id", workOrderId)
     .order("created_at", { ascending: true });
   if (error || !data) return [];
@@ -117,7 +121,7 @@ export async function fetchAllJobAlerts(): Promise<JobAlert[]> {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from("job_alerts")
-    .select("id, work_order_id, note, created_by, created_by_name, updated_at, sent5_for_date, sent1_for_date")
+    .select("id, work_order_id, note, created_by, created_by_name, updated_at, sent5_for_date, sent1_for_date, audience")
     .order("created_at", { ascending: true });
   if (error || !data) return [];
   return (data as JobAlertRow[]).map(toAlert);

@@ -1,5 +1,5 @@
 // Where GroupMe posts every new message in a group that has the Duck Force bot
-// (migration 071), the moment it is sent. No sign-in here -- GroupMe is the
+// (migration 072), the moment it is sent. No sign-in here -- GroupMe is the
 // caller -- so instead the address carries a random secret (?k=...) saved with
 // the bot; a post without the right one is ignored. That's what stops anyone
 // faking a message to make phones buzz.
