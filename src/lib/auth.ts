@@ -101,6 +101,52 @@ export async function requireAuth(): Promise<AuthResult> {
 }
 
 /**
+ * Role check for a request from ANOTHER of our apps (the NWO Hub), which can't
+ * send Duck Force's sign-in cookie. It sends the person's own Supabase sign-in
+ * token instead (`Authorization: Bearer ...`) -- same Supabase project, so the
+ * token is checked against Supabase itself, and the allowlist decides roles,
+ * exactly like requireRole(). Used by the /api/hub/* routes only.
+ */
+export async function requireRoleBearer(
+  request: Request,
+  ...allowed: UserRole[]
+): Promise<AuthResult> {
+  const header = request.headers.get("authorization") || "";
+  const token = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
+  if (!token) {
+    return { user: null, error: NextResponse.json({ error: "Not authenticated" }, { status: 401 }) };
+  }
+  const admin = getAdminClient();
+  const { data, error } = await admin.auth.getUser(token);
+  const user = data?.user;
+  if (error || !user?.email) {
+    return { user: null, error: NextResponse.json({ error: "Not authenticated" }, { status: 401 }) };
+  }
+  const { data: row } = await admin
+    .from("allowed_emails")
+    .select("role, roles")
+    .eq("email", user.email.toLowerCase())
+    .maybeSingle();
+  if (!row) {
+    return {
+      user: null,
+      error: NextResponse.json({ error: "Access denied — not on the allowlist" }, { status: 403 }),
+    };
+  }
+  const roles: UserRole[] =
+    Array.isArray(row.roles) && row.roles.length
+      ? (row.roles as UserRole[])
+      : row.role
+        ? [row.role as UserRole]
+        : ["member"];
+  const role: UserRole = (row.role as UserRole) || roles[0] || "member";
+  if (allowed.length > 0 && !roles.some((r) => allowed.includes(r))) {
+    return { user: null, error: NextResponse.json({ error: "Forbidden — insufficient role" }, { status: 403 }) };
+  }
+  return { user: { id: user.id, email: user.email, role, roles }, error: null };
+}
+
+/**
  * Get a Supabase admin client (service role).
  * Only call from server-side API routes.
  */

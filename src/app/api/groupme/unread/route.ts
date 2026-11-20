@@ -154,7 +154,8 @@ export async function GET() {
       unreadSince: unread ? unreadSince : 0,
       preview,
       hasBot: !!bot,
-      installerName: bot?.installerName ?? null,
+      // Set in the Hub's GroupMe settings (075); older links came from the bot.
+      installerName: ctx.shared.get(pick.groupId)?.installerName ?? bot?.installerName ?? null,
       source: pick.source,
     });
   }

@@ -35,7 +35,7 @@ export async function GET() {
     admin ? getConnection(user!.id) : Promise.resolve(null),
     getNotifyMessages(user!.id),
     getOffice(),
-    sharedChatsFor(user!.roles),
+    sharedChatsFor(user!.roles, user!.email),
   ]);
   return NextResponse.json({
     configured,

@@ -84,35 +84,56 @@ export interface SharedChat {
   groupId: string;
   groupName: string | null;
   roles: string[];
+  /** Individual Duck Force accounts given this chat, by login email (075). */
+  emails: string[];
+  /** The calendar installer / lead this chat belongs to (075). */
+  installerName: string | null;
 }
 
 export async function listSharedChats(): Promise<SharedChat[]> {
   const admin = getAdminClient();
-  const { data, error } = await admin.from("groupme_shared_chats").select("group_id, group_name, roles");
-  if (error) return []; // before migration 074
+  const { data, error } = await admin
+    .from("groupme_shared_chats")
+    .select("group_id, group_name, roles, emails, installer_name");
+  if (error) return []; // before migration 075
   return (data ?? []).map((r) => ({
     groupId: String(r.group_id),
     groupName: (r.group_name as string | null) ?? null,
     roles: Array.isArray(r.roles) ? (r.roles as string[]) : [],
+    emails: Array.isArray(r.emails) ? (r.emails as string[]).map((e) => e.toLowerCase()) : [],
+    installerName: (r.installer_name as string | null) || null,
   }));
 }
 
-/** Can someone with these roles see this shared chat? Admins see every one. */
-export function canSeeShared(chat: SharedChat, roles: RoleInput): boolean {
+/**
+ * Can this person see this shared chat? They need the Chat tab (admin or the
+ * GroupMe Chat role), and then: admin, or a role the chat is shared with, or
+ * their own account added to it individually.
+ */
+export function canSeeShared(chat: SharedChat, roles: RoleInput, email?: string | null): boolean {
   if (!hasAny(roles, CHAT_ROLES)) return false; // no Chat tab at all
-  return isAdmin(roles) || hasAny(roles, chat.roles);
+  if (isAdmin(roles) || hasAny(roles, chat.roles)) return true;
+  return !!email && chat.emails.includes(email.toLowerCase());
 }
 
-/** The shared chats these roles can see, by group id. */
-export async function sharedChatsFor(roles: RoleInput): Promise<Map<string, SharedChat>> {
+/** The shared chats this person can see, by group id. */
+export async function sharedChatsFor(
+  roles: RoleInput,
+  email?: string | null
+): Promise<Map<string, SharedChat>> {
   const all = await listSharedChats();
-  return new Map(all.filter((c) => canSeeShared(c, roles)).map((c) => [c.groupId, c]));
+  return new Map(all.filter((c) => canSeeShared(c, roles, email)).map((c) => [c.groupId, c]));
 }
 
-/** Replace the shared-chat list (admin screen). Chats with no roles are dropped. */
+/** Is this chat given to anyone (a role or a person)? */
+export function isShared(chat: Pick<SharedChat, "roles" | "emails">): boolean {
+  return chat.roles.length > 0 || chat.emails.length > 0;
+}
+
+/** Replace the shared-chat list (admin screen). Chats given to nobody are dropped. */
 export async function saveSharedChats(rows: SharedChat[], byEmail: string): Promise<void> {
   const admin = getAdminClient();
-  const keep = rows.filter((r) => r.roles.length > 0);
+  const keep = rows.filter(isShared);
   const ids = keep.map((r) => r.groupId);
   let del = admin.from("groupme_shared_chats").delete().neq("group_id", "");
   if (ids.length) del = del.not("group_id", "in", `(${ids.map((id) => `"${id}"`).join(",")})`);
@@ -124,6 +145,8 @@ export async function saveSharedChats(rows: SharedChat[], byEmail: string): Prom
       group_id: r.groupId,
       group_name: r.groupName,
       roles: r.roles,
+      emails: r.emails.map((e) => e.toLowerCase()),
+      installer_name: r.installerName,
       updated_by_email: byEmail.toLowerCase(),
       updated_at: new Date().toISOString(),
     })),
@@ -232,7 +255,7 @@ export function stripSenderPrefix(text: string, name: string): string {
 export async function peopleForChat(groupId: string): Promise<DuckForcePerson[]> {
   const chat = (await listSharedChats()).find((c) => c.groupId === groupId);
   if (!chat) return [];
-  return (await listPeople()).filter((p) => canSeeShared(chat, p.roles));
+  return (await listPeople()).filter((p) => canSeeShared(chat, p.roles, p.email));
 }
 
 /** One person's display name (Team editor name, or from their email). */
@@ -244,4 +267,22 @@ export async function nameFor(email: string): Promise<string> {
     .eq("email", email.toLowerCase())
     .maybeSingle();
   return displayName((data?.name as string | null) ?? null, email.toLowerCase());
+}
+
+/**
+ * Profile pictures set on the NWO Hub's Team page (employee_profiles, Hub
+ * migration 007), by login email. Shown next to messages people send through
+ * the office account. Missing table or picture -> simply not in the map.
+ */
+export async function avatarsFor(emails: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const list = [...new Set(emails.filter(Boolean).map((e) => e.toLowerCase()))];
+  if (list.length === 0) return out;
+  const admin = getAdminClient();
+  const { data, error } = await admin.from("employee_profiles").select("email, avatar_url").in("email", list);
+  if (error) return out;
+  for (const r of data ?? []) {
+    if (r.avatar_url) out.set(String(r.email).toLowerCase(), String(r.avatar_url));
+  }
+  return out;
 }

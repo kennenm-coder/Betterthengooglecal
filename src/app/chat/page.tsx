@@ -24,7 +24,6 @@ import { canUseInstallerChat } from "@/lib/roles";
 import BottomNav from "@/components/BottomNav";
 import InstallerChat from "@/components/InstallerChat";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
-import OfficeSetup from "@/components/OfficeSetup";
 import NotificationScheduleEditor from "@/components/NotificationScheduleEditor";
 import {
   applyLocalReads,
@@ -62,6 +61,13 @@ interface ConnectionState {
   /** How many office chats are shared with this person's roles. */
   sharedCount?: number;
 }
+
+/**
+ * GroupMe is managed in the NWO Hub (Admin -> Apps -> Duck Force settings):
+ * the office account, which roles and people see each chat, installer links,
+ * bots and new chats. Admins get a link to it here.
+ */
+const HUB_GROUPME_SETTINGS = "https://www.nwotoolbox.com/admin/apps/field-calendar";
 
 /** Can this person use Chat yet: their own GroupMe, or shared office chats. */
 function canUseChat(c: ConnectionState | null): boolean {
@@ -239,7 +245,6 @@ function ChatPageInner() {
 
   // Choose chats screen.
   const [choosing, setChoosing] = useState(false);
-  const [officeOpen, setOfficeOpen] = useState(false);
   const [groups, setGroups] = useState<GroupOption[] | null>(null);
   const [groupsError, setGroupsError] = useState<string | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
@@ -468,29 +473,6 @@ function ChatPageInner() {
     );
   }
 
-  // --- Office setup (admins) ---
-  if (officeOpen && connection?.admin) {
-    return (
-      <div className="flex flex-col h-full">
-        <div className="flex-1 min-h-0">
-          <OfficeSetup
-            onClose={() => setOfficeOpen(false)}
-            onChanged={() => {
-              loadConnection();
-              loadChats();
-            }}
-            personal={{
-              connected: connection.connected,
-              name: connection.groupmeName,
-              onDisconnect: disconnect,
-            }}
-          />
-        </div>
-        <BottomNav />
-      </div>
-    );
-  }
-
   // --- Choose chats ---
   if (choosing) {
     return (
@@ -602,13 +584,15 @@ function ChatPageInner() {
           </div>
           <div className="flex items-center gap-3">
             {connection?.admin && (
-              <button
-                onClick={() => setOfficeOpen(true)}
+              <a
+                href={HUB_GROUPME_SETTINGS}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-xs text-muted hover:text-foreground inline-flex items-center gap-1"
               >
                 <Building2 className="w-3.5 h-3.5" />
-                Office setup
-              </button>
+                GroupMe settings
+              </a>
             )}
             {canUseChat(connection) && (
               <button
@@ -712,19 +696,21 @@ function ChatPageInner() {
           <div className="px-6 py-10 text-center text-sm text-muted">
             <p className="mb-2 font-medium text-foreground">No GroupMe chats for you yet.</p>
             <p>
-              Your office hasn&apos;t shared any GroupMe chats with your role yet. Ask an admin to share them in
-              Office setup. You won&apos;t need to sign in to GroupMe.
+              Your office hasn&apos;t shared any GroupMe chats with you yet. Ask an admin to share them in the NWO
+              Hub. You won&apos;t need to sign in to GroupMe.
             </p>
           </div>
         ) : !canUseChat(connection) ? (
           <div className="px-6 py-10 text-center">
-            <button
-              onClick={() => setOfficeOpen(true)}
+            <a
+              href={HUB_GROUPME_SETTINGS}
+              target="_blank"
+              rel="noopener noreferrer"
               className="mb-5 inline-flex items-center gap-2 bg-primary text-white rounded-xl px-4 py-2.5 text-sm font-medium"
             >
               <Building2 className="w-4 h-4" />
-              Office setup: connect the office GroupMe
-            </button>
+              Set up GroupMe in the NWO Hub
+            </a>
             <p className="text-sm text-muted mb-1">
               Or sign in to your own GroupMe (admins only).
             </p>

@@ -69,7 +69,7 @@ export async function chatContext(groupId?: string): Promise<ChatContext> {
   const admin = isAdmin(user.roles);
   const [office, shared, personalToken, connection, pick] = await Promise.all([
     getOffice(),
-    sharedChatsFor(user.roles),
+    sharedChatsFor(user.roles, user.email),
     admin ? getTokenForUser(user.id) : Promise.resolve(null),
     admin ? getConnection(user.id) : Promise.resolve(null),
     groupId === undefined ? Promise.resolve(null) : getPick(user.id, groupId),

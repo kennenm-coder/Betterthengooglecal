@@ -238,6 +238,32 @@ export async function sendMessage(
   return data?.message ?? null;
 }
 
+/** Create a new GroupMe group owned by this token's account (the office). */
+export async function createGroup(token: string, name: string): Promise<GroupMeGroup> {
+  const { data } = await groupmeFetch<GroupMeGroup>(token, "/groups", {
+    method: "POST",
+    body: JSON.stringify({ name, share: false }),
+  });
+  if (!data?.id) throw new GroupMeError("GroupMe didn't create the chat.", 502);
+  return data;
+}
+
+/**
+ * Add people to a group by phone number (GroupMe texts them an invite / adds
+ * them if they already use GroupMe). GroupMe processes this in the background.
+ */
+export async function addGroupMembers(
+  token: string,
+  groupId: string,
+  members: { nickname: string; phone_number?: string; email?: string }[]
+): Promise<void> {
+  if (members.length === 0) return;
+  await groupmeFetch(token, `/groups/${encodeURIComponent(groupId)}/members/add`, {
+    method: "POST",
+    body: JSON.stringify({ members }),
+  });
+}
+
 // --- Token storage (service role only -- see migration 025) ---
 
 export interface StoredConnection {

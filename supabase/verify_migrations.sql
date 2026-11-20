@@ -493,7 +493,13 @@ checks(migration, feature, verdict, checked) as (values
         and exists(select 1 from tbl where k = 'groupme_sent')
         and exists(select 1 from col where k = 'groupme_chat_picks.source')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'groupme_office, groupme_shared_chats, groupme_sent tables AND groupme_chat_picks.source')
+  'groupme_office, groupme_shared_chats, groupme_sent tables AND groupme_chat_picks.source'),
+
+ ('075', 'GroupMe chats: individual people + installer link',
+  case when exists(select 1 from col where k = 'groupme_shared_chats.emails')
+        and exists(select 1 from col where k = 'groupme_shared_chats.installer_name')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'groupme_shared_chats.emails AND groupme_shared_chats.installer_name')
 )
 select migration, feature, verdict, checked
 from checks

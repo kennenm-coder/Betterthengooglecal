@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMessages, type GroupMeMessage } from "@/lib/groupme";
-import { lookupSent, stripSenderPrefix, type SentInfo } from "@/lib/groupme-office";
+import { avatarsFor, lookupSent, stripSenderPrefix, type SentInfo } from "@/lib/groupme-office";
 import { chatContext, groupmeErrorResponse } from "@/lib/groupme-route";
 
 export const runtime = "nodejs";
@@ -27,7 +27,8 @@ function shape(
   me: string | null,
   myUserId: string,
   officeId: string | null,
-  sent: Map<string, SentInfo>
+  sent: Map<string, SentInfo>,
+  avatars: Map<string, string>
 ) {
   const base = {
     id: m.id,
@@ -49,8 +50,9 @@ function shape(
         name: s.name,
         text: stripSenderPrefix(base.text, s.name),
         isMine: s.userId === myUserId,
-        // The office account's picture would make everyone look the same.
-        avatarUrl: null,
+        // Their Duck Force profile picture (set on the Hub's Team page), not
+        // the office account's, which would make everyone look the same.
+        avatarUrl: (s.email && avatars.get(s.email.toLowerCase())) || null,
       };
     }
     // Typed straight into GroupMe as the office account: not anyone's here.
@@ -79,13 +81,14 @@ export async function GET(request: Request) {
     const sent = await lookupSent(
       messages.filter((m) => officeId && m.user_id === officeId).map((m) => m.source_guid)
     );
+    const avatars = await avatarsFor([...sent.values()].map((s) => s.email || ""));
     // "Mine" through their own GroupMe: their account id. Through the office:
     // only what the tags say they sent (ctx.me is the office account then).
     const me = ctx.source === "personal" ? ctx.me : null;
 
     // GroupMe returns newest-first; the UI reads oldest-first.
     return NextResponse.json({
-      messages: messages.map((m) => shape(m, me, ctx.user.id, officeId, sent)).reverse(),
+      messages: messages.map((m) => shape(m, me, ctx.user.id, officeId, sent, avatars)).reverse(),
     });
   } catch (e) {
     return groupmeErrorResponse(e, "Could not load messages.");

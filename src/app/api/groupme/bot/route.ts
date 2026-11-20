@@ -111,7 +111,7 @@ export async function POST(req: Request) {
   const stillAllowed = (email: string, source: "personal" | "office") => {
     const person = byEmail.get(email.toLowerCase());
     if (!person) return false;
-    return source === "office" ? !!chat && canSeeShared(chat, person.roles) : isAdmin(person.roles);
+    return source === "office" ? !!chat && canSeeShared(chat, person.roles, person.email) : isAdmin(person.roles);
   };
 
   await Promise.all(

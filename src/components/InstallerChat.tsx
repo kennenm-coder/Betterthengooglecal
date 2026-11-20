@@ -549,10 +549,10 @@ export default function InstallerChat({
 
   const suggestions = mentionQuery
     ? members
+        // Everyone who matches -- the list scrolls. Duck Force people first.
         .filter((m) =>
-          m.nickname.toLowerCase().startsWith(mentionQuery.query.toLowerCase())
+          m.nickname.toLowerCase().includes(mentionQuery.query.toLowerCase())
         )
-        .slice(0, 6)
     : [];
 
   async function send() {
@@ -720,22 +720,20 @@ export default function InstallerChat({
                     block.isMine ? "flex-row-reverse" : "flex-row"
                   }`}
                 >
-                  {/* Avatar only on incoming runs: on your own messages the
-                      right-hand side already says who sent it. */}
-                  {!block.isMine && (
-                    <Avatar name={block.sender} url={block.avatarUrl} />
-                  )}
+                  {/* Name and picture on every run, yours included: with
+                      everyone sending through one office account, seeing
+                      your own Duck Force name and photo confirms who it
+                      went out as. */}
+                  <Avatar name={block.sender} url={block.avatarUrl} />
 
                   <div
                     className={`flex flex-col gap-0.5 min-w-0 max-w-[78%] ${
                       block.isMine ? "items-end" : "items-start"
                     }`}
                   >
-                    {!block.isMine && (
-                      <span className="text-[11px] text-muted px-1">
-                        {block.sender}
-                      </span>
-                    )}
+                    <span className="text-[11px] text-muted px-1">
+                      {block.sender}
+                    </span>
 
                     {block.messages.map((m, i) => {
                       const first = i === 0;
@@ -826,9 +824,15 @@ export default function InstallerChat({
                   className="w-full text-left px-3 py-2 text-sm hover:bg-surface transition-colors flex items-center justify-between gap-2"
                 >
                   <span className="truncate">{m.nickname}</span>
-                  {m.kind === "duck" && (
+                  {/* Which account this is: many people are in both lists
+                      until the GroupMe members are cleared out of the chats. */}
+                  {m.kind === "duck" ? (
                     <span className="text-[10px] font-semibold text-rba-green bg-rba-green/10 border border-rba-green/40 rounded-full px-1.5 py-0.5 shrink-0">
                       Duck Force
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-semibold text-sky-700 dark:text-sky-300 bg-sky-500/10 border border-sky-500/40 rounded-full px-1.5 py-0.5 shrink-0">
+                      GroupMe
                     </span>
                   )}
                 </button>
