@@ -6,6 +6,8 @@
 // "Browse catalog" beside the parts search; Done, X, or the phone's back
 // button closes it and the write-up underneath is exactly as it was — the sheet
 // holds nothing of the write-up's, it only hands picked parts back up.
+// The Write-Ups page's "Catalog" button opens it browse-only (no Add handlers
+// passed): same photos, colours and part numbers, no Add buttons.
 //
 // Read-only on purpose. The catalog screen's editor (PartForm, photo upload)
 // is never mounted here: only admins and field managers may write the catalog,
@@ -91,12 +93,15 @@ export default function CatalogBrowseSheet({
   unitTypes: string[];
   /** What was already typed in the write-up's search box, carried over. */
   initialQuery?: string;
-  onAddPart: (part: PartsCatalogItem, pick: VariantPick, qty: number) => void;
+  /** Left out (with onAddBundle) for browse-only: the sheet is just for looking
+   *  — no Add buttons, nothing handed back. The Write-Ups page opens it so. */
+  onAddPart?: (part: PartsCatalogItem, pick: VariantPick, qty: number) => void;
   /** Returns how many part lines the bundle actually added. */
-  onAddBundle: (bundle: PartsBundle, count: number) => number;
+  onAddBundle?: (bundle: PartsBundle, count: number) => number;
   onClose: () => void;
 }) {
   useBackClose(onClose);
+  const browseOnly = !onAddPart || !onAddBundle;
 
   const [query, setQuery] = useState(initialQuery);
   const [section, setSection] = useState<string>(() => readSavedSection());
@@ -213,12 +218,14 @@ export default function CatalogBrowseSheet({
   }
 
   function addPart(part: PartsCatalogItem, pick: VariantPick, qty: number) {
+    if (!onAddPart) return;
     onAddPart(part, pick, qty);
     setAdded((n) => n + 1);
     setFlash({ text: `Added ${qty > 1 ? `${qty} × ` : ""}${part.partName}` });
   }
 
   function addBundle(b: PartsBundle, count: number) {
+    if (!onAddBundle) return;
     const n = onAddBundle(b, count);
     setAdded((x) => x + n);
     setFlash({
@@ -239,7 +246,7 @@ export default function CatalogBrowseSheet({
             matchedNumber={q ? matchingPartNumber(c, q) : undefined}
             offType={q && !typeOk(c.productType, c.category) ? c.productType : undefined}
             onOpen={() => setDetailId(c.id)}
-            onQuickAdd={() => addPart(c, settleVariant(c, "", ""), 1)}
+            onQuickAdd={browseOnly ? undefined : () => addPart(c, settleVariant(c, "", ""), 1)}
           />
         ))}
       </div>
@@ -260,7 +267,7 @@ export default function CatalogBrowseSheet({
       {shownBundles.length > 0 && (
         <div className="mb-3 space-y-2">
           {shownBundles.map((b) => (
-            <BundleCard key={b.id} bundle={b} partsById={partsById} onAdd={(n) => addBundle(b, n)} />
+            <BundleCard key={b.id} bundle={b} partsById={partsById} onAdd={browseOnly ? undefined : (n) => addBundle(b, n)} />
           ))}
         </div>
       )}
@@ -273,7 +280,7 @@ export default function CatalogBrowseSheet({
   ) : category === PACKS ? (
     <div className="space-y-2">
       {shownBundles.map((b) => (
-        <BundleCard key={b.id} bundle={b} partsById={partsById} onAdd={(n) => addBundle(b, n)} />
+        <BundleCard key={b.id} bundle={b} partsById={partsById} onAdd={browseOnly ? undefined : (n) => addBundle(b, n)} />
       ))}
     </div>
   ) : category ? (
@@ -447,10 +454,14 @@ export default function CatalogBrowseSheet({
           key={detail.id}
           part={detail}
           onClose={() => setDetailId(null)}
-          onAdd={(pick, qty) => {
-            addPart(detail, pick, qty);
-            setDetailId(null);
-          }}
+          onAdd={
+            browseOnly
+              ? undefined
+              : (pick, qty) => {
+                  addPart(detail, pick, qty);
+                  setDetailId(null);
+                }
+          }
         />
       )}
     </div>,
@@ -599,7 +610,8 @@ function PartCard({
   matchedNumber?: string;
   offType?: string;
   onOpen: () => void;
-  onQuickAdd: () => void;
+  /** Left out when browsing only: no one-tap Add button. */
+  onQuickAdd?: () => void;
 }) {
   const options = optionCount(part);
   const oneTap = !needsPick(part);
@@ -638,7 +650,7 @@ function PartCard({
           )}
         </div>
       </button>
-      {oneTap && (
+      {oneTap && onQuickAdd && (
         <button
           type="button"
           onClick={onQuickAdd}
@@ -659,7 +671,8 @@ function BundleCard({
 }: {
   bundle: PartsBundle;
   partsById: Map<string, PartsCatalogItem>;
-  onAdd: (count: number) => void;
+  /** Left out when browsing only: no count or Add pack button. */
+  onAdd?: (count: number) => void;
 }) {
   const [count, setCount] = useState(1);
   const price = bundlePrice(bundle, partsById);
@@ -692,6 +705,7 @@ function BundleCard({
             {parts.length > SHOWN_MEMBERS && <span>+{parts.length - SHOWN_MEMBERS} more</span>}
           </div>
         )}
+        {onAdd && (
         <div className="flex flex-wrap items-center gap-2 mt-2">
           <Stepper value={count} onChange={setCount} label={bundle.name} />
           <button
@@ -705,6 +719,7 @@ function BundleCard({
             Add pack
           </button>
         </div>
+        )}
       </div>
     </div>
   );
@@ -748,7 +763,8 @@ function PartDetail({
 }: {
   part: PartsCatalogItem;
   onClose: () => void;
-  onAdd: (pick: VariantPick, qty: number) => void;
+  /** Left out when browsing only: no Add bar, just the part. */
+  onAdd?: (pick: VariantPick, qty: number) => void;
 }) {
   useBackClose(onClose);
   const [pick, setPick] = useState<VariantPick>(() => settleVariant(part, "", ""));
@@ -878,7 +894,7 @@ function PartDetail({
               ) : open ? (
                 <div className="text-sm text-muted">
                   Pick {colors.length > 1 && !pick.color && sizes.length > 1 && !pick.size ? "colour and size" : colors.length > 1 && !pick.color ? "a colour" : "a size"} for
-                  the part number — or add it now and pick on the line later.
+                  the part number{onAdd ? " — or add it now and pick on the line later" : ""}.
                 </div>
               ) : (
                 <div className="text-sm text-muted">No part number in the catalog for this part.</div>
@@ -888,6 +904,7 @@ function PartDetail({
         </div>
       </div>
 
+      {onAdd && (
       <div className="shrink-0 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
         <div className="max-w-3xl mx-auto px-3 py-2 flex items-center gap-3">
           <Stepper value={qty} onChange={setQty} label={part.partName} />
@@ -900,6 +917,7 @@ function PartDetail({
           </button>
         </div>
       </div>
+      )}
     </div>
   );
 }

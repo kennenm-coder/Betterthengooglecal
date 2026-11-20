@@ -28,7 +28,12 @@ import {
   buildWriteUpEmailContent,
   WRITEUP_EMAIL_TO,
   type WriteUpEntryInput,
+  fetchPartsCatalog,
+  fetchPartsBundles,
+  type PartsCatalogItem,
+  type PartsBundle,
 } from "@/lib/work-order-store";
+import CatalogBrowseSheet from "@/components/CatalogBrowseSheet";
 import { fetchMaterialJobs } from "@/lib/store";
 import { getWriteUpEmails } from "@/lib/action-settings";
 import { dedupeRecipients } from "@/lib/email-recipients";
@@ -95,6 +100,7 @@ import {
   Users,
   Package,
   Clock,
+  LayoutGrid,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 
@@ -198,6 +204,20 @@ export default function WorkOrdersPage() {
   const canResendEmail = canWriteUps(roles);
 
   const [showPicker, setShowPicker] = useState(false);
+  // "Catalog" in the header: the photo parts catalog, just to look through —
+  // not tied to any write-up, so nothing in it can be added to an order.
+  const [browseCatalog, setBrowseCatalog] = useState<{ parts: PartsCatalogItem[]; bundles: PartsBundle[] } | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  async function openCatalog() {
+    if (catalogLoading) return;
+    setCatalogLoading(true);
+    try {
+      const [parts, bundles] = await Promise.all([fetchPartsCatalog(), fetchPartsBundles()]);
+      setBrowseCatalog({ parts, bundles });
+    } finally {
+      setCatalogLoading(false);
+    }
+  }
   const [pending, setPending] = useState<{ target: WriteUpTarget; units: MaterialUnit[] } | null>(null);
   // Editing a whole submission (all its unit rows) through the guided flow.
   // The job's programmed units load in the background so the editor can show
@@ -709,6 +729,15 @@ export default function WorkOrdersPage() {
         }
       `}</style>
 
+      {browseCatalog && (
+        <CatalogBrowseSheet
+          catalog={browseCatalog.parts}
+          bundles={browseCatalog.bundles}
+          unitTypes={[]}
+          onClose={() => setBrowseCatalog(null)}
+        />
+      )}
+
       <header className="bg-background border-b border-border px-4 py-3 no-print">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -716,6 +745,15 @@ export default function WorkOrdersPage() {
             <h1 className="text-lg font-semibold">Write-Ups</h1>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={openCatalog}
+              disabled={catalogLoading}
+              className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-md border border-amber-500 text-amber-700 font-medium active:scale-[0.97] transition-all disabled:opacity-60"
+              aria-label="Browse parts catalog"
+            >
+              {catalogLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LayoutGrid className="w-4 h-4" />}
+              <span>Catalog</span>
+            </button>
             <button
               onClick={() => window.print()}
               className="hidden md:flex items-center gap-1.5 text-sm text-primary hover:text-foreground"
