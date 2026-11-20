@@ -503,7 +503,13 @@ checks(migration, feature, verdict, checked) as (values
  ('076', 'Job Alert notes follow the order + kind of appointment',
   case when exists(select 1 from col where k = 'job_alerts.work_order_type')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'job_alerts.work_order_type')
+  'job_alerts.work_order_type'),
+
+ ('078', 'Job Site Visits: measure tech visit log + monthly email',
+  case when exists(select 1 from tbl where k = 'job_site_visits')
+        and exists(select 1 from tbl where k = 'job_site_visit_reports')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'job_site_visits AND job_site_visit_reports tables')
 )
 select migration, feature, verdict, checked
 from checks

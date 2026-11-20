@@ -12,7 +12,10 @@
 //   1. Job Alert: buzz + bell every field manager and admin, 5 business days
 //      before an appointment with notes and again the business day before
 //      (src/lib/job-alerts-server.ts)
-//   2. clear bell history older than 90 days
+//   2. Job Site Visits: on the 1st of the month, email last month's visits to
+//      the NWO Hub's list (src/lib/site-visits-server.ts; retries through the
+//      5th, never sends a month twice)
+//   3. clear bell history older than 90 days
 //
 // Auth: Vercel sends `Authorization: Bearer <CRON_SECRET>` when CRON_SECRET is
 // set on the project. Without it this route refuses everyone, so it can't be
@@ -22,6 +25,7 @@ import { NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { purgeOldNotifications } from "@/lib/notify-server";
 import { runJobAlerts } from "@/lib/job-alerts-server";
+import { runSiteVisitReport } from "@/lib/site-visits-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,6 +61,16 @@ export async function GET(req: Request) {
     }
   } else {
     ran.jobAlerts = `skipped: it's ${hour % 24}:00 at the office, not noon`;
+  }
+  // Its own switch (?sitevisits=1), so a Job Alert test never mails the
+  // office last month's visits. Forced, it sends last month's on any day.
+  const svForced = new URL(req.url).searchParams.get("sitevisits") === "1";
+  if (hour % 24 === 12 || svForced) {
+    try {
+      ran.siteVisits = await runSiteVisitReport({ force: svForced });
+    } catch (err) {
+      ran.siteVisitsError = (err as Error).message;
+    }
   }
   try {
     ran.purgedNotifications = await purgeOldNotifications(90);

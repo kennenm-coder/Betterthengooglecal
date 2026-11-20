@@ -33,7 +33,8 @@ import WriteUpModal from "./WriteUpModal";
 import ProductSpecs from "./ProductSpecs";
 import JobReferencePanel from "./JobReferencePanel";
 import { useAuth } from "@/hooks/useAuth";
-import { canDoFieldWork, canEditLegacyLink, canSubmitJobComplete, canUseJobAlert, canWriteUps, jobAlertAudienceFor } from "@/lib/roles";
+import { canDoFieldWork, canEditLegacyLink, canLogSiteVisits, canSubmitJobComplete, canUseJobAlert, canWriteUps, jobAlertAudienceFor } from "@/lib/roles";
+import SiteVisitButton from "./SiteVisitButton";
 import { jobCompleteDue, jobLastDay } from "@/lib/job-complete-core";
 import JobCompleteModal from "./JobCompleteModal";
 import JobCompleteTag from "./JobCompleteTag";
@@ -641,6 +642,9 @@ export default function JobCard({
               {completion ? "Job Complete — view / update" : "Job Complete"}
             </button>
           )}
+
+          {/* Job Site Visit (078) — measure techs + admins, on every job tile. */}
+          {canLogSiteVisits(roles) && order.orderNumber && <SiteVisitButton order={order} />}
 
           {jcOpensOn && (
             <p className="mt-3 text-xs text-muted text-center">

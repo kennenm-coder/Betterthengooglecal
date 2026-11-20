@@ -409,6 +409,17 @@ export function canSeeMeasureTiles(roles: RoleInput): boolean {
   return isAdmin(roles) || hasAny(roles, ["measure-tech"]);
 }
 
+/**
+ * Who logs Job Site Visits (migration 078): measure techs, and admins. Gives
+ * them the Submissions tab (the Site Visits view) and the "Log Job Site Visit"
+ * button on every job tile. Additive — it changes nothing else they see.
+ * Mirrors the job_site_visits policies.
+ */
+export function canLogSiteVisits(roles: RoleInput): boolean {
+  if (isInstaller(roles)) return false;
+  return isAdmin(roles) || hasAny(roles, ["measure-tech"]);
+}
+
 /** Roles allowed to set/edit/clear the legacy install-instructions link. */
 export const LEGACY_LINK_ROLES: UserRole[] = ["admin", "scheduling", "scheduling_manager"];
 

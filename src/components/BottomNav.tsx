@@ -10,6 +10,7 @@ import { useJobCompleteTodo } from "@/hooks/useJobCompleteTodo";
 import { fetchChatConnection, readChatCache, watchChatCache, writeChatCache } from "@/lib/chat-cache";
 import {
   canSeeWriteUps,
+  canLogSiteVisits,
   canUseInstallerChat,
   isAdmin,
   isInstaller,
@@ -88,7 +89,8 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
   const badgeCount = rejectedCount + jobCompleteDue;
   // Install leads (and admins) get the combined tab; a More for More Submitter
   // who isn't a lead still just sees More for More.
-  const submissions = !!roles && (isInstallerLead(roles) || isAdmin(roles));
+  // Measure techs get it too, for Job Site Visits (078).
+  const submissions = !!roles && (isInstallerLead(roles) || isAdmin(roles) || canLogSiteVisits(roles));
   const canChat = canUseInstallerChat(roles);
   // Real signed-in roles, not previewRoles: the harness pages must not start
   // polling GroupMe just because they draw an admin's bar.
@@ -162,7 +164,7 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
       : (!i.writeUps || canSeeWriteUps(roles)) &&
       (!i.notInstaller || !(isInstaller(roles) || (isInstallerLead(roles) && !isAdmin(roles)))) &&
       // Admins always see everything, so they get it without the role.
-      (!i.installerLead || isInstallerLead(roles) || isAdmin(roles) || isMfmSubmitter(roles)) &&
+      (!i.installerLead || isInstallerLead(roles) || isAdmin(roles) || isMfmSubmitter(roles) || canLogSiteVisits(roles)) &&
       (!i.chat || canChat)
   );
 

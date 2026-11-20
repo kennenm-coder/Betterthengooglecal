@@ -14,7 +14,8 @@ import { useData } from "@/components/DataProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { refreshMfmNotices } from "@/hooks/useMfmNotices";
 import MoreForMoreSubmitter from "@/components/MoreForMoreSubmitter";
-import { canFillMoreForMore, canSubmitJobComplete, isAdmin, isInstallerLead, isMfmSubmitter } from "@/lib/roles";
+import { canFillMoreForMore, canLogSiteVisits, canSubmitJobComplete, isAdmin, isInstallerLead, isMfmSubmitter } from "@/lib/roles";
+import SiteVisitsView from "@/components/SiteVisitsView";
 import { jobCompleteDue, jobCompleteNeeded, jobLastDays, localToday } from "@/lib/job-complete-core";
 import type { JcTag } from "@/lib/job-complete";
 import { crewsForDate, ownsOrder } from "@/lib/format-utils";
@@ -117,33 +118,48 @@ function latestPerJob(orders: WorkOrder[]): WorkOrder[] {
  * The Submissions tab. An install lead sees their crew's jobs with BOTH things
  * they owe: the More for More sheet and the Job Complete report. A More for
  * More Submitter who isn't a lead gets the every-crew view (which approves on
- * submit). An admin is both at once, so they get a switch.
+ * submit). A measure tech gets Job Site Visits (078), stacked on top of any of
+ * those they also hold. Anyone with more than one view (admins have all three)
+ * gets a switch.
  */
+type ViewKey = "submitter" | "lead" | "visits";
+
 export default function MoreForMorePage() {
   const { roles, loading } = useAuth();
   if (loading) return <LeadView />;
-  if (isAdmin(roles)) return <AdminSwitch />;
-  if (isMfmSubmitter(roles) && !isInstallerLead(roles)) return <MoreForMoreSubmitter />;
+  const views: [ViewKey, string][] = [];
+  if (isAdmin(roles)) {
+    views.push(["submitter", "Submitter"], ["lead", "Install lead"]);
+  } else if (isInstallerLead(roles)) {
+    views.push(["lead", "Install lead"]);
+  } else if (isMfmSubmitter(roles)) {
+    views.push(["submitter", "Submitter"]);
+  }
+  if (canLogSiteVisits(roles)) views.push(["visits", "Site visits"]);
+  // Nobody qualifies: LeadView explains who the tab is for.
+  if (views.length === 0) return <LeadView />;
+  if (views.length === 1) return <TabView view={views[0][0]} />;
+  return <ViewSwitch views={views} />;
+}
+
+function TabView({ view }: { view: ViewKey }) {
+  if (view === "submitter") return <MoreForMoreSubmitter />;
+  if (view === "visits") return <SiteVisitsView />;
   return <LeadView />;
 }
 
-/** Admins can open both views: the submitter's, and the install lead's Submissions. */
-function AdminSwitch() {
-  const [view, setView] = useState<"submitter" | "lead">("submitter");
+/** For anyone with several views (admins, or a lead who is also a measure tech). */
+function ViewSwitch({ views }: { views: [ViewKey, string][] }) {
+  const [view, setView] = useState<ViewKey>(views[0][0]);
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surface border-b border-border text-xs">
-        <span className="text-muted">View as</span>
-        {(
-          [
-            ["submitter", "Submitter"],
-            ["lead", "Install lead"],
-          ] as const
-        ).map(([k, label]) => (
+      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-surface border-b border-border text-xs overflow-x-auto no-scrollbar">
+        <span className="text-muted shrink-0">View</span>
+        {views.map(([k, label]) => (
           <button
             key={k}
             onClick={() => setView(k)}
-            className={`rounded-full px-3 py-1 font-medium border ${
+            className={`shrink-0 rounded-full px-3 py-1 font-medium border ${
               view === k ? "bg-foreground text-background border-foreground" : "border-border text-muted"
             }`}
           >
@@ -151,7 +167,9 @@ function AdminSwitch() {
           </button>
         ))}
       </div>
-      <div className="flex-1 min-h-0">{view === "lead" ? <LeadView /> : <MoreForMoreSubmitter />}</div>
+      <div className="flex-1 min-h-0">
+        <TabView view={view} />
+      </div>
     </div>
   );
 }
