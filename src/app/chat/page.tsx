@@ -18,8 +18,6 @@ import {
 } from "lucide-react";
 import { formatDistanceToNowStrict } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
-import { useData } from "@/components/DataProvider";
-import { crewsForDate } from "@/lib/format-utils";
 import { canUseInstallerChat } from "@/lib/roles";
 import BottomNav from "@/components/BottomNav";
 import InstallerChat from "@/components/InstallerChat";
@@ -223,17 +221,6 @@ function ChatPageInner() {
   // Back returns to where they came from instead of the chat list.
   const [openedFromLink, setOpenedFromLink] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const { orders } = useData();
-  // Every installer the calendar knows, for the bot's "which installer is
-  // this chat for?" pick.
-  const installerNames = useMemo(() => {
-    const set = new Set<string>();
-    for (const o of orders) {
-      if (o.installer?.trim()) set.add(o.installer.trim());
-      for (const n of crewsForDate(o)) if (n?.trim()) set.add(n.trim());
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [orders]);
   // The notification menu under the header (GroupMe buzz + schedule).
   const [notifyOpen, setNotifyOpen] = useState(false);
   // Re-color the list every minute even when nothing new arrives.
@@ -457,8 +444,6 @@ function ChatPageInner() {
             imageUrl={selected.imageUrl}
             lastReadId={selected.unread ? selected.lastReadId : null}
             userId={user?.id}
-            installerNames={installerNames}
-            onBotChanged={loadChats}
             onBack={() => {
               setSelected(null);
               if (openedFromLink) {

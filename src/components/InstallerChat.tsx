@@ -1,10 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Bot, ChevronLeft, Loader2, RefreshCw, Send } from "lucide-react";
+import { ChevronLeft, Loader2, RefreshCw, Send } from "lucide-react";
 import { format, isSameYear, isToday, isYesterday } from "date-fns";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
-import ChatBotPanel from "@/components/ChatBotPanel";
 import PhotoViewer from "@/components/PhotoViewer";
 import { readMessages, writeMessages, type CachedMessage } from "@/lib/chat-cache";
 
@@ -244,18 +243,12 @@ export default function InstallerChat({
   groupId,
   title: installerName,
   userId,
-  installerNames = [],
-  onBotChanged,
   imageUrl,
   lastReadId,
   onBack,
 }: {
   /** The signed-in Duck Force user, for the in-memory message cache. */
   userId?: string | null;
-  /** Calendar installers, for the bot's "which installer is this chat for?". */
-  installerNames?: string[];
-  /** Called after the bot is added/removed or its installer changes. */
-  onBotChanged?: () => void;
   /** The group's GroupMe picture, for the header. */
   imageUrl?: string | null;
   /** The last message you'd read before opening, when the chat was unread:
@@ -278,7 +271,6 @@ export default function InstallerChat({
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [showBot, setShowBot] = useState(false);
   // A photo opened full screen inside the app (instead of a browser tab).
   const [viewing, setViewing] = useState<string | null>(null);
 
@@ -619,27 +611,7 @@ export default function InstallerChat({
           </h1>
           <GroupMeAttribution compact className="leading-tight" />
         </div>
-        <button
-          onClick={() => setShowBot((v) => !v)}
-          aria-expanded={showBot}
-          aria-label="Duck Force bot"
-          title="Duck Force bot"
-          className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors shrink-0 ${
-            showBot ? "text-primary bg-surface" : "text-muted hover:text-foreground hover:bg-surface"
-          }`}
-        >
-          <Bot className="w-5 h-5" />
-        </button>
       </header>
-
-      {showBot && (
-        <ChatBotPanel
-          groupId={groupId}
-          title={installerName}
-          installerNames={installerNames}
-          onChanged={onBotChanged}
-        />
-      )}
 
       <div
         ref={scrollRef}
