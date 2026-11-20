@@ -7,7 +7,7 @@ import { Calendar, Search, ScrollText, Wrench, BadgeDollarSign, ClipboardCheck, 
 import { readRememberedRoles, useAuth } from "@/hooks/useAuth";
 import { useMfmNotices } from "@/hooks/useMfmNotices";
 import { useJobCompleteTodo } from "@/hooks/useJobCompleteTodo";
-import { fetchChatConnection, readChatCache, writeChatCache } from "@/lib/chat-cache";
+import { fetchChatConnection, readChatCache, watchChatCache, writeChatCache } from "@/lib/chat-cache";
 import {
   canSeeWriteUps,
   canUseInstallerChat,
@@ -139,6 +139,20 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
     };
   }, [pollChat, pathname, userId]);
 
+  // Opening a chat marks it read in the cache at once; follow it here too, so
+  // the Chat badge and the app icon drop straight away instead of waiting for
+  // the next minute's check.
+  useEffect(() => {
+    if (!pollChat || !userId) return;
+    return watchChatCache(() => {
+      const chats = readChatCache(userId)?.chats;
+      if (!chats) return;
+      const total = chats.filter((c) => c.unread).length;
+      setChatUnread(total);
+      setIconBadge(total);
+    });
+  }, [pollChat, userId]);
+
   // Hide the Write-Ups tab from regular members during the soft rollout, and
   // the Chat tab from everyone but admins during the GroupMe pilot.
   const items = NAV_ITEMS.filter((i) =>
@@ -186,7 +200,7 @@ export default function BottomNav({ previewRoles }: { previewRoles?: string[] } 
               )}
               {href === "/chat" && chatUnread > 0 && (
                 <span
-                  className="absolute -top-1.5 -right-2 min-w-[18px] h-[18px] rounded-full bg-danger text-white text-[10px] font-bold leading-[18px] text-center px-1"
+                  className="absolute -top-1.5 -right-2 min-w-[18px] h-[18px] rounded-full bg-rba-green text-white text-[10px] font-bold leading-[18px] text-center px-1"
                   aria-label={`${chatUnread} conversation${chatUnread === 1 ? "" : "s"} with new messages`}
                 >
                   {chatUnread > 9 ? "9+" : chatUnread}

@@ -54,11 +54,11 @@ export default function ChatMessagesButton({ order }: { order: WorkOrder }) {
     >
       <MessageCircle className="w-5 h-5 text-primary" />
       {count > 0 ? (
-        <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">
+        <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rba-green text-white text-[10px] font-bold flex items-center justify-center">
           {count > 99 ? "99+" : count}
         </span>
       ) : chat.unread ? (
-        <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-red-600" />
+        <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rba-green" />
       ) : null}
     </button>
   );

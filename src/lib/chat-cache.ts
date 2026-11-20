@@ -77,9 +77,47 @@ export function writeChatCache(
   patch: Partial<Omit<ChatCache, "userId">>
 ): void {
   if (!userId) return;
-  if (cache.userId !== userId) cache = { userId, connection: null, chats: null };
+  if (cache.userId !== userId) {
+    cache = { userId, connection: null, chats: null };
+    readLocally.clear();
+  }
+  if (patch.chats) patch = { ...patch, chats: applyLocalReads(patch.chats) };
   cache = { ...cache, ...patch };
   if ("chats" in patch) for (const fn of listeners) fn();
+}
+
+/**
+ * Chats opened in this session, and when (unix seconds). Opening a chat marks
+ * it read on screen straight away -- list, nav badge, job card button, app
+ * icon -- instead of waiting for the server's next check to catch up. A
+ * server answer that was already on its way still says "unread", so for a
+ * short while that answer is overruled unless something genuinely NEW has
+ * arrived since the chat was opened.
+ */
+const readLocally = new Map<string, number>();
+const LOCAL_READ_WINDOW_S = 90;
+
+export function applyLocalReads(chats: CachedChat[]): CachedChat[] {
+  if (readLocally.size === 0) return chats;
+  const now = Date.now() / 1000;
+  return chats.map((c) => {
+    const at = readLocally.get(c.id);
+    if (at === undefined) return c;
+    if (now - at > LOCAL_READ_WINDOW_S) {
+      readLocally.delete(c.id);
+      return c;
+    }
+    // A message newer than the moment it was opened is real news: keep it.
+    if (c.lastAt > at) return c;
+    return { ...c, unread: false, unreadCount: 0, unreadSince: 0 };
+  });
+}
+
+/** Opening a chat: show it as read everywhere right now. */
+export function markChatReadLocally(userId: string | null | undefined, groupId: string): void {
+  if (!userId || cache.userId !== userId) return;
+  readLocally.set(groupId, Date.now() / 1000);
+  if (cache.chats) writeChatCache(userId, { chats: cache.chats });
 }
 
 const listeners = new Set<() => void>();

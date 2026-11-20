@@ -25,7 +25,9 @@ import InstallerChat from "@/components/InstallerChat";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
 import NotificationScheduleEditor from "@/components/NotificationScheduleEditor";
 import {
+  applyLocalReads,
   fetchChatConnection,
+  markChatReadLocally,
   prefetchMessages,
   readChatCache,
   writeChatCache,
@@ -166,6 +168,15 @@ function ChatPageInner() {
   const [chats, setChatsState] = useState<ChatRow[] | null>(
     () => readChatCache(user?.id)?.chats ?? null
   );
+  /** Open a chat, showing it as read everywhere at once (src/lib/chat-cache). */
+  const openChat = useCallback(
+    (c: ChatRow) => {
+      setSelected(c);
+      markChatReadLocally(user?.id, c.id);
+      setChatsState(readChatCache(user?.id)?.chats ?? null);
+    },
+    [user?.id]
+  );
   const setConnection = useCallback(
     (next: ConnectionState) => {
       setConnectionState(next);
@@ -175,7 +186,7 @@ function ChatPageInner() {
   );
   const setChats = useCallback(
     (next: ChatRow[] | null) => {
-      setChatsState(next);
+      setChatsState(next ? applyLocalReads(next) : next);
       writeChatCache(user?.id, { chats: next });
     },
     [user?.id]
@@ -242,13 +253,13 @@ function ChatPageInner() {
     if (!openParam || !chats) return;
     const hit = chats.find((c) => c.id === openParam);
     if (hit) {
-      setSelected(hit);
+      openChat(hit);
       setOpenedFromLink(true);
     } else {
       setNotice("That chat isn't one of your chosen chats. Add it under Choose chats.");
     }
     router.replace("/chat");
-  }, [openParam, chats, router]);
+  }, [openParam, chats, router, openChat]);
 
   const loadConnection = useCallback(async () => {
     const next = await fetchChatConnection(user?.id);
@@ -742,7 +753,7 @@ function ChatPageInner() {
               return (
                 <li key={c.id}>
                   <button
-                    onClick={() => setSelected(c)}
+                    onClick={() => openChat(c)}
                     className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
                   >
                     <ChatAvatar name={c.name} url={c.imageUrl} />
@@ -763,12 +774,12 @@ function ChatPageInner() {
                           ((c.unreadCount ?? 0) > 0 ? (
                             <span
                               title={`${c.unreadCount} unread message${c.unreadCount === 1 ? "" : "s"}`}
-                              className="min-w-[20px] h-5 px-1.5 rounded-full bg-red-600 text-white text-[11px] font-bold leading-5 text-center shrink-0"
+                              className="min-w-[20px] h-5 px-1.5 rounded-full bg-rba-green text-white text-[11px] font-bold leading-5 text-center shrink-0"
                             >
                               {(c.unreadCount ?? 0) >= 100 ? "99+" : c.unreadCount}
                             </span>
                           ) : (
-                            <span aria-label="Unread" className="w-2.5 h-2.5 rounded-full bg-red-600 shrink-0" />
+                            <span aria-label="Unread" className="w-2.5 h-2.5 rounded-full bg-rba-green shrink-0" />
                           ))}
                         {c.lastAt > 0 && (
                           <span className="ml-auto text-[11px] text-muted shrink-0">

@@ -5,6 +5,7 @@ import { Bot, ChevronLeft, Loader2, RefreshCw, Send } from "lucide-react";
 import { format, isSameYear, isToday, isYesterday } from "date-fns";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
 import ChatBotPanel from "@/components/ChatBotPanel";
+import PhotoViewer from "@/components/PhotoViewer";
 import { readMessages, writeMessages, type CachedMessage } from "@/lib/chat-cache";
 
 /**
@@ -274,6 +275,8 @@ export default function InstallerChat({
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [showBot, setShowBot] = useState(false);
+  // A photo opened full screen inside the app (instead of a browser tab).
+  const [viewing, setViewing] = useState<string | null>(null);
 
   // --- @-mentions ---
   const [members, setMembers] = useState<Member[]>([]);
@@ -580,6 +583,7 @@ export default function InstallerChat({
 
   return (
     <div className="flex flex-col h-full min-h-0">
+      {viewing && <PhotoViewer url={viewing} onClose={() => setViewing(null)} />}
       {/* Back arrow, avatar, name -- the layout anyone recognises from a phone
           messaging app, built from our own styles rather than GroupMe's. */}
       <header className="bg-background border-b border-border px-2 py-2 flex items-center gap-2 shrink-0">
@@ -661,11 +665,11 @@ export default function InstallerChat({
                     className="flex items-center gap-2 py-2"
                     role="separator"
                   >
-                    <div className="flex-1 h-px bg-red-500/50" />
-                    <span className="text-[11px] font-semibold text-red-600 dark:text-red-400 bg-red-500/10 border border-red-500/40 rounded-full px-2.5 py-0.5">
+                    <div className="flex-1 h-px bg-rba-green/50" />
+                    <span className="text-[11px] font-semibold text-rba-green bg-rba-green/10 border border-rba-green/40 rounded-full px-2.5 py-0.5">
                       {block.label}
                     </span>
-                    <div className="flex-1 h-px bg-red-500/50" />
+                    <div className="flex-1 h-px bg-rba-green/50" />
                   </div>
                 );
               }
@@ -735,17 +739,17 @@ export default function InstallerChat({
                             block.isMine
                               ? "bg-primary text-white"
                               : unreadIds.has(m.id)
-                                ? "bg-red-500/10 border border-red-500/40"
+                                ? "bg-rba-green/10 border border-rba-green/40"
                                 : "bg-surface border border-border"
                           }`}
                         >
                           <MessageText text={m.text} mine={block.isMine} />
                           {m.images.map((url) => (
-                            <a
+                            <button
                               key={url}
-                              href={url}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                              type="button"
+                              onClick={() => setViewing(url)}
+                              aria-label="Open photo"
                               className="block mt-1.5"
                             >
                               {/* Space reserved from the size in the link, so
@@ -763,7 +767,7 @@ export default function InstallerChat({
                                 }}
                                 className="rounded-xl w-60 max-w-full h-auto max-h-72 object-cover bg-background"
                               />
-                            </a>
+                            </button>
                           ))}
                         </div>
                       );
