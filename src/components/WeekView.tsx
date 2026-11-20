@@ -8,6 +8,7 @@ import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
 import WeekBarOverview from "./WeekBarOverview";
 import SpecialDayTile from "./SpecialDayTile";
+import SchedulerOnlyTile from "./SchedulerOnlyTile";
 import NsaTag from "./NsaTag";
 import type { SpecialDay } from "@/lib/special-days-store";
 
@@ -109,6 +110,17 @@ export default function WeekView({
                   const crews = crewsForDate(order, dayKey);
                   const city = extractCity(order.address);
                   const multiDay = multiDayProgress(order, day);
+                  if (order.schedulerOnly) {
+                    return (
+                      <SchedulerOnlyTile
+                        key={order.id}
+                        order={order}
+                        date={day}
+                        dayKey={dayKey}
+                        compact
+                      />
+                    );
+                  }
                   return (
                     <button
                       key={order.id}

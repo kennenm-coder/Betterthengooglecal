@@ -32,6 +32,7 @@ import MoreForMoreNotices from "@/components/MoreForMoreNotices";
 import { WorkOrder, ViewMode, TimeOffRequest } from "@/lib/types";
 import { fetchTimeOffRequests } from "@/lib/time-off-store";
 import { fetchSpecialDays, groupSpecialDaysByDate, isMeasureOnlyCrew, specialDayMatchesCrew, type SpecialDay } from "@/lib/special-days-store";
+import { fetchSchedulerOnly } from "@/lib/scheduler-only-store";
 import { addDays, addWeeks, subDays, subWeeks, format, isToday, isValid, parseISO, startOfWeek } from "date-fns";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Loader2, RefreshCw, CalendarDays, Plus, UserCog, BadgeDollarSign } from "lucide-react";
@@ -82,6 +83,9 @@ function CalendarPage() {
   // at a time (covers the day view too) and cached against that week, so moving
   // to another week shows nothing rather than last week's tiles while loading.
   const [specialCache, setSpecialCache] = useState<{ week: string; days: SpecialDay[] } | null>(null);
+  // Appointments the scheduling app has booked that rForce does not have, drawn
+  // as "Scheduling app only" tiles. Same week-at-a-time cache as the tiles above.
+  const [schedulerOnlyCache, setSchedulerOnlyCache] = useState<{ week: string; orders: WorkOrder[] } | null>(null);
 
   // AutoRefresh (mounted in the layout) re-pulls the shared calendar data on
   // its own when the connection is good. These bits live on this page only,
@@ -236,9 +240,23 @@ function CalendarPage() {
   // nowhere else: they are empty unless this login is an admin or measure tech,
   // and everything else keeps reading scopedOrders so a measure can never
   // make an install look scheduled.
+  //
+  // "Scheduling app only" stand-ins join the same way, for display only. The
+  // database already limits an installer to their own crew's; a Tech Measure one
+  // follows the Tech Measure rule (admins and measure techs only).
+  const weekStartKey = format(startOfWeek(currentDate, { weekStartsOn: 0 }), "yyyy-MM-dd");
+  const schedulerOnlyOrders = useMemo(() => {
+    if (schedulerOnlyCache?.week !== weekStartKey) return [];
+    const measureOk = canSeeMeasureTiles(roles);
+    return schedulerOnlyCache.orders.filter((o) => measureOk || o.workOrderType !== "Tech Measure");
+  }, [schedulerOnlyCache, weekStartKey, roles]);
+
   const calendarOrders = useMemo(
-    () => (measureOrders.length > 0 ? [...scopedOrders, ...measureOrders] : scopedOrders),
-    [scopedOrders, measureOrders]
+    () =>
+      measureOrders.length > 0 || schedulerOnlyOrders.length > 0
+        ? [...scopedOrders, ...measureOrders, ...schedulerOnlyOrders]
+        : scopedOrders,
+    [scopedOrders, measureOrders, schedulerOnlyOrders]
   );
 
   const filteredOrders = useMemo(
@@ -257,6 +275,15 @@ function CalendarPage() {
       cancelled = true;
     };
   }, [weekStartStr, weekEndStr, refreshTick]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchSchedulerOnly(weekStartStr, weekEndStr).then((found) => {
+      if (!cancelled) setSchedulerOnlyCache({ week: weekStartStr, orders: found });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [weekStartStr, weekEndStr, refreshTick]);
   const specialByDay = useMemo(() => {
     const days = specialCache?.week === weekStartStr ? specialCache.days : [];
     // A measure tech's tile follows the Tech Measure rule: admins and measure-tech logins only.
@@ -265,6 +292,12 @@ function CalendarPage() {
       days.filter((d) => specialDayMatchesCrew(d, filters.crew) && (measureOk || !isMeasureOnlyCrew(d)))
     );
   }, [specialCache, weekStartStr, filters.crew, roles]);
+
+  // A "Scheduling app only" tile has no work order behind it, so it opens nothing.
+  const selectOrder = useCallback((order: WorkOrder) => {
+    if (order.schedulerOnly) return;
+    setSelectedOrder(order);
+  }, []);
 
   const goToday = () => setCurrentDate(new Date());
   const goPrev = useCallback(() => {
@@ -456,7 +489,7 @@ function CalendarPage() {
             orders={filteredOrders}
             date={currentDate}
             specialDays={specialByDay.get(format(currentDate, "yyyy-MM-dd")) || []}
-            onSelectOrder={setSelectedOrder}
+            onSelectOrder={selectOrder}
             onSwipeLeft={goNext}
             onSwipeRight={goPrev}
           />
@@ -466,7 +499,7 @@ function CalendarPage() {
             date={currentDate}
             timeOffRequests={timeOffRequests}
             specialByDay={specialByDay}
-            onSelectOrder={setSelectedOrder}
+            onSelectOrder={selectOrder}
             onSelectDay={(d) => {
               setCurrentDate(d);
               setView("day");

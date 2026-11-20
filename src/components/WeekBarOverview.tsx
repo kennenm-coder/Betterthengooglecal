@@ -97,13 +97,15 @@ export default function WeekBarOverview({
                 if (bar.kind === "order") {
                   const name = lastFirst(bar.order.customerName).split(",")[0];
                   const crew = crewsForDate(bar.order, key).join(" + ");
+                  // A scheduling-app-only bar has no job behind it: dashed, and it opens nothing.
+                  const only = bar.order.schedulerOnly;
                   return (
                     <button
                       key={bar.order.id}
                       onClick={() => onSelectOrder(bar.order)}
-                      className={`w-full text-left text-[10px] leading-tight px-1.5 py-0.5 rounded truncate hover:opacity-90 transition-opacity ${typeColor(
-                        bar.order.workOrderType
-                      )} ${typeTileText(bar.order.workOrderType)}`}
+                      className={`w-full text-left text-[10px] leading-tight px-1.5 py-0.5 rounded truncate hover:opacity-90 transition-opacity ${
+                        only ? "border border-dashed border-white/70" : ""
+                      } ${typeColor(bar.order.workOrderType)} ${typeTileText(bar.order.workOrderType)}`}
                       title={`${lastFirst(bar.order.customerName)} - ${crew || bar.order.orderNumber}`}
                     >
                       {name}

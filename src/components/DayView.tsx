@@ -8,6 +8,7 @@ import { format } from "date-fns";
 import { useMemo } from "react";
 import { useSwipe } from "@/hooks/useSwipe";
 import SpecialDayTile from "./SpecialDayTile";
+import SchedulerOnlyTile from "./SchedulerOnlyTile";
 import NsaTag from "./NsaTag";
 import type { SpecialDay } from "@/lib/special-days-store";
 
@@ -85,6 +86,11 @@ export default function DayView({
                   const crews = crewsForDate(order, dayKey);
                   const city = extractCity(order.address);
                   const multiDay = multiDayProgress(order, date);
+                  if (order.schedulerOnly) {
+                    return (
+                      <SchedulerOnlyTile key={order.id} order={order} date={date} dayKey={dayKey} />
+                    );
+                  }
                   return (
                     <button
                       key={order.id}

@@ -51,6 +51,14 @@ export interface WorkOrder {
    * stored flag alone; every row read back from the database has a real boolean.
    */
   nsaOwned?: boolean;
+  /**
+   * True only for a stand-in the calendar draws for an appointment that exists in
+   * the scheduling app but not in rForce (migration 077). It is not a real work
+   * order: it is never saved, searched, counted or opened, and exists only so the
+   * day and week views can place it like any other tile. See
+   * src/lib/scheduler-only-store.ts.
+   */
+  schedulerOnly?: boolean;
   materialJob?: MaterialJobData | null;
   /** Legacy install-instructions URL (Google Drive), shown only when there is
    *  no paired materialJob. See legacy_install_links table / migration 015. */
