@@ -756,6 +756,11 @@ function Stepper({ value, onChange, label }: { value: number; onChange: (n: numb
  * that doesn't go with it drops the other. The part number appears once the
  * picks leave exactly one.
  */
+/** True when a part's "size" values are really left/right handing. */
+function isHanding(sizes: string[]): boolean {
+  return sizes.length > 0 && sizes.some((s) => /\b(LH|RH|left|right)\b|-hand|handed|handing/i.test(s));
+}
+
 function PartDetail({
   part,
   onClose,
@@ -778,6 +783,14 @@ function PartDetail({
   const notes = partDetailLines(part, "notes");
   const price = partPrice(part, pick.color, pick.size);
   const open = (colors.length > 1 && !pick.color) || (sizes.length > 1 && !pick.size);
+  // The "size" slot often holds handing (LH / RH, Left / Right Interior…):
+  // name it for what it is so the left/right picks aren't missed.
+  const sizeWord = isHanding(variantSizes(part)) ? "Handing" : "Size";
+  // Every colour × size the catalog has a number for, so they can all be seen
+  // at once without picking through each combination.
+  const allNumbers = part.variants.filter((v) => (v.partNumber || "").trim());
+  const [showAllNumbers, setShowAllNumbers] = useState(false);
+  const NUMBERS_SHOWN = 12;
 
   const choose = (dim: "color" | "size", value: string) => {
     const same = (dim === "color" ? pick.color : pick.size) === value;
@@ -858,7 +871,7 @@ function PartDetail({
             {sizes.length > 0 && (sizes.length > 1 || colors.length > 1) && (
               <div>
                 <div className="text-xs font-bold uppercase tracking-wide text-muted mb-1.5">
-                  Size{pick.color && !pick.size ? ` in ${pick.color}` : ""}
+                  {sizeWord}{pick.color && !pick.size ? ` in ${pick.color}` : ""}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {sizes.map((s) => {
@@ -893,13 +906,47 @@ function PartDetail({
                 </>
               ) : open ? (
                 <div className="text-sm text-muted">
-                  Pick {colors.length > 1 && !pick.color && sizes.length > 1 && !pick.size ? "colour and size" : colors.length > 1 && !pick.color ? "a colour" : "a size"} for
+                  Pick {colors.length > 1 && !pick.color && sizes.length > 1 && !pick.size ? `colour and ${sizeWord.toLowerCase()}` : colors.length > 1 && !pick.color ? "a colour" : `a ${sizeWord.toLowerCase()}`} for
                   the part number{onAdd ? " — or add it now and pick on the line later" : ""}.
                 </div>
               ) : (
                 <div className="text-sm text-muted">No part number in the catalog for this part.</div>
               )}
             </div>
+
+            {allNumbers.length > 1 && (
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wide text-muted mb-1.5">
+                  All part numbers ({allNumbers.length})
+                </div>
+                <div className="rounded-xl border border-border divide-y divide-border overflow-hidden">
+                  {(showAllNumbers ? allNumbers : allNumbers.slice(0, NUMBERS_SHOWN)).map((v, i) => {
+                    const on = pick.partNumber === v.partNumber;
+                    const words = [v.color, v.size].map((x) => (x || "").trim()).filter(Boolean).join(" · ");
+                    return (
+                      <button
+                        key={`${v.partNumber}-${i}`}
+                        type="button"
+                        onClick={() => setPick(settleVariant(part, (v.color || "").trim(), (v.size || "").trim()))}
+                        className={`w-full text-left flex items-start gap-3 px-3 py-2 min-h-11 ${on ? "bg-amber-500/15" : "bg-background"}`}
+                      >
+                        <span className="flex-1 min-w-0 text-sm break-words">{words || "—"}</span>
+                        <span className="shrink-0 font-mono text-sm font-semibold">{v.partNumber}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {allNumbers.length > NUMBERS_SHOWN && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllNumbers((x) => !x)}
+                    className="mt-1.5 text-sm font-semibold text-amber-600 py-1"
+                  >
+                    {showAllNumbers ? "Show fewer" : `Show all ${allNumbers.length}`}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
