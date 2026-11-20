@@ -124,9 +124,51 @@ type Block =
       isMine: boolean;
       messages: ChatMessage[];
     }
-  | { kind: "system"; key: string; message: ChatMessage };
+  | { kind: "system"; key: string; message: ChatMessage }
+  | { kind: "new"; key: string; label: string };
 
-function buildBlocks(messages: ChatMessage[]): Block[] {
+/** GroupMe message ids are increasing numbers: is `a` newer than `b`? */
+function isNewer(a: string, b: string): boolean {
+  try {
+    return BigInt(a) > BigInt(b);
+  } catch {
+    return a > b;
+  }
+}
+
+/** Web links in a message. */
+const URL_RE = /(https?:\/\/[^\s]+)/g;
+
+/** Message text with web links made tappable (and allowed to wrap). */
+function MessageText({ text, mine }: { text: string; mine: boolean }) {
+  if (!text) return null;
+  const parts = text.split(URL_RE);
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <a
+            key={i}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`underline break-all ${mine ? "text-white" : "text-primary"}`}
+          >
+            {part}
+          </a>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
+
+function buildBlocks(
+  messages: ChatMessage[],
+  firstUnreadId: string | null,
+  newLabel: string
+): Block[] {
   const blocks: Block[] = [];
   let lastDay = "";
 
@@ -137,6 +179,11 @@ function buildBlocks(messages: ChatMessage[]): Block[] {
       lastDay = day;
     }
 
+    // The "New messages" line, right above the first one you haven't read.
+    if (m.id === firstUnreadId) {
+      blocks.push({ kind: "new", key: `new-${m.id}`, label: newLabel });
+    }
+
     if (m.isSystem) {
       blocks.push({ kind: "system", key: m.id, message: m });
       continue;
@@ -144,6 +191,7 @@ function buildBlocks(messages: ChatMessage[]): Block[] {
 
     const prev = blocks[blocks.length - 1];
     const canJoin =
+      m.id !== firstUnreadId &&
       prev?.kind === "run" &&
       prev.sender === m.name &&
       prev.isMine === m.isMine &&
@@ -193,6 +241,8 @@ export default function InstallerChat({
   userId,
   installerNames = [],
   onBotChanged,
+  imageUrl,
+  lastReadId,
   onBack,
 }: {
   /** The signed-in Duck Force user, for the in-memory message cache. */
@@ -201,6 +251,11 @@ export default function InstallerChat({
   installerNames?: string[];
   /** Called after the bot is added/removed or its installer changes. */
   onBotChanged?: () => void;
+  /** The group's GroupMe picture, for the header. */
+  imageUrl?: string | null;
+  /** The last message you'd read before opening, when the chat was unread:
+   *  messages after it get the "New messages" line and a highlight. */
+  lastReadId?: string | null;
   /** The GroupMe group to show -- one the person ticked under Choose chats. */
   groupId: string;
   /** Shown in the header and the composer placeholder (the group's name). */
@@ -239,6 +294,23 @@ export default function InstallerChat({
   const pinnedToBottom = useRef(true);
 
   const newestId = messages.length ? messages[messages.length - 1].id : null;
+
+  // Where "New messages" starts. Fixed when the chat opens (opening it marks
+  // it read, which mustn't make the line vanish while you're reading).
+  const [readUpTo] = useState(() => lastReadId ?? null);
+  const firstUnreadId = readUpTo
+    ? messages.find((m) => !m.isMine && !m.isSystem && isNewer(m.id, readUpTo))?.id ?? null
+    : null;
+  const unreadIds = new Set(
+    firstUnreadId
+      ? messages
+          .filter((m) => !m.isMine && !m.isSystem && !isNewer(firstUnreadId, m.id))
+          .map((m) => m.id)
+      : []
+  );
+  const newLabel = `${unreadIds.size} new message${unreadIds.size === 1 ? "" : "s"}`;
+  const newLineRef = useRef<HTMLDivElement>(null);
+  const jumpedToNew = useRef(false);
   const oldestId = messages.length ? messages[0].id : null;
 
   const load = useCallback(
@@ -373,6 +445,15 @@ export default function InstallerChat({
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
   useLayoutEffect(() => {
+    // First time there's a "New messages" line: open the chat right there,
+    // so you start reading from the first one you missed.
+    if (!jumpedToNew.current && !loading && newLineRef.current && scrollRef.current) {
+      jumpedToNew.current = true;
+      const el = scrollRef.current;
+      el.scrollTop = Math.max(0, newLineRef.current.offsetTop - 12);
+      pinnedToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      return;
+    }
     if (pinnedToBottom.current) scrollToBottom();
   }, [messages, loading, scrollToBottom]);
 
@@ -509,7 +590,7 @@ export default function InstallerChat({
         >
           <ChevronLeft className="w-5 h-5" />
         </button>
-        <Avatar name={installerName} url={null} />
+        <Avatar name={installerName} url={imageUrl ? `${imageUrl}.avatar` : null} />
         <div className="min-w-0 flex-1">
           <h1 className="text-sm font-semibold truncate leading-tight">
             {installerName}
@@ -541,7 +622,7 @@ export default function InstallerChat({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-2"
+        className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3 space-y-2"
       >
         {loading ? (
           <div className="h-full flex items-center justify-center text-muted text-sm gap-2">
@@ -571,7 +652,23 @@ export default function InstallerChat({
               </div>
             )}
 
-            {buildBlocks(messages).map((block) => {
+            {buildBlocks(messages, firstUnreadId, newLabel).map((block) => {
+              if (block.kind === "new") {
+                return (
+                  <div
+                    key={block.key}
+                    ref={newLineRef}
+                    className="flex items-center gap-2 py-2"
+                    role="separator"
+                  >
+                    <div className="flex-1 h-px bg-red-500/50" />
+                    <span className="text-[11px] font-semibold text-red-600 dark:text-red-400 bg-red-500/10 border border-red-500/40 rounded-full px-2.5 py-0.5">
+                      {block.label}
+                    </span>
+                    <div className="flex-1 h-px bg-red-500/50" />
+                  </div>
+                );
+              }
               if (block.kind === "day") {
                 return (
                   <div key={block.key} className="flex justify-center py-2">
@@ -608,7 +705,7 @@ export default function InstallerChat({
                   )}
 
                   <div
-                    className={`flex flex-col gap-0.5 max-w-[78%] ${
+                    className={`flex flex-col gap-0.5 min-w-0 max-w-[78%] ${
                       block.isMine ? "items-end" : "items-start"
                     }`}
                   >
@@ -634,13 +731,15 @@ export default function InstallerChat({
                       return (
                         <div
                           key={m.id}
-                          className={`rounded-2xl ${corners} px-3 py-1.5 text-sm whitespace-pre-wrap break-words ${
+                          className={`max-w-full rounded-2xl ${corners} px-3 py-1.5 text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${
                             block.isMine
                               ? "bg-primary text-white"
-                              : "bg-surface border border-border"
+                              : unreadIds.has(m.id)
+                                ? "bg-red-500/10 border border-red-500/40"
+                                : "bg-surface border border-border"
                           }`}
                         >
-                          {m.text}
+                          <MessageText text={m.text} mine={block.isMine} />
                           {m.images.map((url) => (
                             <a
                               key={url}

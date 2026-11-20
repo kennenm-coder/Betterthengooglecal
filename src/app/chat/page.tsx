@@ -67,6 +67,44 @@ interface ChatRow {
   unreadCount?: number;
   hasBot?: boolean;
   installerName?: string | null;
+  /** The group's GroupMe picture. */
+  imageUrl?: string | null;
+  /** The last message you'd read, for the "New messages" line in the chat. */
+  lastReadId?: string | null;
+}
+
+/** Two letters for a chat with no picture. */
+function chatInitials(name: string): string {
+  const parts = name.replace(/[^\p{L}\p{N}\s]/gu, "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+/**
+ * The group's own GroupMe picture. GroupMe serves a small 60x60 copy when
+ * ".avatar" is added to the picture's address, which keeps the list light.
+ */
+function ChatAvatar({ name, url }: { name: string; url?: string | null }) {
+  const [broken, setBroken] = useState(false);
+  if (url && !broken) {
+    return (
+      /* eslint-disable-next-line @next/next/no-img-element */
+      <img
+        src={`${url}.avatar`}
+        alt=""
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        onError={() => setBroken(true)}
+        className="w-10 h-10 rounded-full object-cover shrink-0 bg-surface"
+      />
+    );
+  }
+  return (
+    <span className="w-10 h-10 rounded-full bg-surface border border-border shrink-0 flex items-center justify-center text-xs font-semibold text-muted">
+      {chatInitials(name)}
+    </span>
+  );
 }
 
 /**
@@ -378,6 +416,8 @@ function ChatPageInner() {
           <InstallerChat
             groupId={selected.id}
             title={selected.name}
+            imageUrl={selected.imageUrl}
+            lastReadId={selected.unread ? selected.lastReadId : null}
             userId={user?.id}
             installerNames={installerNames}
             onBotChanged={loadChats}
@@ -705,6 +745,7 @@ function ChatPageInner() {
                     onClick={() => setSelected(c)}
                     className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
                   >
+                    <ChatAvatar name={c.name} url={c.imageUrl} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 min-w-0">
                         {/* The chat's name in a pill. Unread: colored by how
@@ -717,11 +758,18 @@ function ChatPageInner() {
                         >
                           {c.name}
                         </span>
-                        {(c.unreadCount ?? 0) > 0 && (
-                          <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center shrink-0">
-                            {(c.unreadCount ?? 0) > 99 ? "99+" : c.unreadCount}
-                          </span>
-                        )}
+                        {/* How many messages you've missed in this chat. */}
+                        {c.unread &&
+                          ((c.unreadCount ?? 0) > 0 ? (
+                            <span
+                              title={`${c.unreadCount} unread message${c.unreadCount === 1 ? "" : "s"}`}
+                              className="min-w-[20px] h-5 px-1.5 rounded-full bg-red-600 text-white text-[11px] font-bold leading-5 text-center shrink-0"
+                            >
+                              {(c.unreadCount ?? 0) >= 100 ? "99+" : c.unreadCount}
+                            </span>
+                          ) : (
+                            <span aria-label="Unread" className="w-2.5 h-2.5 rounded-full bg-red-600 shrink-0" />
+                          ))}
                         {c.lastAt > 0 && (
                           <span className="ml-auto text-[11px] text-muted shrink-0">
                             {ago(c.lastAt)}

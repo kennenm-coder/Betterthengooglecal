@@ -480,7 +480,12 @@ checks(migration, feature, verdict, checked) as (values
   case when exists(select 1 from tbl where k = 'groupme_bots')
         and exists(select 1 from col where k = 'groupme_chat_picks.unread_count')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'groupme_bots table AND groupme_chat_picks.unread_count')
+  'groupme_bots table AND groupme_chat_picks.unread_count'),
+
+ ('073', 'GroupMe chat: unread count on every chat',
+  case when exists(select 1 from col where k = 'groupme_chat_picks.unread_counted_id')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'groupme_chat_picks.unread_counted_id')
 )
 select migration, feature, verdict, checked
 from checks

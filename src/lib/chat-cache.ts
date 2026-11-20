@@ -37,6 +37,10 @@ export interface CachedChat {
   hasBot?: boolean;
   /** Calendar installer this chat is linked to via the bot. */
   installerName?: string | null;
+  /** The group's GroupMe picture. */
+  imageUrl?: string | null;
+  /** The last message this person had read, for the "New messages" line. */
+  lastReadId?: string | null;
 }
 
 /** One message as the conversation view draws it (see InstallerChat). */

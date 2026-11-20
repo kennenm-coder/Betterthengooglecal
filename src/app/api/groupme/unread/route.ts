@@ -5,35 +5,36 @@ import {
   listBots,
   listPicks,
   markRead,
-  setUnreadSince,
+  setUnreadState,
 } from "@/lib/groupme";
 import { chatContext } from "@/lib/groupme-route";
 
 export const runtime = "nodejs";
 
 /**
- * The person's chosen chats, newest activity first, and which have something
- * they haven't read.
+ * The person's chosen chats, newest activity first, and what they've missed.
  *
- *   chats   [{ id, name, unread, lastAt, unreadSince, preview, unreadCount,
- *             hasBot, installerName }]
+ *   chats   [{ id, name, imageUrl, unread, unreadCount, lastReadId, lastAt,
+ *              unreadSince, preview, hasBot, installerName }]
  *             - only groups they ticked AND are still in
- *             - lastAt / unreadSince are unix seconds (0 = none). unreadSince
- *               is when the FIRST unread message arrived; the list colors the
- *               chat by how long that's been (green -> red, hourly).
- *             - preview is the newest message ({ name, text }) for the list's
- *               second line. Passed through from GroupMe, never stored.
+ *             - unreadCount: messages from OTHER people since they last read
+ *               it (up to 100). Counted by the bot when the chat has one;
+ *               otherwise counted here whenever the chat's newest message
+ *               changes, and saved (migration 073) so it isn't redone.
+ *             - lastReadId: the last message they'd seen, so an opened chat
+ *               can draw a "New messages" line above the first unread one
+ *             - lastAt / unreadSince: unix seconds (0 = none). unreadSince is
+ *               when the FIRST unread message arrived (drives the colors)
+ *             - preview: newest message ({ name, text }), passed through from
+ *               GroupMe, never stored. imageUrl: the group's GroupMe picture.
  *   total   how many chats have unread, for the nav badge and app icon
  *
- * Unread means "the newest message id in the group is not the id this user
- * last saw", and at least one of the unseen messages is from someone else --
- * your own message (sent from the GroupMe app) doesn't make a chat unread.
- *
- * A newly ticked chat has no bookmark. That counts as READ, not as a wall of
- * unread badges -- the first look sets the baseline.
+ * Your own messages (sent from the GroupMe app) never count as unread.
+ * A newly ticked chat has no bookmark: that counts as READ -- the first look
+ * sets the baseline rather than a wall of unread.
  */
 
-/** Most chats to look inside per request when working out unread-since. */
+/** Most chats to (re)count per request; the rest catch up next time. */
 const MAX_LOOKUPS = 8;
 
 export async function GET() {
@@ -49,7 +50,7 @@ export async function GET() {
     getConnection(ctx.user.id),
   ]);
   const me = connection?.groupmeUserId ?? null;
-  // Chats with the Duck Force bot: exact unread counts + which installer.
+  // Chats with the Duck Force bot: which installer each is for.
   const bots = new Map(
     (await listBots(picks.map((p) => p.groupId))).map((b) => [b.groupId, b])
   );
@@ -57,14 +58,14 @@ export async function GET() {
   const chats: {
     id: string;
     name: string;
+    imageUrl: string | null;
     unread: boolean;
+    unreadCount: number;
+    lastReadId: string | null;
     lastAt: number;
     unreadSince: number;
     preview: { name: string; text: string } | null;
-    /** Exact unread count when the chat has the bot; 0 = unknown/none. */
-    unreadCount: number;
     hasBot: boolean;
-    /** The calendar installer this chat is linked to (via the bot), if any. */
     installerName: string | null;
   }[] = [];
   const writes: Promise<void>[] = [];
@@ -77,6 +78,7 @@ export async function GET() {
     if (!group) continue;
 
     let unread = false;
+    let unreadCount = pick.unreadCount;
     let unreadSince = pick.unreadSince ? Date.parse(pick.unreadSince) / 1000 : 0;
 
     if (group.lastId) {
@@ -84,9 +86,10 @@ export async function GET() {
         writes.push(markRead(ctx.user.id, pick.groupId, group.lastId));
       } else if (pick.lastReadMessageId !== group.lastId) {
         unread = true;
-        // First time we see it unread: find when the first unseen message
-        // from someone else arrived. One look, then it's remembered.
-        if (!pick.unreadSince && lookups < MAX_LOOKUPS) {
+        // Something arrived since the last count: count again -- messages from
+        // others since they last read it. One GroupMe call, then remembered.
+        const stale = pick.unreadCountedId !== group.lastId || !pick.unreadSince;
+        if (stale && lookups < MAX_LOOKUPS) {
           lookups++;
           try {
             const fresh = (
@@ -100,18 +103,19 @@ export async function GET() {
               unread = false;
               writes.push(markRead(ctx.user.id, pick.groupId, group.lastId));
             } else {
+              unreadCount = fresh.length;
               // GroupMe answers newest first, so the oldest is last.
-              unreadSince = fresh[fresh.length - 1].created_at;
+              if (!unreadSince) unreadSince = fresh[fresh.length - 1].created_at;
               writes.push(
-                setUnreadSince(
-                  ctx.user.id,
-                  pick.groupId,
-                  new Date(unreadSince * 1000).toISOString()
-                )
+                setUnreadState(ctx.user.id, pick.groupId, {
+                  count: unreadCount,
+                  countedId: group.lastId,
+                  since: pick.unreadSince ? null : new Date(unreadSince * 1000).toISOString(),
+                })
               );
             }
           } catch {
-            // Leave it uncolored this round; the next check tries again.
+            // Keep the last known count this round; the next check tries again.
           }
         }
       }
@@ -123,11 +127,13 @@ export async function GET() {
       id: pick.groupId,
       // GroupMe's current name, so a renamed group shows its new name.
       name: group.name || pick.groupName || "GroupMe chat",
+      imageUrl: group.imageUrl,
       unread,
+      unreadCount: unread ? unreadCount : 0,
+      lastReadId: pick.lastReadMessageId,
       lastAt: group.lastAt,
       unreadSince: unread ? unreadSince : 0,
       preview: group.preview,
-      unreadCount: unread ? pick.unreadCount : 0,
       hasBot: !!bot,
       installerName: bot?.installerName ?? null,
     });
