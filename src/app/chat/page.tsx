@@ -20,7 +20,12 @@ import { canUseInstallerChat } from "@/lib/roles";
 import BottomNav from "@/components/BottomNav";
 import InstallerChat from "@/components/InstallerChat";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
-import { fetchChatConnection, readChatCache, writeChatCache } from "@/lib/chat-cache";
+import {
+  fetchChatConnection,
+  prefetchMessages,
+  readChatCache,
+  writeChatCache,
+} from "@/lib/chat-cache";
 
 /**
  * Chat tab -- your own GroupMe conversations, inside Duck Force.
@@ -50,6 +55,29 @@ interface ChatRow {
   unread: boolean;
   /** Unix seconds of the newest message; 0 when unknown. */
   lastAt: number;
+  /** Unix seconds of the first unread message; 0 when read. */
+  unreadSince?: number;
+  /** The newest message, for the second line. */
+  preview?: { name: string; text: string } | null;
+}
+
+/**
+ * How long a chat has been waiting on you, as a color for its name pill.
+ * Counted from the FIRST unread message, stepping once an hour: green, then
+ * yellow-green, yellow, orange, and red from 4 hours. Display only.
+ */
+const AGE_STYLES = [
+  { pill: "bg-green-500/15 text-green-700 dark:text-green-300 border-green-500/40", label: "under an hour" },
+  { pill: "bg-lime-500/15 text-lime-700 dark:text-lime-300 border-lime-500/40", label: "over an hour" },
+  { pill: "bg-yellow-400/20 text-yellow-700 dark:text-yellow-300 border-yellow-500/40", label: "over 2 hours" },
+  { pill: "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/40", label: "over 3 hours" },
+  { pill: "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/40", label: "4+ hours" },
+];
+const READ_PILL = "bg-surface text-foreground border-border";
+
+function ageStyle(unreadSince: number | undefined, nowMs: number) {
+  const hours = unreadSince ? Math.floor((nowMs / 1000 - unreadSince) / 3600) : 0;
+  return AGE_STYLES[Math.min(Math.max(hours, 0), AGE_STYLES.length - 1)];
 }
 
 interface GroupOption {
@@ -108,6 +136,12 @@ function ChatPageInner() {
   );
   const [selected, setSelected] = useState<ChatRow | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Re-color the list every minute even when nothing new arrives.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Choose chats screen.
   const [choosing, setChoosing] = useState(false);
@@ -173,6 +207,15 @@ function ChatPageInner() {
     }, 30_000);
     return () => clearInterval(timer);
   }, [allowed, selected, choosing, connection?.connected, loadChats]);
+
+  // Load the top few conversations in the background (unread ones first), so
+  // tapping one opens it straight away. Each is fetched once per app session.
+  useEffect(() => {
+    if (!chats?.length || selected || choosing || !user?.id) return;
+    const top = [...chats.filter((c) => c.unread), ...chats.filter((c) => !c.unread)]
+      .slice(0, 5);
+    for (const c of top) prefetchMessages(user.id, c.id);
+  }, [chats, selected, choosing, user?.id]);
 
   async function openChoosing() {
     setChoosing(true);
@@ -296,6 +339,7 @@ function ChatPageInner() {
           <InstallerChat
             groupId={selected.id}
             title={selected.name}
+            userId={user?.id}
             onBack={() => setSelected(null)}
           />
         </div>
@@ -571,38 +615,48 @@ function ChatPageInner() {
           </div>
         ) : (
           <ul className="divide-y divide-border">
-            {chats.map((c) => (
-              <li key={c.id}>
-                <button
-                  onClick={() => setSelected(c)}
-                  className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
-                >
-                  <div className="min-w-0 flex items-center gap-2.5">
-                    {c.unread && (
-                      <span
-                        aria-label="New messages"
-                        className="w-2 h-2 rounded-full bg-red-600 shrink-0"
-                      />
-                    )}
-                    <div className="min-w-0">
-                      <div
-                        className={`text-sm truncate ${
-                          c.unread ? "font-semibold" : "font-medium"
-                        }`}
-                      >
-                        {c.name}
+            {chats.map((c) => {
+              const age = c.unread ? ageStyle(c.unreadSince, now) : null;
+              return (
+                <li key={c.id}>
+                  <button
+                    onClick={() => setSelected(c)}
+                    className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-surface transition-colors"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {/* The chat's name in a pill. Unread: colored by how
+                            long it's been waiting. Read: plain. */}
+                        <span
+                          title={age ? `Unread ${age.label}` : undefined}
+                          className={`inline-block max-w-full truncate rounded-full border px-2.5 py-0.5 text-sm ${
+                            age ? `${age.pill} font-semibold` : `${READ_PILL} font-medium`
+                          }`}
+                        >
+                          {c.name}
+                        </span>
+                        {c.lastAt > 0 && (
+                          <span className="ml-auto text-[11px] text-muted shrink-0">
+                            {ago(c.lastAt)}
+                          </span>
+                        )}
                       </div>
-                      {c.lastAt > 0 && (
-                        <div className="text-xs text-muted truncate">
-                          {ago(c.lastAt)}
+                      {c.preview && (
+                        <div
+                          className={`mt-1 pl-1 text-xs truncate ${
+                            c.unread ? "text-foreground" : "text-muted"
+                          }`}
+                        >
+                          <span className="font-medium">{c.preview.name}:</span>{" "}
+                          {c.preview.text}
                         </div>
                       )}
                     </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-muted shrink-0" />
-                </button>
-              </li>
-            ))}
+                    <ChevronRight className="w-4 h-4 text-muted shrink-0" />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

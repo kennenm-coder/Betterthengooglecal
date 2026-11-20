@@ -457,7 +457,12 @@ checks(migration, feature, verdict, checked) as (values
   case when exists(select 1 from col where k = 'groupme_tokens.notify_messages')
         and exists(select 1 from col where k = 'groupme_chat_picks.last_notified_message_id')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'groupme_tokens.notify_messages AND groupme_chat_picks.last_notified_message_id')
+  'groupme_tokens.notify_messages AND groupme_chat_picks.last_notified_message_id'),
+
+ ('069', 'GroupMe chat: when each chat went unread',
+  case when exists(select 1 from col where k = 'groupme_chat_picks.unread_since')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'groupme_chat_picks.unread_since')
 )
 select migration, feature, verdict, checked
 from checks

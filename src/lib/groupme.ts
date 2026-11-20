@@ -26,7 +26,11 @@ export interface GroupMeGroup {
     count: number;
     last_message_id?: string;
     last_message_created_at?: number;
-    preview?: { nickname?: string; text?: string | null };
+    preview?: {
+      nickname?: string;
+      text?: string | null;
+      attachments?: { type: string }[];
+    };
   };
 }
 
@@ -351,6 +355,10 @@ export interface MyGroup {
   lastId: string;
   /** Newest message time, unix seconds; 0 when unknown. */
   lastAt: number;
+  /** Who sent the newest message and what it said, for the Chat list's
+   *  preview line. Passed straight through to the person's own screen;
+   *  never stored. null when GroupMe gives none. */
+  preview: { name: string; text: string } | null;
 }
 
 /**
@@ -382,10 +390,17 @@ export async function getMyGroupIndex(
   const groups = await listGroups(token);
   const byGroup = new Map<string, MyGroup>();
   for (const g of groups) {
+    const p = g.messages?.preview;
+    const text = p?.text?.trim()
+      ? p.text.trim()
+      : p?.attachments?.some((a) => a.type === "image")
+        ? "sent a photo"
+        : "";
     byGroup.set(g.id, {
       name: g.name,
       lastId: g.messages?.last_message_id ?? "",
       lastAt: g.messages?.last_message_created_at ?? 0,
+      preview: p?.nickname && text ? { name: p.nickname, text } : null,
     });
   }
 
@@ -399,6 +414,8 @@ export interface ChatPick {
   groupId: string;
   groupName: string | null;
   lastReadMessageId: string | null;
+  /** When the first unread message (from someone else) arrived. Migration 069. */
+  unreadSince: string | null;
 }
 
 /** The groups THIS user ticked. Nobody else's choices are involved. */
@@ -406,17 +423,19 @@ export async function listPicks(userId: string): Promise<ChatPick[]> {
   const admin = getAdminClient();
   const { data } = await admin
     .from("groupme_chat_picks")
-    .select("group_id, group_name, last_read_message_id")
+    .select("group_id, group_name, last_read_message_id, unread_since")
     .eq("user_id", userId);
 
   return ((data ?? []) as {
     group_id: string;
     group_name: string | null;
     last_read_message_id: string | null;
+    unread_since?: string | null;
   }[]).map((r) => ({
     groupId: r.group_id,
     groupName: r.group_name,
     lastReadMessageId: r.last_read_message_id,
+    unreadSince: r.unread_since ?? null,
   }));
 }
 
@@ -458,7 +477,22 @@ export async function markRead(
   const admin = getAdminClient();
   await admin
     .from("groupme_chat_picks")
-    .update({ last_read_message_id: messageId })
+    // Read = no longer waiting, so the color clock stops (migration 069).
+    .update({ last_read_message_id: messageId, unread_since: null })
+    .eq("user_id", userId)
+    .eq("group_id", groupId);
+}
+
+/** Note when this chat's first unread message arrived (a time, never text). */
+export async function setUnreadSince(
+  userId: string,
+  groupId: string,
+  at: string
+): Promise<void> {
+  const admin = getAdminClient();
+  await admin
+    .from("groupme_chat_picks")
+    .update({ unread_since: at })
     .eq("user_id", userId)
     .eq("group_id", groupId);
 }

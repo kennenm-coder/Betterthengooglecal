@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, Loader2, RefreshCw, Send } from "lucide-react";
 import { format, isSameYear, isToday, isYesterday } from "date-fns";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
+import { readMessages, writeMessages, type CachedMessage } from "@/lib/chat-cache";
 
 /**
  * One GroupMe conversation (a group the person chose), read and written live.
@@ -86,6 +87,19 @@ function initials(name: string): string {
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/**
+ * GroupMe photo links carry the photo's size ("i.groupme.com/1024x768.jpeg.…").
+ * Reading it lets the bubble reserve the right space BEFORE the photo arrives,
+ * so messages don't jump around as photos load. Unknown size: a square.
+ */
+function photoAspect(url: string): string {
+  const m = url.match(/\/(\d{2,5})x(\d{2,5})\./);
+  if (!m) return "1 / 1";
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  return w > 0 && h > 0 ? `${w} / ${h}` : "1 / 1";
 }
 
 /**
@@ -174,16 +188,23 @@ function Avatar({ name, url }: { name: string; url: string | null }) {
 export default function InstallerChat({
   groupId,
   title: installerName,
+  userId,
   onBack,
 }: {
+  /** The signed-in Duck Force user, for the in-memory message cache. */
+  userId?: string | null;
   /** The GroupMe group to show -- one the person ticked under Choose chats. */
   groupId: string;
   /** Shown in the header and the composer placeholder (the group's name). */
   title: string;
   onBack: () => void;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(true);
+  // A chat opened before (or pre-loaded from the list) draws at once from
+  // memory; only what's new is fetched. See src/lib/chat-cache.ts.
+  const [messages, setMessages] = useState<ChatMessage[]>(
+    () => (readMessages(userId, groupId) as unknown as ChatMessage[] | null) ?? []
+  );
+  const [loading, setLoading] = useState(() => !readMessages(userId, groupId));
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -224,27 +245,53 @@ export default function InstallerChat({
     [groupId]
   );
 
-  // First load.
+  // First load. From memory when we have it -- then just catch up on what's
+  // new -- otherwise the latest 50 from GroupMe.
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     setError(null);
-    setMessages([]);
-    setHasMore(true);
+    const cached = readMessages(userId, groupId) as unknown as ChatMessage[] | null;
 
-    load()
-      .then((msgs) => {
-        if (cancelled) return;
-        setMessages(msgs);
-        setHasMore(msgs.length >= 50);
-      })
-      .catch((e: Error) => !cancelled && setError(e.message))
-      .finally(() => !cancelled && setLoading(false));
+    if (cached && cached.length > 0) {
+      setMessages(cached);
+      setLoading(false);
+      load({ sinceId: cached[cached.length - 1].id })
+        .then((fresh) => {
+          if (cancelled || fresh.length === 0) return;
+          setMessages((prev) => {
+            const seen = new Set(prev.map((m) => m.id));
+            const added = fresh.filter((m) => !seen.has(m.id));
+            return added.length ? [...prev, ...added] : prev;
+          });
+        })
+        .catch(() => {
+          // The remembered history is still valid; polling will catch up.
+        });
+    } else {
+      setLoading(true);
+      setMessages([]);
+      setHasMore(true);
+      load()
+        .then((msgs) => {
+          if (cancelled) return;
+          setMessages(msgs);
+          setHasMore(msgs.length >= 50);
+        })
+        .catch((e: Error) => !cancelled && setError(e.message))
+        .finally(() => !cancelled && setLoading(false));
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [load]);
+  }, [load, userId, groupId]);
+
+  // Remember what's on screen, so coming back to this chat is instant.
+  useEffect(() => {
+    if (messages.length > 0) {
+      writeMessages(userId, groupId, messages as unknown as CachedMessage[]);
+    }
+  }, [messages, userId, groupId]);
 
   // Who's in this group, for the @ picker. A failure here is not worth
   // surfacing -- it only means mentions aren't offered, and plain messages
@@ -307,11 +354,18 @@ export default function InstallerChat({
   }, [groupId, newestId]);
 
   // Keep the newest message in view when the reader is already at the bottom.
-  useEffect(() => {
-    if (pinnedToBottom.current) {
-      bottomRef.current?.scrollIntoView({ block: "end" });
-    }
-  }, [messages]);
+  //
+  // Scrolls ONLY the message box. (scrollIntoView, used before, also scrolled
+  // the page around it, which made the whole screen jump on phones.) A layout
+  // effect, so it lands before the screen is drawn -- no flash of the top of
+  // the conversation on open.
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+  useLayoutEffect(() => {
+    if (pinnedToBottom.current) scrollToBottom();
+  }, [messages, loading, scrollToBottom]);
 
   function handleScroll() {
     const el = scrollRef.current;
@@ -458,7 +512,7 @@ export default function InstallerChat({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2"
+        className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-2"
       >
         {loading ? (
           <div className="h-full flex items-center justify-center text-muted text-sm gap-2">
@@ -566,12 +620,19 @@ export default function InstallerChat({
                               rel="noopener noreferrer"
                               className="block mt-1.5"
                             >
+                              {/* Space reserved from the size in the link, so
+                                  the chat doesn't jump as photos arrive. */}
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={url}
                                 alt="Shared photo"
                                 loading="lazy"
-                                className="rounded-xl max-h-72 w-auto"
+                                decoding="async"
+                                style={{ aspectRatio: photoAspect(url) }}
+                                onLoad={() => {
+                                  if (pinnedToBottom.current) scrollToBottom();
+                                }}
+                                className="rounded-xl w-60 max-w-full h-auto max-h-72 object-cover bg-background"
                               />
                             </a>
                           ))}
