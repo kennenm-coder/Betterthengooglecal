@@ -5,50 +5,51 @@ import { requireRole } from "@/lib/auth";
 export const runtime = "nodejs";
 
 /**
- * Step 1 of connecting a GroupMe account: send the user to GroupMe to approve.
+ * Step 1 of connecting a GroupMe account: send the person to GroupMe's own
+ * sign-in page. They sign in there (Duck Force never sees their password),
+ * GroupMe may text them a PIN, they approve, and GroupMe sends them back to
+ * our callback (/api/groupme/callback) -- the one address registered for our
+ * app at dev.groupme.com -- with their access token. Duck Force saves it and
+ * they land back on the Chat tab, connected. Nothing for them to copy.
  *
- * GroupMe uses OAuth 2.0 "implicit" flow, which in practice means: we send the
- * person to GroupMe, they approve, and GroupMe redirects them back to the one
- * callback URL registered against our client id -- with the access token sitting
- * in the query string. We never exchange a code, and there is no client secret.
- *
- * The callback URL is NOT passed here. GroupMe only ever redirects to the URL
- * registered in the app's settings at dev.groupme.com, which is why a separate
- * registration is needed for local development.
+ * WHICH GroupMe door (?via=):
+ *   (default) /oauth/authorize -- GroupMe's official entry point. It opens a
+ *     sign-in session (a cookie) that the login form and the PIN step after it
+ *     rely on, then forwards to the login form.
+ *     History: in Oct 2026 that forward went over plain http, the browser
+ *     dropped GroupMe's secure cookie, and sign-in looped forever, so we
+ *     jumped straight to the login form instead. Re-checked 2026-11-20:
+ *     GroupMe's http hop now answers 301 -> https, so the cookie survives and
+ *     the official door works. Skipping it meant the login form sometimes ran
+ *     with no session -- "worked once, then invalid credentials".
+ *   ?via=dialog -- straight to the login form (the old route), kept as the
+ *     "try GroupMe's other sign-in page" backup link on the Chat tab.
  *
  * Env:
  *   GROUPME_CLIENT_ID  from the app registered at dev.groupme.com
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const origin = new URL(request.url).origin;
+
   // Admins and the GroupMe Chat role -- same gate as canUseInstallerChat().
+  // Not signed in to Duck Force (or session expired): send them to sign in and
+  // come back to Chat, instead of showing raw error text.
   const { error: authError } = await requireRole(...CHAT_ROLES);
-  if (authError) return authError;
+  if (authError) {
+    if (authError.status === 401) {
+      return NextResponse.redirect(`${origin}/login?redirect=${encodeURIComponent("/chat")}`);
+    }
+    return authError;
+  }
 
   const clientId = process.env.GROUPME_CLIENT_ID;
   if (!clientId) {
-    return NextResponse.json(
-      {
-        error:
-          "GroupMe isn't set up on the server yet (GROUPME_CLIENT_ID is missing).",
-      },
-      { status: 503 }
-    );
+    return NextResponse.redirect(`${origin}/chat?connect=noclient`);
   }
 
-  // Deliberately NOT /oauth/authorize, which is the documented entry point.
-  //
-  // GroupMe's /oauth/authorize answers 302 to the login dialog over PLAIN HTTP
-  // while setting its own session cookie with the `secure` flag. A browser will
-  // not send a secure cookie over http, so the login page cannot see the
-  // session it just created: you sign in, pass the SMS PIN check, and get
-  // bounced straight back to the login form. Forever. (Verified against the
-  // live endpoint on 2026-10-01 -- the Location header really is http://.)
-  //
-  // Going directly to the https login dialog keeps the whole exchange on https
-  // so the cookie survives and the flow completes. Same endpoint GroupMe sends
-  // you to anyway, just not downgraded on the way.
-  const url = `https://oauth.groupme.com/oauth/login_dialog?client_id=${encodeURIComponent(
-    clientId
-  )}`;
-  return NextResponse.redirect(url);
+  const via = new URL(request.url).searchParams.get("via");
+  const path = via === "dialog" ? "login_dialog" : "authorize";
+  return NextResponse.redirect(
+    `https://oauth.groupme.com/oauth/${path}?client_id=${encodeURIComponent(clientId)}`
+  );
 }

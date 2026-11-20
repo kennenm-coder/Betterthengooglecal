@@ -21,12 +21,15 @@ export const runtime = "nodejs";
  * If GroupMe ever ships an authorization-code flow, switch to it.
  */
 export async function GET(request: Request) {
-  const { user, error: authError } = await requireRole(...CHAT_ROLES);
-  if (authError) return authError;
-
   const origin = new URL(request.url).origin;
   const back = (status: string) =>
     NextResponse.redirect(`${origin}/chat?connect=${status}`);
+
+  // GroupMe sent them back, but this browser isn't signed in to Duck Force
+  // (e.g. the sign-in opened in a different browser): say so in plain words
+  // rather than showing raw error text. The token in this URL is not kept.
+  const { user, error: authError } = await requireRole(...CHAT_ROLES);
+  if (authError) return back(authError.status === 401 ? "signin" : "forbidden");
 
   if (!isTokenCryptoConfigured()) {
     return back("nokey");

@@ -136,10 +136,14 @@ interface GroupOption {
 
 const CONNECT_MESSAGES: Record<string, string> = {
   ok: "GroupMe connected. Now choose which of your chats to show here.",
-  denied: "GroupMe connection was cancelled.",
-  invalid: "GroupMe rejected that connection. Try again.",
+  denied: "GroupMe sign-in was cancelled. Tap Sign in with GroupMe to try again.",
+  invalid: "GroupMe didn't accept that sign-in. Tap Sign in with GroupMe to try again.",
   nokey: "The server is missing its encryption key, so the connection wasn't saved.",
-  error: "Something went wrong connecting to GroupMe.",
+  noclient: "GroupMe isn't set up on the server yet.",
+  signin:
+    "GroupMe approved you, but this browser wasn't signed in to Duck Force. Sign in to Duck Force here, then tap Sign in with GroupMe again.",
+  forbidden: "Your Duck Force account doesn't have the Chat tab.",
+  error: "Something went wrong connecting to GroupMe. Tap Sign in with GroupMe to try again.",
 };
 
 function ago(lastAt: number): string {
@@ -663,11 +667,28 @@ function ChatPageInner() {
                 <MessageCircle className="w-4 h-4" />
                 Sign in with GroupMe
               </a>
-              <p className="text-[11px] text-muted mt-2 text-center">
-                You&apos;ll sign in on GroupMe&apos;s own page, then come right
-                back. Already signed in to a different GroupMe account in this
-                browser? Use a private window.
+              {/* Plain steps for people who don't live in GroupMe settings. */}
+              <ol className="text-xs text-muted mt-3 space-y-1 list-decimal pl-5">
+                <li>Tap the button. GroupMe&apos;s own sign-in page opens.</li>
+                <li>
+                  Enter the <strong>phone number or email</strong> and{" "}
+                  <strong>GroupMe password</strong> you use in the GroupMe app.
+                </li>
+                <li>If GroupMe texts you a code, type it in.</li>
+                <li>Tap <strong>Allow</strong>. You&apos;ll come straight back here, connected.</li>
+              </ol>
+              <p className="text-[11px] text-muted mt-3">
+                Wrong password, or you normally sign in to GroupMe with Microsoft? Use{" "}
+                <strong>Forgot password</strong> in the GroupMe app to set a GroupMe
+                password, then try again. Already signed in to someone else&apos;s
+                GroupMe on this device? Use a private window.
               </p>
+              <a
+                href="/api/groupme/connect?via=dialog"
+                className="block text-center text-[11px] text-muted underline mt-3 hover:text-foreground"
+              >
+                Sign-in page not working? Try GroupMe&apos;s other sign-in page
+              </a>
 
               {connectError && (
                 <p className="text-xs text-red-600 mt-3 text-center">
