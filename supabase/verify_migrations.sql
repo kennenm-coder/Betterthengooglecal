@@ -485,7 +485,15 @@ checks(migration, feature, verdict, checked) as (values
  ('073', 'GroupMe chat: unread count on every chat',
   case when exists(select 1 from col where k = 'groupme_chat_picks.unread_counted_id')
        then 'APPLIED' else 'NOT APPLIED' end,
-  'groupme_chat_picks.unread_counted_id')
+  'groupme_chat_picks.unread_counted_id'),
+
+ ('074', 'GroupMe office account + chats shared by role',
+  case when exists(select 1 from tbl where k = 'groupme_office')
+        and exists(select 1 from tbl where k = 'groupme_shared_chats')
+        and exists(select 1 from tbl where k = 'groupme_sent')
+        and exists(select 1 from col where k = 'groupme_chat_picks.source')
+       then 'APPLIED' else 'NOT APPLIED' end,
+  'groupme_office, groupme_shared_chats, groupme_sent tables AND groupme_chat_picks.source')
 )
 select migration, feature, verdict, checked
 from checks

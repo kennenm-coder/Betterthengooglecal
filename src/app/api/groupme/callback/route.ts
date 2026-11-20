@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { CHAT_ROLES } from "@/lib/roles";
 import { requireRole } from "@/lib/auth";
 import { getMe, storeToken, GroupMeError } from "@/lib/groupme";
+import { storeOffice } from "@/lib/groupme-office";
+import { isAdmin } from "@/lib/roles";
 import { isTokenCryptoConfigured } from "@/lib/groupme-crypto";
 
 export const runtime = "nodejs";
@@ -22,14 +24,21 @@ export const runtime = "nodejs";
  */
 export async function GET(request: Request) {
   const origin = new URL(request.url).origin;
-  const back = (status: string) =>
-    NextResponse.redirect(`${origin}/chat?connect=${status}`);
+  const forOffice =
+    request.headers.get("cookie")?.split(/;\s*/).some((c) => c === "gm_connect_as=office") ?? false;
+  const back = (status: string) => {
+    const res = NextResponse.redirect(`${origin}/chat?connect=${status}`);
+    res.cookies.set("gm_connect_as", "", { path: "/api/groupme", maxAge: 0 });
+    return res;
+  };
 
   // GroupMe sent them back, but this browser isn't signed in to Duck Force
   // (e.g. the sign-in opened in a different browser): say so in plain words
   // rather than showing raw error text. The token in this URL is not kept.
   const { user, error: authError } = await requireRole(...CHAT_ROLES);
   if (authError) return back(authError.status === 401 ? "signin" : "forbidden");
+  // Own GroupMe and the office account: admins only (migration 074).
+  if (!isAdmin(user!.roles)) return back("adminonly");
 
   if (!isTokenCryptoConfigured()) {
     return back("nokey");
@@ -47,6 +56,10 @@ export async function GET(request: Request) {
     const me = await getMe(token);
     if (!me) return back("invalid");
 
+    if (forOffice) {
+      await storeOffice(token, me, user!.email);
+      return back("office_ok");
+    }
     await storeToken(user!.id, user!.email, token, me);
     return back("ok");
   } catch (e) {

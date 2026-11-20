@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { CHAT_ROLES } from "@/lib/roles";
 import { requireRole } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -31,15 +30,17 @@ export const runtime = "nodejs";
 export async function GET(request: Request) {
   const origin = new URL(request.url).origin;
 
-  // Admins and the GroupMe Chat role -- same gate as canUseInstallerChat().
   // Not signed in to Duck Force (or session expired): send them to sign in and
   // come back to Chat, instead of showing raw error text.
-  const { error: authError } = await requireRole(...CHAT_ROLES);
+  // Connecting your OWN GroupMe, or the office account, is for admins only
+  // (migration 074) -- everyone else reads and sends through the office
+  // account and never sees a GroupMe sign-in.
+  const { error: authError } = await requireRole("admin");
   if (authError) {
     if (authError.status === 401) {
       return NextResponse.redirect(`${origin}/login?redirect=${encodeURIComponent("/chat")}`);
     }
-    return authError;
+    return NextResponse.redirect(`${origin}/chat?connect=adminonly`);
   }
 
   const clientId = process.env.GROUPME_CLIENT_ID;
@@ -47,9 +48,19 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/chat?connect=noclient`);
   }
 
-  const via = new URL(request.url).searchParams.get("via");
-  const path = via === "dialog" ? "login_dialog" : "authorize";
-  return NextResponse.redirect(
+  const params = new URL(request.url).searchParams;
+  const path = params.get("via") === "dialog" ? "login_dialog" : "authorize";
+  const res = NextResponse.redirect(
     `https://oauth.groupme.com/oauth/${path}?client_id=${encodeURIComponent(clientId)}`
   );
+  // GroupMe sends everyone back to the one callback address, so remember for
+  // ten minutes whether this sign-in is for the OFFICE account.
+  res.cookies.set("gm_connect_as", params.get("as") === "office" ? "office" : "personal", {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    path: "/api/groupme",
+    maxAge: 600,
+  });
+  return res;
 }

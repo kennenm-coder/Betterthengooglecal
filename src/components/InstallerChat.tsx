@@ -37,6 +37,10 @@ interface ChatMessage {
 interface Member {
   userId: string;
   nickname: string;
+  /** "duck" = a Duck Force person (Duck Force buzzes their account); otherwise
+   *  a GroupMe member (GroupMe notifies them). */
+  kind?: "groupme" | "duck";
+  email?: string;
 }
 
 /**
@@ -388,7 +392,16 @@ export default function InstallerChat({
     fetch(`/api/groupme/members?group=${encodeURIComponent(groupId)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
-        if (!cancelled && body?.members) setMembers(body.members as Member[]);
+        if (cancelled || !body) return;
+        // Duck Force people first: they're who you'll usually want to ping.
+        const people: Member[] = ((body.people || []) as { email: string; name: string }[]).map((p) => ({
+          userId: `duck:${p.email}`,
+          nickname: p.name,
+          kind: "duck",
+          email: p.email,
+        }));
+        const gm: Member[] = ((body.members || []) as Member[]).map((m) => ({ ...m, kind: "groupme" }));
+        setMembers([...people, ...gm]);
       })
       .catch(() => {});
 
@@ -556,7 +569,12 @@ export default function InstallerChat({
         body: JSON.stringify({
           group: groupId,
           text,
-          mentions: activeMentions,
+          // GroupMe members: GroupMe notifies them itself.
+          mentions: activeMentions
+            .filter((m) => m.kind !== "duck")
+            .map((m) => ({ userId: m.userId, nickname: m.nickname })),
+          // Duck Force people: Duck Force buzzes their own account.
+          people: activeMentions.filter((m) => m.kind === "duck" && m.email).map((m) => m.email),
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -805,9 +823,14 @@ export default function InstallerChat({
                     e.preventDefault();
                     insertMention(m);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-surface transition-colors"
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-surface transition-colors flex items-center justify-between gap-2"
                 >
-                  {m.nickname}
+                  <span className="truncate">{m.nickname}</span>
+                  {m.kind === "duck" && (
+                    <span className="text-[10px] font-semibold text-rba-green bg-rba-green/10 border border-rba-green/40 rounded-full px-1.5 py-0.5 shrink-0">
+                      Duck Force
+                    </span>
+                  )}
                 </button>
               </li>
             ))}

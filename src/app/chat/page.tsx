@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   Bell,
   BellOff,
+  Building2,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -23,6 +24,7 @@ import { canUseInstallerChat } from "@/lib/roles";
 import BottomNav from "@/components/BottomNav";
 import InstallerChat from "@/components/InstallerChat";
 import GroupMeAttribution from "@/components/GroupMeAttribution";
+import OfficeSetup from "@/components/OfficeSetup";
 import NotificationScheduleEditor from "@/components/NotificationScheduleEditor";
 import {
   applyLocalReads,
@@ -49,10 +51,21 @@ import {
 
 interface ConnectionState {
   configured: boolean;
+  /** Their OWN GroupMe is connected (admins only). */
   connected: boolean;
   groupmeName: string | null;
   /** Buzz this person's phone for new messages in their chosen chats. */
   notifyMessages?: boolean;
+  admin?: boolean;
+  /** The office GroupMe account everyone else uses (migration 074). */
+  office?: { connected: boolean; name: string | null };
+  /** How many office chats are shared with this person's roles. */
+  sharedCount?: number;
+}
+
+/** Can this person use Chat yet: their own GroupMe, or shared office chats. */
+function canUseChat(c: ConnectionState | null): boolean {
+  return !!c && (c.connected || (!!c.office?.connected && (c.sharedCount ?? 0) > 0));
 }
 
 interface ChatRow {
@@ -132,10 +145,14 @@ interface GroupOption {
   id: string;
   name: string;
   picked: boolean;
+  /** Reached through your own GroupMe or the office account. */
+  source?: "personal" | "office";
 }
 
 const CONNECT_MESSAGES: Record<string, string> = {
-  ok: "GroupMe connected. Now choose which of your chats to show here.",
+  ok: "Your GroupMe is connected. Now choose which of your chats to show here.",
+  office_ok: "Office GroupMe account connected. Now pick which roles see each chat.",
+  adminonly: "Only admins sign in to GroupMe. Your chats come through the office account.",
   denied: "GroupMe sign-in was cancelled. Tap Sign in with GroupMe to try again.",
   invalid: "GroupMe didn't accept that sign-in. Tap Sign in with GroupMe to try again.",
   nokey: "The server is missing its encryption key, so the connection wasn't saved.",
@@ -222,6 +239,7 @@ function ChatPageInner() {
 
   // Choose chats screen.
   const [choosing, setChoosing] = useState(false);
+  const [officeOpen, setOfficeOpen] = useState(false);
   const [groups, setGroups] = useState<GroupOption[] | null>(null);
   const [groupsError, setGroupsError] = useState<string | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
@@ -292,13 +310,13 @@ function ChatPageInner() {
   // conversation, which should have just cleared its dot -- and every 30 s
   // while it stays open.
   useEffect(() => {
-    if (!allowed || selected || choosing || !connection?.connected) return;
+    if (!allowed || selected || choosing || !canUseChat(connection)) return;
     loadChats();
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") loadChats();
     }, 30_000);
     return () => clearInterval(timer);
-  }, [allowed, selected, choosing, connection?.connected, loadChats]);
+  }, [allowed, selected, choosing, connection, loadChats]);
 
   // Load the top few conversations in the background (unread ones first), so
   // tapping one opens it straight away. Each is fetched once per app session.
@@ -450,6 +468,29 @@ function ChatPageInner() {
     );
   }
 
+  // --- Office setup (admins) ---
+  if (officeOpen && connection?.admin) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex-1 min-h-0">
+          <OfficeSetup
+            onClose={() => setOfficeOpen(false)}
+            onChanged={() => {
+              loadConnection();
+              loadChats();
+            }}
+            personal={{
+              connected: connection.connected,
+              name: connection.groupmeName,
+              onDisconnect: disconnect,
+            }}
+          />
+        </div>
+        <BottomNav />
+      </div>
+    );
+  }
+
   // --- Choose chats ---
   if (choosing) {
     return (
@@ -515,7 +556,18 @@ function ChatPageInner() {
                       >
                         {on && <Check className="w-3.5 h-3.5" />}
                       </span>
-                      <span className="text-sm truncate">{g.name}</span>
+                      <span className="text-sm truncate flex-1">{g.name}</span>
+                      {connection?.admin && g.source && (
+                        <span
+                          className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 border shrink-0 ${
+                            g.source === "office"
+                              ? "text-rba-green bg-rba-green/10 border-rba-green/40"
+                              : "text-muted border-border"
+                          }`}
+                        >
+                          {g.source === "office" ? "Office" : "Yours"}
+                        </span>
+                      )}
                     </button>
                   </li>
                 );
@@ -548,22 +600,33 @@ function ChatPageInner() {
             <MessageCircle className="w-4 h-4 text-primary" />
             <h1 className="text-lg font-semibold">Chat</h1>
           </div>
-          {connection?.connected && (
-            <button
-              onClick={openChoosing}
-              className="text-xs text-primary inline-flex items-center gap-1"
-            >
-              <ListChecks className="w-3.5 h-3.5" />
-              Choose chats
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {connection?.admin && (
+              <button
+                onClick={() => setOfficeOpen(true)}
+                className="text-xs text-muted hover:text-foreground inline-flex items-center gap-1"
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                Office setup
+              </button>
+            )}
+            {canUseChat(connection) && (
+              <button
+                onClick={openChoosing}
+                className="text-xs text-primary inline-flex items-center gap-1"
+              >
+                <ListChecks className="w-3.5 h-3.5" />
+                Choose chats
+              </button>
+            )}
+          </div>
         </div>
-        {connection?.connected && (
+        {connection && canUseChat(connection) && (
           <div className="flex items-center justify-between gap-2 mt-1">
             <p className="text-xs text-muted truncate">
-              {connection.groupmeName
-                ? `Connected to GroupMe as ${connection.groupmeName}`
-                : "Connected to GroupMe"}
+              {connection.connected
+                ? `Your GroupMe: ${connection.groupmeName || "connected"}`
+                : `Through the office GroupMe${connection.office?.name ? ` (${connection.office.name})` : ""}`}
             </p>
             {/* Opens the notification menu: GroupMe buzz on/off, plus the
                 account-wide schedule (same one as Settings). */}
@@ -586,7 +649,7 @@ function ChatPageInner() {
         )}
       </header>
 
-      {connection?.connected && notifyOpen && (
+      {connection && canUseChat(connection) && notifyOpen && (
         <div className="border-b border-border bg-surface px-4 py-3 space-y-3 shrink-0 max-h-[60vh] overflow-y-auto">
           {/* Once-a-minute check: one buzz per chat with new messages. */}
           <div className="flex items-center justify-between gap-3">
@@ -645,10 +708,25 @@ function ChatPageInner() {
               <code>GROUPME_TOKEN_KEY</code> before anyone can connect.
             </p>
           </div>
-        ) : !connection.connected ? (
+        ) : !canUseChat(connection) && !connection.admin ? (
+          <div className="px-6 py-10 text-center text-sm text-muted">
+            <p className="mb-2 font-medium text-foreground">No GroupMe chats for you yet.</p>
+            <p>
+              Your office hasn&apos;t shared any GroupMe chats with your role yet. Ask an admin to share them in
+              Office setup. You won&apos;t need to sign in to GroupMe.
+            </p>
+          </div>
+        ) : !canUseChat(connection) ? (
           <div className="px-6 py-10 text-center">
+            <button
+              onClick={() => setOfficeOpen(true)}
+              className="mb-5 inline-flex items-center gap-2 bg-primary text-white rounded-xl px-4 py-2.5 text-sm font-medium"
+            >
+              <Building2 className="w-4 h-4" />
+              Office setup: connect the office GroupMe
+            </button>
             <p className="text-sm text-muted mb-1">
-              Sign in to your own GroupMe to read and reply to your chats here.
+              Or sign in to your own GroupMe (admins only).
             </p>
             <p className="text-xs text-muted mb-5">
               Messages you send go out under your own GroupMe name. You choose

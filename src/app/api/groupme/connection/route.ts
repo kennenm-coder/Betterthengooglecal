@@ -4,12 +4,15 @@ import { requireRole } from "@/lib/auth";
 import {
   deleteToken,
   getConnection,
+  getNotifyMessages,
   getMe,
   setNotifyMessages,
   storeToken,
   GroupMeError,
 } from "@/lib/groupme";
 import { isTokenCryptoConfigured } from "@/lib/groupme-crypto";
+import { getOffice, sharedChatsFor } from "@/lib/groupme-office";
+import { isAdmin } from "@/lib/roles";
 
 export const runtime = "nodejs";
 
@@ -27,13 +30,26 @@ export async function GET() {
   // pasted-token path, which is everyone.
   const configured = isTokenCryptoConfigured();
 
-  const connection = await getConnection(user!.id);
+  const admin = isAdmin(user!.roles);
+  const [connection, notifyMessages, office, shared] = await Promise.all([
+    admin ? getConnection(user!.id) : Promise.resolve(null),
+    getNotifyMessages(user!.id),
+    getOffice(),
+    sharedChatsFor(user!.roles),
+  ]);
   return NextResponse.json({
     configured,
+    // Their OWN GroupMe -- admins only (migration 074).
     connected: !!connection,
     groupmeName: connection?.groupmeName ?? null,
     connectedAt: connection?.connectedAt ?? null,
-    notifyMessages: connection?.notifyMessages ?? true,
+    canPersonal: admin,
+    admin,
+    notifyMessages,
+    // The office account everyone else uses, and how many chats it shares
+    // with this person's roles.
+    office: { connected: !!office, name: office?.name ?? null },
+    sharedCount: office ? shared.size : 0,
   });
 }
 
@@ -56,7 +72,7 @@ export async function GET() {
  * is left in place in case GroupMe ever fixes their end.
  */
 export async function POST(request: Request) {
-  const { user, error: authError } = await requireRole(...CHAT_ROLES);
+  const { user, error: authError } = await requireRole("admin");
   if (authError) return authError;
 
   if (!isTokenCryptoConfigured()) {

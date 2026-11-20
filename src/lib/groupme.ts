@@ -221,7 +221,9 @@ export async function sendMessage(
   token: string,
   groupId: string,
   text: string,
-  attachments: GroupMeAttachment[] = []
+  attachments: GroupMeAttachment[] = [],
+  /** Pass one to tag the message (office sends record who sent it, 074). */
+  sourceGuid: string = crypto.randomUUID()
 ): Promise<GroupMeMessage | null> {
   const { data } = await groupmeFetch<{ message: GroupMeMessage }>(
     token,
@@ -229,7 +231,7 @@ export async function sendMessage(
     {
       method: "POST",
       body: JSON.stringify({
-        message: { source_guid: crypto.randomUUID(), text, attachments },
+        message: { source_guid: sourceGuid, text, attachments },
       }),
     }
   );
@@ -284,7 +286,7 @@ export async function getConnection(
   const admin = getAdminClient();
   const { data } = await admin
     .from("groupme_tokens")
-    .select("groupme_user_id, groupme_name, connected_at, notify_messages")
+    .select("groupme_user_id, groupme_name, connected_at")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -293,18 +295,31 @@ export async function getConnection(
     groupmeUserId: data.groupme_user_id,
     groupmeName: data.groupme_name,
     connectedAt: data.connected_at,
-    // undefined before migration 068 -- treat as on, the column's default.
-    notifyMessages: data.notify_messages !== false,
+    notifyMessages: await getNotifyMessages(userId),
   };
+}
+
+/**
+ * This person's "buzz me for GroupMe messages" switch (groupme_prefs, 074).
+ * Per Duck Force account, so it works for office-account chats too, with no
+ * personal GroupMe sign-in. On unless they turned it off.
+ */
+export async function getNotifyMessages(userId: string): Promise<boolean> {
+  const admin = getAdminClient();
+  const { data } = await admin
+    .from("groupme_prefs")
+    .select("notify_messages")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return data?.notify_messages !== false;
 }
 
 /** Turn this person's message buzzes on or off. */
 export async function setNotifyMessages(userId: string, on: boolean): Promise<void> {
   const admin = getAdminClient();
   const { error } = await admin
-    .from("groupme_tokens")
-    .update({ notify_messages: on })
-    .eq("user_id", userId);
+    .from("groupme_prefs")
+    .upsert({ user_id: userId, notify_messages: on }, { onConflict: "user_id" });
   if (error) throw new Error(`Could not save that setting: ${error.message}`);
 }
 
@@ -382,6 +397,11 @@ export interface MyGroup {
 const groupCache = new Map<string, { at: number; byGroup: Map<string, MyGroup> }>();
 const GROUP_TTL_MS = 30_000;
 
+/** Forget a cached group list (a person's, or "office"). */
+export function forgetGroupIndex(key: string): void {
+  groupCache.delete(key);
+}
+
 export async function getMyGroupIndex(
   userId: string,
   token: string
@@ -423,6 +443,8 @@ export interface ChatPick {
   unreadCount: number;
   /** Newest message already included in unreadCount (migration 073). */
   unreadCountedId: string | null;
+  /** Read/sent through their own GroupMe, or the office account (074). */
+  source: "personal" | "office";
 }
 
 /** The groups THIS user ticked. Nobody else's choices are involved. */
@@ -430,7 +452,7 @@ export async function listPicks(userId: string): Promise<ChatPick[]> {
   const admin = getAdminClient();
   const { data } = await admin
     .from("groupme_chat_picks")
-    .select("group_id, group_name, last_read_message_id, unread_since, unread_count, unread_counted_id")
+    .select("group_id, group_name, last_read_message_id, unread_since, unread_count, unread_counted_id, source")
     .eq("user_id", userId);
 
   return ((data ?? []) as {
@@ -440,6 +462,7 @@ export async function listPicks(userId: string): Promise<ChatPick[]> {
     unread_since?: string | null;
     unread_count?: number | null;
     unread_counted_id?: string | null;
+    source?: string | null;
   }[]).map((r) => ({
     groupId: r.group_id,
     groupName: r.group_name,
@@ -447,6 +470,7 @@ export async function listPicks(userId: string): Promise<ChatPick[]> {
     unreadSince: r.unread_since ?? null,
     unreadCount: r.unread_count ?? 0,
     unreadCountedId: r.unread_counted_id ?? null,
+    source: r.source === "office" ? "office" : "personal",
   }));
 }
 
@@ -457,7 +481,7 @@ export async function listPicks(userId: string): Promise<ChatPick[]> {
  */
 export async function savePicks(
   userId: string,
-  groups: { id: string; name: string }[]
+  groups: { id: string; name: string; source: "personal" | "office" }[]
 ): Promise<void> {
   const admin = getAdminClient();
   const keep = groups.map((g) => g.id);
@@ -472,7 +496,7 @@ export async function savePicks(
 
   if (groups.length === 0) return;
   const { error } = await admin.from("groupme_chat_picks").upsert(
-    groups.map((g) => ({ user_id: userId, group_id: g.id, group_name: g.name })),
+    groups.map((g) => ({ user_id: userId, group_id: g.id, group_name: g.name, source: g.source })),
     // Leaves last_read_message_id alone on rows that already exist.
     { onConflict: "user_id,group_id" }
   );
@@ -522,16 +546,20 @@ export async function setUnreadState(
     .eq("group_id", groupId);
 }
 
-/** Has this user ticked this group? Every read/send route asks. */
-export async function isPicked(userId: string, groupId: string): Promise<boolean> {
+/** This user's pick of one group (and whose GroupMe it goes through), or null. */
+export async function getPick(
+  userId: string,
+  groupId: string
+): Promise<{ source: "personal" | "office" } | null> {
   const admin = getAdminClient();
   const { data } = await admin
     .from("groupme_chat_picks")
-    .select("group_id")
+    .select("source")
     .eq("user_id", userId)
     .eq("group_id", groupId)
     .maybeSingle();
-  return !!data;
+  if (!data) return null;
+  return { source: data.source === "office" ? "office" : "personal" };
 }
 
 // --- The Duck Force bot (migration 072) ---
@@ -689,14 +717,19 @@ export async function recordBotMessage(
   groupId: string,
   messageId: string,
   senderId: string,
-  createdAt: Date
-): Promise<{ userId: string; email: string; unreadCount: number; notify: boolean }[]> {
+  createdAt: Date,
+  /** The Duck Force person who sent it through the office account (074). */
+  excludeUserId: string | null = null
+): Promise<
+  { userId: string; email: string; unreadCount: number; notify: boolean; source: "personal" | "office" }[]
+> {
   const admin = getAdminClient();
   const { data, error } = await admin.rpc("groupme_bot_message", {
     p_group_id: groupId,
     p_message_id: messageId,
     p_sender_id: senderId,
     p_created_at: createdAt.toISOString(),
+    p_exclude_user: excludeUserId,
   });
   if (error) throw new Error(`Could not record the message: ${error.message}`);
   return ((data ?? []) as {
@@ -704,10 +737,12 @@ export async function recordBotMessage(
     email: string;
     unread_count: number;
     notify_messages: boolean;
+    source?: string;
   }[]).map((r) => ({
     userId: r.user_id,
     email: r.email,
     unreadCount: r.unread_count,
     notify: r.notify_messages !== false,
+    source: r.source === "office" ? ("office" as const) : ("personal" as const),
   }));
 }

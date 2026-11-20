@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import { buildMentions } from "@/lib/groupme-mentions";
 import { sendMessage } from "@/lib/groupme";
+import {
+  nameFor,
+  peopleForChat,
+  recordSent,
+  setSentMessageId,
+  shortName,
+} from "@/lib/groupme-office";
 import { chatContext, groupmeErrorResponse } from "@/lib/groupme-route";
+import { notify } from "@/lib/notify-server";
 
 export const runtime = "nodejs";
 
@@ -9,20 +17,28 @@ export const runtime = "nodejs";
 const MAX_LENGTH = 1000;
 
 /**
- * Send a message into one of the person's chosen GroupMe groups, AS them.
+ * Send a message into one of the person's chosen chats.
  *
- * It goes out on their own GroupMe account, so the installer sees it from that
- * person exactly as if they had typed it in the GroupMe app -- no name prefix,
- * no shared office account.
+ *   - Through the OFFICE account (migration 074): GroupMe shows it from
+ *     "RBANWO Office", so the text starts with the sender's name ("Kennen M:
+ *     ...") for the installers, and it's tagged in groupme_sent with who sent
+ *     it, so Duck Force shows their name above it and treats it as theirs.
+ *   - Through an admin's OWN GroupMe: goes out under their own name, as is.
  *
- * chatContext refuses a group they didn't tick or aren't in, so nothing can be
- * posted anywhere else.
+ * @mentions:
+ *   - `mentions`: GroupMe members -- GroupMe itself notifies them.
+ *   - `people`: Duck Force people (by email) -- Duck Force buzzes THAT Duck
+ *     Force account, even though in GroupMe it's all one office account. Only
+ *     people who can see this chat are notified; anyone else is ignored.
+ *
+ * chatContext refuses a chat they didn't tick or may no longer see.
  */
 export async function POST(request: Request) {
   let payload: {
     group?: unknown;
     text?: unknown;
     mentions?: unknown;
+    people?: unknown;
   };
   try {
     payload = await request.json();
@@ -45,6 +61,12 @@ export async function POST(request: Request) {
         typeof (m as { nickname?: unknown }).nickname === "string"
     )
     .map((m) => ({ userId: m.userId, nickname: m.nickname }));
+  const mentionedEmails = new Set(
+    (Array.isArray(payload.people) ? payload.people : [])
+      .filter((e): e is string => typeof e === "string")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean)
+  );
 
   if (!group) {
     return NextResponse.json({ error: "Missing group." }, { status: 400 });
@@ -52,26 +74,66 @@ export async function POST(request: Request) {
   if (!text) {
     return NextResponse.json({ error: "Message is empty." }, { status: 400 });
   }
-  if (text.length > MAX_LENGTH) {
-    return NextResponse.json(
-      { error: `Messages are limited to ${MAX_LENGTH} characters.` },
-      { status: 400 }
-    );
-  }
 
   const ctx = await chatContext(group);
   if (!ctx.ok) return ctx.response;
 
+  const senderName = await nameFor(ctx.user.email);
+  const viaOffice = ctx.source === "office";
+  // The name in front, so installers in GroupMe can tell who wrote it.
+  const finalText = viaOffice ? `${shortName(senderName)}: ${text}` : text;
+  if (finalText.length > MAX_LENGTH) {
+    return NextResponse.json(
+      { error: `Messages are limited to ${MAX_LENGTH - (finalText.length - text.length)} characters.` },
+      { status: 400 }
+    );
+  }
+
   try {
     // Mention offsets are measured against the exact string being sent.
-    const mentionAttachment = buildMentions(text, mentions);
+    const mentionAttachment = buildMentions(finalText, mentions);
+    const sourceGuid = crypto.randomUUID();
 
-    await sendMessage(
+    // Tag it BEFORE sending, so the bot's instant notice (which can arrive
+    // before GroupMe even answers us) already knows who sent it.
+    if (viaOffice) {
+      await recordSent({
+        sourceGuid,
+        groupId: ctx.groupId!,
+        userId: ctx.user.id,
+        email: ctx.user.email,
+        name: senderName,
+      });
+    }
+
+    const sent = await sendMessage(
       ctx.token,
       ctx.groupId!,
-      text,
-      mentionAttachment ? [mentionAttachment] : []
+      finalText,
+      mentionAttachment ? [mentionAttachment] : [],
+      sourceGuid
     );
+    if (viaOffice && sent?.id) await setSentMessageId(sourceGuid, sent.id);
+
+    // Buzz each @mentioned Duck Force person who can see this chat.
+    if (mentionedEmails.size > 0) {
+      const allowed = await peopleForChat(ctx.groupId!);
+      const targets = allowed
+        .filter((p) => mentionedEmails.has(p.email) && p.email !== ctx.user.email.toLowerCase())
+        .map((p) => p.email);
+      if (targets.length > 0) {
+        await notify({
+          emails: targets,
+          kind: "groupme_message",
+          title: `${senderName} mentioned you`,
+          body: text.length > 140 ? `${text.slice(0, 139)}…` : text,
+          url: `/chat?open=${encodeURIComponent(ctx.groupId!)}`,
+          tag: `groupme-mention-${ctx.groupId}`,
+          pushOnly: true,
+        }).catch(() => undefined);
+      }
+    }
+
     // The caller re-polls with since_id to pick the message up, so there is
     // one code path that renders messages rather than two.
     return NextResponse.json({ ok: true });

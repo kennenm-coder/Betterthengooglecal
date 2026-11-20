@@ -101,7 +101,10 @@ export async function DELETE(req: Request) {
 
   const bot = await getBot(group);
   if (!bot) return NextResponse.json({ ok: true });
-  if (bot.addedByUser !== ctx.user.id) {
+  // The person who added it, or -- for a bot the office account owns -- any
+  // admin (ctx.token is the office account's for an office chat).
+  const officeBot = ctx.source === "office" && ctx.admin;
+  if (bot.addedByUser !== ctx.user.id && !officeBot) {
     return NextResponse.json(
       {
         error: `Only ${bot.addedByEmail || "the person who added it"} can remove the bot, because it belongs to their GroupMe account.`,

@@ -1,41 +1,51 @@
 import { NextResponse } from "next/server";
-import { listGroups, listPicks, savePicks } from "@/lib/groupme";
-import { chatContext, groupmeErrorResponse } from "@/lib/groupme-route";
+import { listPicks, savePicks } from "@/lib/groupme";
+import { chatContext } from "@/lib/groupme-route";
 
 export const runtime = "nodejs";
 
 /**
- * GET: every GroupMe group the signed-in person's OWN account is in, each
- * marked with whether they've ticked it to show in Chat. Feeds their
- * "Choose chats" checklist and nothing else. It includes personal groups,
- * which is why it is only ever shown to the person themself, and never used
- * to render a conversation.
+ * GET: the chats this person may add to their Chat list, each marked with
+ * whether it's ticked and how it's reached:
+ *   - "office": office-account chats shared with one of their roles
+ *     (migration 074) -- everyone with Chat access;
+ *   - "personal": groups their OWN GroupMe is in -- admins who connected one.
+ *     These include personal groups, which is why they're only ever shown to
+ *     the person themself.
+ * A group reachable both ways is offered as "personal", so an admin sends as
+ * themselves there.
  */
 export async function GET() {
   const ctx = await chatContext();
   if (!ctx.ok) return ctx.response;
 
-  try {
-    const [groups, picks] = await Promise.all([
-      listGroups(ctx.token),
-      listPicks(ctx.user.id),
-    ]);
-    const picked = new Set(picks.map((p) => p.groupId));
-    return NextResponse.json({
-      groups: groups
-        .map((g) => ({ id: g.id, name: g.name, picked: picked.has(g.id) }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    });
-  } catch (e) {
-    return groupmeErrorResponse(e, "Could not load your GroupMe groups.");
+  const picked = new Set((await listPicks(ctx.user.id)).map((p) => p.groupId));
+  const out = new Map<string, { id: string; name: string; picked: boolean; source: "personal" | "office" }>();
+
+  for (const [id, g] of ctx.personalGroups) {
+    out.set(id, { id, name: g.name, picked: picked.has(id), source: "personal" });
   }
+  for (const [id, chat] of ctx.shared) {
+    if (out.has(id)) continue;
+    const g = ctx.officeGroups.get(id);
+    if (!g && !ctx.office) continue;
+    out.set(id, {
+      id,
+      name: g?.name || chat.groupName || "GroupMe chat",
+      picked: picked.has(id),
+      source: "office",
+    });
+  }
+
+  return NextResponse.json({
+    groups: [...out.values()].sort((a, b) => a.name.localeCompare(b.name)),
+  });
 }
 
 /**
- * PUT { groupIds: string[] }: replace the person's ticked chats.
- *
- * Every id is checked against their own GroupMe account first, so nobody can
- * save a group they aren't in. Names come from GroupMe, not the browser.
+ * PUT { groupIds: string[] }: replace the person's ticked chats. Each id is
+ * checked here -- it must be one of THEIR personal groups or an office chat
+ * shared with their roles -- and names come from GroupMe, not the browser.
  */
 export async function PUT(request: Request) {
   let payload: { groupIds?: unknown };
@@ -47,19 +57,24 @@ export async function PUT(request: Request) {
   const ids = Array.isArray(payload.groupIds)
     ? payload.groupIds.filter((x): x is string => typeof x === "string")
     : null;
-  if (!ids) {
-    return NextResponse.json({ error: "Missing groupIds." }, { status: 400 });
-  }
+  if (!ids) return NextResponse.json({ error: "Missing groupIds." }, { status: 400 });
 
   const ctx = await chatContext();
   if (!ctx.ok) return ctx.response;
 
-  const chosen = Array.from(new Set(ids))
-    .map((id) => {
-      const g = ctx.myGroups.get(id);
-      return g ? { id, name: g.name } : null;
-    })
-    .filter((g): g is { id: string; name: string } => !!g);
+  const chosen: { id: string; name: string; source: "personal" | "office" }[] = [];
+  for (const id of new Set(ids)) {
+    const mine = ctx.personalGroups.get(id);
+    if (mine) {
+      chosen.push({ id, name: mine.name, source: "personal" });
+      continue;
+    }
+    const shared = ctx.shared.get(id);
+    if (shared && ctx.office) {
+      const g = ctx.officeGroups.get(id);
+      chosen.push({ id, name: g?.name || shared.groupName || "GroupMe chat", source: "office" });
+    }
+  }
 
   try {
     await savePicks(ctx.user.id, chosen);

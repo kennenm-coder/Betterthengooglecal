@@ -75,16 +75,23 @@ export async function runGroupMeBuzz(): Promise<BuzzResult> {
 
   const { data: tokens, error } = await admin
     .from("groupme_tokens")
-    .select("user_id, email, access_token_encrypted, groupme_user_id")
-    .eq("notify_messages", true);
+    .select("user_id, email, access_token_encrypted, groupme_user_id");
   if (error) throw new Error(`Could not read GroupMe connections: ${error.message}`);
 
+  // Who switched message buzzes off (groupme_prefs, migration 074).
+  const { data: off } = await admin.from("groupme_prefs").select("user_id").eq("notify_messages", false);
+  const muted = new Set((off ?? []).map((r) => String(r.user_id)));
+
   for (const t of (tokens ?? []) as TokenRow[]) {
+    if (muted.has(t.user_id)) continue;
     try {
+      // Personal chats only. Office-account chats are shared with the Duck
+      // Force Bot when an admin shares them, and the bot buzzes instantly.
       const { data: picks } = await admin
         .from("groupme_chat_picks")
         .select("group_id, group_name, last_read_message_id, last_notified_message_id")
-        .eq("user_id", t.user_id);
+        .eq("user_id", t.user_id)
+        .eq("source", "personal");
       if (!picks?.length) continue;
 
       let token: string;

@@ -25,7 +25,7 @@ function toList(input: RoleInput): string[] {
 }
 
 /** True if the user holds any of the allowed roles. */
-function hasAny(input: RoleInput, allowed: readonly string[]): boolean {
+export function hasAny(input: RoleInput, allowed: readonly string[]): boolean {
   const held = toList(input);
   return held.some((r) => allowed.includes(r));
 }
